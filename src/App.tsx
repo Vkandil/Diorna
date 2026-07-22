@@ -98,6 +98,10 @@ export default function App() {
         state.workspaces === previous.workspaces &&
         state.categories === previous.categories &&
         state.courses === previous.courses &&
+        state.templates === previous.templates &&
+        state.flashcards === previous.flashcards &&
+        state.reviewLogs === previous.reviewLogs &&
+        state.references === previous.references &&
         state.items === previous.items &&
         state.habits === previous.habits &&
         state.habitEntries === previous.habitEntries &&
@@ -150,6 +154,10 @@ function structuredSnapshot(state: ReturnType<typeof useDiornaStore.getState>) {
     workspaces: state.workspaces,
     categories: state.categories,
     courses: state.courses,
+    templates: state.templates,
+    flashcards: state.flashcards,
+    reviewLogs: state.reviewLogs,
+    references: state.references,
     items: state.items,
     habits: state.habits,
     habitEntries: state.habitEntries,

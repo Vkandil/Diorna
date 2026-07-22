@@ -1,4 +1,4 @@
-export interface ReferenceRecord {
+export interface BibliographyRecord {
   id: string;
   citationKey: string;
   title: string;
@@ -10,7 +10,15 @@ export interface ReferenceRecord {
 }
 export type CitationStyle = "apa" | "ieee" | "harvard";
 
-export function parseBibTeX(input: string): ReferenceRecord[] {
+export function citationKeys(text: string): Set<string> {
+  return new Set(
+    [...text.matchAll(/(?:\[@|(?<![\w@])@)([\w:-]+(?:\.[\w:-]+)*)\]?/g)].map((match) =>
+      match[1]!.toLowerCase(),
+    ),
+  );
+}
+
+export function parseBibTeX(input: string): BibliographyRecord[] {
   return [...input.matchAll(/@(\w+)\s*\{\s*([^,]+),([\s\S]*?)(?=\n?@\w+\s*\{|$)/g)].map((match) => {
     const fields = Object.fromEntries(
       [...match[3]!.matchAll(/(\w+)\s*=\s*(?:\{|")([^}"]+)(?:\}|")/g)].map((field) => [
@@ -31,7 +39,7 @@ export function parseBibTeX(input: string): ReferenceRecord[] {
   });
 }
 
-export function parseCslJson(input: string): ReferenceRecord[] {
+export function parseCslJson(input: string): BibliographyRecord[] {
   const values = JSON.parse(input) as Array<Record<string, unknown>>;
   return values.map((value) => {
     const authors = Array.isArray(value.author)
@@ -57,7 +65,7 @@ export function parseCslJson(input: string): ReferenceRecord[] {
 }
 
 export function formatReference(
-  reference: ReferenceRecord,
+  reference: BibliographyRecord,
   style: CitationStyle,
   index = 1,
 ): string {

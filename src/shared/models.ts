@@ -64,6 +64,28 @@ export interface Course {
   sortOrder: number;
 }
 
+export interface StudyTemplate {
+  id: Id;
+  workspaceId: Id;
+  name: string;
+  body: string;
+  builtIn: boolean;
+  defaultCourseId?: Id | undefined;
+  sortOrder: number;
+}
+
+export interface ReferenceRecord {
+  id: Id;
+  workspaceId: Id;
+  citationKey: string;
+  title: string;
+  authors: string[];
+  year?: number;
+  container?: string;
+  doi?: string;
+  url?: string;
+}
+
 export type ItemKind = "task" | "event";
 export type Priority = "none" | "low" | "medium" | "high";
 
@@ -149,6 +171,16 @@ export interface Flashcard {
   reps: number;
   lapses: number;
   lastReviewedAt?: ISODateTime;
+}
+
+export interface ReviewLog {
+  id: Id;
+  workspaceId: Id;
+  flashcardId: Id;
+  reviewedAt: ISODateTime;
+  grade: FlashcardGrade;
+  intervalBefore: number;
+  intervalAfter: number;
 }
 
 export type FlashcardGrade = "again" | "hard" | "good" | "easy";
@@ -241,6 +273,7 @@ export interface RecapStatistics {
   flashcards: {
     reviewed: number;
     retentionRate: number | null;
+    streak: number;
     courses: string[];
   };
   dailyScores: Array<{ date: ISODate; score: number | null }>;

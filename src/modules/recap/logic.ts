@@ -1,8 +1,10 @@
 import { eachDayOfInterval, formatISO, parseISO } from "date-fns";
 import { completionScore, habitStatistics } from "@/modules/daily/logic";
+import { longestReviewStreak } from "@/modules/student/flashcards";
 import type {
   CalendarItem,
   CanvasMap,
+  Course,
   Flashcard,
   Habit,
   HabitEntry,
@@ -10,6 +12,7 @@ import type {
   MetricEntry,
   Note,
   RecapStatistics,
+  ReviewLog,
 } from "@/shared/models";
 
 export interface RecapInput {
@@ -25,6 +28,8 @@ export interface RecapInput {
   notes: Note[];
   maps: CanvasMap[];
   flashcards: Flashcard[];
+  reviewLogs: ReviewLog[];
+  courses: Course[];
   categoryNames: Record<string, string>;
 }
 
@@ -111,6 +116,21 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
       score: completionScore(input.habits, input.habitEntries, key),
     };
   });
+  const reviewed = input.reviewLogs.filter((log) =>
+    inRange(log.reviewedAt, input.periodStart, input.periodEnd),
+  );
+  const cardsById = new Map(input.flashcards.map((card) => [card.id, card]));
+  const notesById = new Map(input.notes.map((note) => [note.id, note]));
+  const courseNamesById = new Map(input.courses.map((course) => [course.id, course.name]));
+  const reviewedCourses = [
+    ...new Set(
+      reviewed.flatMap((log) => {
+        const note = notesById.get(cardsById.get(log.flashcardId)?.noteId ?? "");
+        const name = note?.courseId ? courseNamesById.get(note.courseId) : undefined;
+        return name ? [name] : [];
+      }),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
 
   const best = sorted[0];
   const worst = sorted.at(-1);
@@ -163,7 +183,16 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
         .filter((map) => inRange(map.updatedAt, input.periodStart, input.periodEnd))
         .reduce((sum, map) => sum + map.nodes.length, 0),
     },
-    flashcards: { reviewed: 0, retentionRate: null, courses: [] },
+    flashcards: {
+      reviewed: reviewed.length,
+      retentionRate: reviewed.length
+        ? Math.round(
+            (reviewed.filter((log) => log.grade !== "again").length / reviewed.length) * 100,
+          )
+        : null,
+      streak: longestReviewStreak(reviewed.map((log) => log.reviewedAt)),
+      courses: reviewedCourses,
+    },
     dailyScores,
   };
   void durationDays;
@@ -190,6 +219,11 @@ export function buildTemplateNarrative(stats: RecapStatistics, workspaceName: st
     ...metricLines,
     habitLine,
     `**Knowledge work.** You created ${stats.notes.created} notes, edited ${stats.notes.edited}, and added ${stats.notes.wordsWritten} words. You created ${stats.maps.created} maps containing ${stats.maps.nodesCreated} nodes.`,
+    ...(stats.flashcards.reviewed
+      ? [
+          `**Study.** You reviewed ${stats.flashcards.reviewed} flashcard${stats.flashcards.reviewed === 1 ? "" : "s"} with ${stats.flashcards.retentionRate}% retention and a ${stats.flashcards.streak}-day streak${stats.flashcards.courses.length ? ` across ${stats.flashcards.courses.join(", ")}` : ""}.`,
+        ]
+      : []),
   ].join("\n\n");
 }
 

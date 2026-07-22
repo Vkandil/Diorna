@@ -107,6 +107,8 @@ const base: RecapInput = {
     },
   ],
   flashcards: [],
+  reviewLogs: [],
+  courses: [],
   categoryNames: { projects: "Projects", sport: "Sport" },
 };
 
@@ -148,6 +150,68 @@ describe("recap aggregation and factual validation", () => {
   });
   it("produces one daily score per day", () =>
     expect(aggregateRecap(base).dailyScores).toHaveLength(30));
+  it("computes review retention and contributing courses", () => {
+    const stats = aggregateRecap({
+      ...base,
+      notes: [{ ...base.notes[0]!, courseId: "course-1" }],
+      courses: [
+        {
+          id: "course-1",
+          workspaceId: "personal",
+          name: "Systems",
+          code: "SYS",
+          color: "#4455aa",
+          semester: "Autumn 2026",
+          instructor: "Ada",
+          credits: 5,
+          schedule: "Tuesday",
+          sortOrder: 0,
+        },
+      ],
+      flashcards: [
+        {
+          id: "card-1",
+          workspaceId: "personal",
+          noteId: "n1",
+          blockId: "block-1",
+          front: "Question",
+          back: "Answer",
+          cardType: "basic",
+          ease: 2.5,
+          intervalDays: 1,
+          dueDate: "2026-10-01",
+          reps: 2,
+          lapses: 1,
+        },
+      ],
+      reviewLogs: [
+        {
+          id: "review-1",
+          workspaceId: "personal",
+          flashcardId: "card-1",
+          reviewedAt: "2026-09-12T12:00:00Z",
+          grade: "again",
+          intervalBefore: 1,
+          intervalAfter: 0,
+        },
+        {
+          id: "review-2",
+          workspaceId: "personal",
+          flashcardId: "card-1",
+          reviewedAt: "2026-09-13T12:00:00Z",
+          grade: "good",
+          intervalBefore: 0,
+          intervalAfter: 1,
+        },
+      ],
+    });
+    expect(stats.flashcards).toEqual({
+      reviewed: 2,
+      retentionRate: 50,
+      streak: 2,
+      courses: ["Systems"],
+    });
+  });
   it("builds a usable fallback with no model", () => {
     const text = buildTemplateNarrative(aggregateRecap(base), "Personal");
     expect(text).toContain("Bench press");

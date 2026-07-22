@@ -10,6 +10,14 @@ pub struct StructuredSnapshot {
     pub workspaces: Vec<Workspace>,
     pub categories: Vec<Category>,
     pub courses: Vec<Course>,
+    #[serde(default)]
+    pub templates: Vec<StudyTemplate>,
+    #[serde(default)]
+    pub flashcards: Vec<Flashcard>,
+    #[serde(default)]
+    pub review_logs: Vec<ReviewLog>,
+    #[serde(default)]
+    pub references: Vec<Reference>,
     pub items: Vec<Item>,
     pub habits: Vec<Habit>,
     pub habit_entries: Vec<HabitEntry>,
@@ -54,6 +62,62 @@ pub struct Course {
     credits: f64,
     schedule: String,
     sort_order: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct StudyTemplate {
+    id: String,
+    workspace_id: String,
+    name: String,
+    body: String,
+    built_in: bool,
+    default_course_id: Option<String>,
+    sort_order: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct Flashcard {
+    id: String,
+    workspace_id: String,
+    note_id: String,
+    block_id: String,
+    front: String,
+    back: String,
+    card_type: String,
+    ease: f64,
+    interval_days: i64,
+    due_date: String,
+    reps: i64,
+    lapses: i64,
+    last_reviewed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewLog {
+    id: String,
+    workspace_id: String,
+    flashcard_id: String,
+    reviewed_at: String,
+    grade: String,
+    interval_before: i64,
+    interval_after: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Reference {
+    id: String,
+    workspace_id: String,
+    citation_key: String,
+    title: String,
+    authors: Vec<String>,
+    year: Option<i64>,
+    container: Option<String>,
+    doi: Option<String>,
+    url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -174,6 +238,53 @@ pub async fn persist(pool: &SqlitePool, snapshot: StructuredSnapshot) -> Result<
             .bind(&value.color).bind(&value.semester).bind(&value.instructor).bind(value.credits)
             .bind(&value.schedule).bind(value.sort_order).execute(&mut *tx).await?;
     }
+    for value in &snapshot.templates {
+        let default_course_id = existing_id(
+            &mut tx,
+            "course",
+            &value.workspace_id,
+            value.default_course_id.as_deref(),
+        )
+        .await?;
+        sqlx::query("INSERT INTO study_template(id,workspace_id,name,body,built_in,default_course_id,sort_order) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,body=excluded.body,built_in=excluded.built_in,default_course_id=excluded.default_course_id,sort_order=excluded.sort_order")
+            .bind(&value.id).bind(&value.workspace_id).bind(&value.name).bind(&value.body)
+            .bind(value.built_in).bind(default_course_id).bind(value.sort_order).execute(&mut *tx).await?;
+    }
+    for value in &snapshot.flashcards {
+        if existing_id(&mut tx, "note", &value.workspace_id, Some(&value.note_id))
+            .await?
+            .is_none()
+        {
+            continue;
+        }
+        sqlx::query("INSERT INTO flashcard(id,workspace_id,note_id,block_id,front,back,card_type,ease,interval_days,due_date,reps,lapses,last_reviewed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET front=excluded.front,back=excluded.back,card_type=excluded.card_type,ease=excluded.ease,interval_days=excluded.interval_days,due_date=excluded.due_date,reps=excluded.reps,lapses=excluded.lapses,last_reviewed_at=excluded.last_reviewed_at")
+            .bind(&value.id).bind(&value.workspace_id).bind(&value.note_id).bind(&value.block_id)
+            .bind(&value.front).bind(&value.back).bind(&value.card_type).bind(value.ease)
+            .bind(value.interval_days).bind(&value.due_date).bind(value.reps).bind(value.lapses)
+            .bind(&value.last_reviewed_at).execute(&mut *tx).await?;
+    }
+    for value in &snapshot.review_logs {
+        if sqlx::query("SELECT id FROM flashcard WHERE workspace_id=? AND id=?")
+            .bind(&value.workspace_id)
+            .bind(&value.flashcard_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_none()
+        {
+            continue;
+        }
+        sqlx::query("INSERT INTO review_log(id,workspace_id,flashcard_id,reviewed_at,grade,interval_before,interval_after) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING")
+            .bind(&value.id).bind(&value.workspace_id).bind(&value.flashcard_id).bind(&value.reviewed_at)
+            .bind(&value.grade).bind(value.interval_before).bind(value.interval_after).execute(&mut *tx).await?;
+    }
+    for value in &snapshot.references {
+        let data = json_text(
+            &serde_json::to_value(value)
+                .map_err(|error| DiornaError::InvalidData(error.to_string()))?,
+        )?;
+        sqlx::query("INSERT INTO reference(id,workspace_id,citation_key,csl_json) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET citation_key=excluded.citation_key,csl_json=excluded.csl_json")
+            .bind(&value.id).bind(&value.workspace_id).bind(&value.citation_key).bind(data).execute(&mut *tx).await?;
+    }
     for value in &snapshot.items {
         let note_id = existing_id(
             &mut tx,
@@ -269,6 +380,22 @@ pub async fn load(pool: &SqlitePool) -> Result<LoadedStructuredState> {
         .fetch_all(pool).await?;
     let courses = sqlx::query_as::<_, Course>("SELECT id,workspace_id,name,code,color,semester,instructor,credits,schedule,sort_order FROM course ORDER BY workspace_id,sort_order")
         .fetch_all(pool).await?;
+    let templates = sqlx::query_as::<_, StudyTemplate>("SELECT id,workspace_id,name,body,built_in,default_course_id,sort_order FROM study_template ORDER BY workspace_id,sort_order")
+        .fetch_all(pool).await?;
+    let flashcards = sqlx::query_as::<_, Flashcard>("SELECT id,workspace_id,note_id,block_id,front,back,card_type,ease,interval_days,due_date,reps,lapses,last_reviewed_at FROM flashcard ORDER BY workspace_id,due_date")
+        .fetch_all(pool).await?;
+    let review_logs = sqlx::query_as::<_, ReviewLog>("SELECT id,workspace_id,flashcard_id,reviewed_at,grade,interval_before,interval_after FROM review_log ORDER BY reviewed_at")
+        .fetch_all(pool).await?;
+    let mut references = Vec::new();
+    for row in sqlx::query("SELECT csl_json FROM reference ORDER BY workspace_id,citation_key")
+        .fetch_all(pool)
+        .await?
+    {
+        references.push(
+            serde_json::from_str::<Reference>(&row.get::<String, _>("csl_json"))
+                .map_err(|error| DiornaError::InvalidData(error.to_string()))?,
+        );
+    }
     let metrics = sqlx::query_as::<_, Metric>("SELECT id,workspace_id,name,unit,category_id,target,sort_order FROM metric ORDER BY workspace_id,sort_order")
         .fetch_all(pool).await?;
     let metric_entries = sqlx::query_as::<_, MetricEntry>(
@@ -348,6 +475,10 @@ pub async fn load(pool: &SqlitePool) -> Result<LoadedStructuredState> {
             workspaces,
             categories,
             courses,
+            templates,
+            flashcards,
+            review_logs,
+            references,
             items,
             habits,
             habit_entries,
@@ -369,13 +500,28 @@ fn parse_json(text: String) -> Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::Vault;
+    use crate::storage::{SaveNoteInput, Vault};
 
     #[tokio::test]
     async fn structured_state_round_trips_through_sqlite() {
         let directory = tempfile::tempdir().unwrap();
         let vault = Vault::open(directory.path().to_path_buf()).await.unwrap();
         assert!(!load(&vault.pool).await.unwrap().initialized);
+        vault
+            .save_note(SaveNoteInput {
+                id: Some("note-study".into()),
+                workspace_id: "workspace-personal".into(),
+                relative_path: "Study.md".into(),
+                title: "Study".into(),
+                markdown: "A {{c1::card}}".into(),
+                course_id: None,
+                tags: vec![],
+                properties: serde_json::json!({}),
+                starred: false,
+                expected_hash: None,
+            })
+            .await
+            .unwrap();
         let snapshot = StructuredSnapshot {
             workspaces: vec![Workspace {
                 id: "workspace-personal".into(),
@@ -417,6 +563,50 @@ mod tests {
                 updated_at: "2026-07-22T00:00:00Z".into(),
                 trashed_at: None,
             }],
+            templates: vec![StudyTemplate {
+                id: "template-test".into(),
+                workspace_id: "workspace-personal".into(),
+                name: "Test".into(),
+                body: "<p>{{cursor}}</p>".into(),
+                built_in: false,
+                default_course_id: None,
+                sort_order: 0,
+            }],
+            flashcards: vec![Flashcard {
+                id: "card-test".into(),
+                workspace_id: "workspace-personal".into(),
+                note_id: "note-study".into(),
+                block_id: "cloze-1".into(),
+                front: "A […]".into(),
+                back: "card".into(),
+                card_type: "cloze".into(),
+                ease: 2.5,
+                interval_days: 1,
+                due_date: "2026-07-23".into(),
+                reps: 1,
+                lapses: 0,
+                last_reviewed_at: None,
+            }],
+            review_logs: vec![ReviewLog {
+                id: "review-test".into(),
+                workspace_id: "workspace-personal".into(),
+                flashcard_id: "card-test".into(),
+                reviewed_at: "2026-07-22T12:00:00Z".into(),
+                grade: "good".into(),
+                interval_before: 0,
+                interval_after: 1,
+            }],
+            references: vec![Reference {
+                id: "reference-test".into(),
+                workspace_id: "workspace-personal".into(),
+                citation_key: "smith2026".into(),
+                title: "Local first".into(),
+                authors: vec!["Smith, Jane".into()],
+                year: Some(2026),
+                container: None,
+                doi: None,
+                url: None,
+            }],
             ..StructuredSnapshot::default()
         };
         persist(&vault.pool, snapshot).await.unwrap();
@@ -425,6 +615,10 @@ mod tests {
         assert_eq!(loaded.snapshot.items.len(), 1);
         assert_eq!(loaded.snapshot.items[0].reminders, vec![15]);
         assert_eq!(loaded.snapshot.items[0].id, "item-training");
+        assert_eq!(loaded.snapshot.templates[0].id, "template-test");
+        assert_eq!(loaded.snapshot.flashcards[0].id, "card-test");
+        assert_eq!(loaded.snapshot.review_logs[0].grade, "good");
+        assert_eq!(loaded.snapshot.references[0].citation_key, "smith2026");
     }
 }
 

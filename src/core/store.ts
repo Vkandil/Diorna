@@ -7,6 +7,8 @@ import type {
   CanvasMap,
   Category,
   Course,
+  Flashcard,
+  FlashcardGrade,
   Habit,
   HabitEntry,
   Id,
@@ -15,11 +17,17 @@ import type {
   ModuleId,
   Note,
   Recap,
+  ReferenceRecord,
+  ReviewLog,
+  StudyTemplate,
   Workspace,
 } from "@/shared/models";
 import { createId } from "@/shared/id";
 import { persistNativeCanvas, persistNativeNote, persistNativeSettings } from "@/core/native";
 import { rewriteWikiLinks } from "@/modules/notes/logic";
+import { applyTemplate } from "@/modules/notes/logic";
+import { extractNoteFlashcards } from "@/modules/student/flashcards";
+import { reviewCard } from "@/modules/student/spacedRepetition";
 
 interface TabState {
   id: string;
@@ -41,6 +49,10 @@ interface DiornaState {
   workspaces: Workspace[];
   categories: Category[];
   courses: Course[];
+  templates: StudyTemplate[];
+  flashcards: Flashcard[];
+  reviewLogs: ReviewLog[];
+  references: ReferenceRecord[];
   notes: Note[];
   maps: CanvasMap[];
   items: CalendarItem[];
@@ -70,6 +82,13 @@ interface DiornaState {
   reorderTabs: (sourceId: string, targetId: string) => void;
   addNote: (title?: string) => Note;
   updateNote: (id: Id, changes: Partial<Note>) => void;
+  addCourse: (course: Omit<Course, "id" | "workspaceId" | "sortOrder">) => Course;
+  updateCourse: (id: Id, changes: Partial<Course>) => void;
+  addTemplate: (name?: string) => StudyTemplate;
+  updateTemplate: (id: Id, changes: Partial<StudyTemplate>) => void;
+  createNoteFromTemplate: (templateId: Id, title: string, courseId?: Id) => Note | undefined;
+  gradeFlashcard: (id: Id, grade: FlashcardGrade) => void;
+  addReferences: (references: Array<Omit<ReferenceRecord, "workspaceId">>) => void;
   addMap: (name?: string) => CanvasMap;
   updateMap: (id: Id, changes: Partial<CanvasMap>) => void;
   addItem: (
@@ -83,6 +102,10 @@ interface DiornaState {
     workspaces: Workspace[];
     categories: Category[];
     courses: Course[];
+    templates: StudyTemplate[];
+    flashcards: Flashcard[];
+    reviewLogs: ReviewLog[];
+    references: ReferenceRecord[];
     items: CalendarItem[];
     habits: Habit[];
     habitEntries: HabitEntry[];
@@ -171,6 +194,41 @@ const baseCategories: Category[] = categorySeeds.flatMap(([workspaceId, names, c
     sortOrder: index,
   })),
 );
+
+const builtInTemplates: StudyTemplate[] = [
+  {
+    id: "template-lecture",
+    workspaceId: studentId,
+    name: "Lecture",
+    body: "<h1>{{title}}</h1><p><strong>{{course}}</strong> · {{date}} · Week {{week}}</p><h2>Key ideas</h2><p>{{cursor}}</p><h2>Questions</h2><ul><li></li></ul><h2>Summary</h2><p></p>",
+    builtIn: true,
+    sortOrder: 0,
+  },
+  {
+    id: "template-exercise",
+    workspaceId: studentId,
+    name: "Exercise session",
+    body: "<h1>{{title}}</h1><p>{{course}} · {{date}}</p><h2>Objectives</h2><p></p><h2>Exercises</h2><ol><li>{{cursor}}</li></ol><h2>Mistakes to revisit</h2><p></p>",
+    builtIn: true,
+    sortOrder: 1,
+  },
+  {
+    id: "template-exam",
+    workspaceId: studentId,
+    name: "Exam preparation",
+    body: '<h1>{{title}}</h1><p>{{course}} · {{semester}}</p><h2>Coverage</h2><ul data-type="taskList"><li data-checked="false"><p>{{cursor}}</p></li></ul><h2>Formulae</h2><p></p><h2>Weak areas</h2><p></p>',
+    builtIn: true,
+    sortOrder: 2,
+  },
+  {
+    id: "template-project",
+    workspaceId: studentId,
+    name: "Project",
+    body: '<h1>{{title}}</h1><p>{{course}} · {{date}}</p><h2>Outcome</h2><p>{{cursor}}</p><h2>Milestones</h2><ul data-type="taskList"><li data-checked="false"><p></p></li></ul><h2>References</h2><p></p>',
+    builtIn: true,
+    sortOrder: 3,
+  },
+];
 
 function sampleData() {
   const sportId = `${personalId}-sport`;
@@ -464,6 +522,10 @@ const initial = {
   workspaces: baseWorkspaces,
   categories: baseCategories,
   courses: samples.courses,
+  templates: builtInTemplates,
+  flashcards: [] as Flashcard[],
+  reviewLogs: [] as ReviewLog[],
+  references: [] as ReferenceRecord[],
   notes: samples.notes,
   maps: samples.maps,
   items: samples.items,
@@ -499,6 +561,9 @@ export const useDiornaStore = create<DiornaState>()(
                 habitEntries: [],
                 metrics: [],
                 metricEntries: [],
+                flashcards: [],
+                reviewLogs: [],
+                references: [],
               }
             : {}),
         }));
@@ -669,12 +734,119 @@ export const useDiornaStore = create<DiornaState>()(
                 priority: "medium",
                 subtasks: [],
                 noteId: note.id,
+                ...(note.courseId ? { courseId: note.courseId } : {}),
                 rruleExceptions: [],
                 reminders: [get().settings.defaultReminderMinutes],
               });
           }
         }
+        if (note) {
+          const cards = extractNoteFlashcards(
+            note,
+            get().flashcards.filter((card) => card.noteId === note.id),
+          );
+          set((state) => ({
+            flashcards: [...state.flashcards.filter((card) => card.noteId !== note.id), ...cards],
+          }));
+        }
       },
+      addCourse: (data) => {
+        const course: Course = {
+          ...data,
+          id: createId("course"),
+          workspaceId: get().activeWorkspaceId,
+          sortOrder: get().courses.filter((entry) => entry.workspaceId === get().activeWorkspaceId)
+            .length,
+        };
+        set((state) => ({ courses: [...state.courses, course] }));
+        return course;
+      },
+      updateCourse: (id, changes) =>
+        set((state) => ({
+          courses: state.courses.map((course) =>
+            course.id === id && course.workspaceId === state.activeWorkspaceId
+              ? { ...course, ...changes }
+              : course,
+          ),
+        })),
+      addTemplate: (name = "Custom template") => {
+        const template: StudyTemplate = {
+          id: createId("template"),
+          workspaceId: get().activeWorkspaceId,
+          name,
+          body: "<h1>{{title}}</h1><p>{{date}}</p><p>{{cursor}}</p>",
+          builtIn: false,
+          sortOrder: get().templates.filter(
+            (entry) => entry.workspaceId === get().activeWorkspaceId,
+          ).length,
+        };
+        set((state) => ({ templates: [...state.templates, template] }));
+        return template;
+      },
+      updateTemplate: (id, changes) =>
+        set((state) => ({
+          templates: state.templates.map((template) =>
+            template.id === id && template.workspaceId === state.activeWorkspaceId
+              ? { ...template, ...changes }
+              : template,
+          ),
+        })),
+      createNoteFromTemplate: (templateId, title, courseId) => {
+        const template = get().templates.find(
+          (entry) => entry.id === templateId && entry.workspaceId === get().activeWorkspaceId,
+        );
+        if (!template) return undefined;
+        const course = get().courses.find((entry) => entry.id === courseId);
+        const note = get().addNote(title);
+        const rendered = applyTemplate(template.body, {
+          title: note.title,
+          ...(course ? { course: course.name, semester: course.semester } : {}),
+        });
+        get().updateNote(note.id, {
+          body: rendered.content,
+          ...(course ? { courseId: course.id, path: `notes/${course.code}/${note.title}.md` } : {}),
+        });
+        return get().notes.find((entry) => entry.id === note.id);
+      },
+      gradeFlashcard: (id, grade) => {
+        const card = get().flashcards.find(
+          (entry) => entry.id === id && entry.workspaceId === get().activeWorkspaceId,
+        );
+        if (!card) return;
+        const result = reviewCard(card, grade);
+        const { intervalBefore, grade: reviewedGrade, ...updated } = result;
+        const log: ReviewLog = {
+          id: createId("review"),
+          workspaceId: card.workspaceId,
+          flashcardId: card.id,
+          reviewedAt: updated.lastReviewedAt ?? new Date().toISOString(),
+          grade: reviewedGrade,
+          intervalBefore,
+          intervalAfter: updated.intervalDays,
+        };
+        set((state) => ({
+          flashcards: state.flashcards.map((entry) => (entry.id === id ? updated : entry)),
+          reviewLogs: [...state.reviewLogs, log],
+        }));
+      },
+      addReferences: (references) =>
+        set((state) => {
+          const workspaceId = state.activeWorkspaceId;
+          const incoming = references.map((reference) => ({ ...reference, workspaceId }));
+          const keys = new Set(
+            incoming.map((reference) => reference.citationKey.toLocaleLowerCase()),
+          );
+          return {
+            references: [
+              ...state.references.filter(
+                (reference) =>
+                  reference.workspaceId !== workspaceId ||
+                  !keys.has(reference.citationKey.toLocaleLowerCase()),
+              ),
+              ...incoming,
+            ],
+          };
+        }),
       addMap: (name = "Untitled map") => {
         const map: CanvasMap = {
           id: createId("map"),
@@ -714,14 +886,43 @@ export const useDiornaStore = create<DiornaState>()(
         set((state) => ({ items: [...state.items, item] }));
         return item;
       },
-      updateItem: (id, changes) =>
+      updateItem: (id, changes) => {
         set((state) => ({
           items: state.items.map((item) =>
             item.id === id && item.workspaceId === state.activeWorkspaceId
               ? { ...item, ...changes, updatedAt: new Date().toISOString() }
               : item,
           ),
-        })),
+        }));
+        if (changes.dueAt === undefined) return;
+        const item = get().items.find(
+          (entry) => entry.id === id && entry.workspaceId === get().activeWorkspaceId,
+        );
+        const note = item?.noteId
+          ? get().notes.find(
+              (entry) => entry.id === item.noteId && entry.workspaceId === item.workspaceId,
+            )
+          : undefined;
+        if (!note) return;
+        const deadlineEntry = Object.entries(note.properties).find(
+          ([, property]) => property.type === "deadline",
+        );
+        if (!deadlineEntry || deadlineEntry[1].value === changes.dueAt) return;
+        const updated: Note = {
+          ...note,
+          properties: {
+            ...note.properties,
+            [deadlineEntry[0]]: { type: "deadline", value: changes.dueAt },
+          },
+          updatedAt: new Date().toISOString(),
+        };
+        set((state) => ({
+          notes: state.notes.map((entry) => (entry.id === note.id ? updated : entry)),
+        }));
+        void persistNativeNote(updated).catch((error: unknown) =>
+          console.error("Native note save failed", error),
+        );
+      },
       addHabit: (data) => {
         const habit: Habit = {
           id: createId("habit"),

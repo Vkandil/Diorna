@@ -6,12 +6,16 @@ import type {
   CanvasMap,
   Category,
   Course,
+  Flashcard,
   Habit,
   HabitEntry,
   Metric,
   MetricEntry,
   Note,
   Recap,
+  ReferenceRecord,
+  ReviewLog,
+  StudyTemplate,
   Workspace,
 } from "@/shared/models";
 
@@ -52,6 +56,10 @@ export interface StructuredSnapshot {
   workspaces: Workspace[];
   categories: Category[];
   courses: Course[];
+  templates: StudyTemplate[];
+  flashcards: Flashcard[];
+  reviewLogs: ReviewLog[];
+  references: ReferenceRecord[];
   items: CalendarItem[];
   habits: Habit[];
   habitEntries: HabitEntry[];

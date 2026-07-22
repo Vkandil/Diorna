@@ -1,4 +1,4 @@
-import { format, isBefore, startOfToday } from "date-fns";
+import { differenceInCalendarDays, format, isBefore, startOfToday } from "date-fns";
 import {
   ArrowRight,
   BookOpen,
@@ -20,12 +20,17 @@ export function HomeView() {
   const habits = selectWorkspace(state.habits, workspace.id).filter((habit) => !habit.archived);
   const entries = selectWorkspace(state.habitEntries, workspace.id);
   const items = selectWorkspace(state.items, workspace.id);
+  const courses = selectWorkspace(state.courses, workspace.id);
+  const courseNotes = selectWorkspace(state.notes, workspace.id);
+  const dueCards = selectWorkspace(state.flashcards, workspace.id).filter(
+    (card) => card.dueDate <= dateKey(new Date()),
+  );
   const today = dateKey(new Date());
   const score = completionScore(habits, entries, today);
   const upcoming = items
     .filter((item) => !item.completedAt && (item.dueAt ?? item.startAt))
     .sort((a, b) => (a.dueAt ?? a.startAt ?? "").localeCompare(b.dueAt ?? b.startAt ?? ""))
-    .slice(0, 5);
+    .slice(0, workspace.kind === "student" ? 10 : 5);
   const streaks = habits
     .map((habit) => ({
       habit,
@@ -95,14 +100,23 @@ export function HomeView() {
               const when = item.dueAt ?? item.startAt!;
               const overdue = isBefore(new Date(when), startOfToday());
               const category = state.categories.find((entry) => entry.id === item.categoryId);
+              const course = courses.find((entry) => entry.id === item.courseId);
+              const days = differenceInCalendarDays(new Date(when), new Date());
               return (
-                <button key={item.id} onClick={() => state.setModule("calendar")}>
-                  <i style={{ background: category?.color }} />
+                <button
+                  className={workspace.kind === "student" && days <= 7 ? "urgent" : ""}
+                  key={item.id}
+                  onClick={() => state.setModule("calendar")}
+                >
+                  <i style={{ background: course?.color ?? category?.color }} />
                   <span>
                     <strong>{item.title}</strong>
                     <small className={overdue ? "danger" : ""}>
-                      {overdue ? "Overdue · " : ""}
+                      {course ? `${course.code} · ` : ""}
                       {format(new Date(when), "EEE d MMM · HH:mm")}
+                      {workspace.kind === "student"
+                        ? ` · ${days < 0 ? `${Math.abs(days)}d overdue` : days === 0 ? "today" : `${days}d`}`
+                        : ""}
                     </small>
                   </span>
                 </button>
@@ -121,20 +135,36 @@ export function HomeView() {
           <section className="widget wide">
             <header>
               <span>Courses</span>
-              <BookOpen size={17} />
+              <button className="link-button" onClick={() => state.setModule("notes")}>
+                {dueCards.length} cards due <BookOpen size={17} />
+              </button>
             </header>
             <div className="course-grid">
-              {selectWorkspace(state.courses, workspace.id).map((course) => (
-                <button key={course.id} style={{ "--course": course.color } as React.CSSProperties}>
-                  <i />
-                  <span>
-                    <strong>{course.code}</strong>
-                    <small>{course.name}</small>
-                  </span>
-                  <b>{course.credits} ECTS</b>
-                </button>
-              ))}
-              <button className="add-card">+ Add a course</button>
+              {courses.map((course) => {
+                const noteIds = new Set(
+                  courseNotes.filter((note) => note.courseId === course.id).map((note) => note.id),
+                );
+                const courseDue = dueCards.filter((card) => noteIds.has(card.noteId)).length;
+                return (
+                  <button
+                    key={course.id}
+                    style={{ "--course": course.color } as React.CSSProperties}
+                    onClick={() => state.setModule("notes")}
+                  >
+                    <i />
+                    <span>
+                      <strong>{course.code}</strong>
+                      <small>
+                        {course.name} · {courseDue} due
+                      </small>
+                    </span>
+                    <b>{course.credits} ECTS</b>
+                  </button>
+                );
+              })}
+              <button className="add-card" onClick={() => state.setModule("notes")}>
+                + Add a course
+              </button>
             </div>
           </section>
         ) : (

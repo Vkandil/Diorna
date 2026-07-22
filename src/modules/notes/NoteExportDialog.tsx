@@ -3,7 +3,8 @@ import { createPortal } from "react-dom";
 import katex from "katex";
 import { Download, FileText, Printer, X } from "lucide-react";
 import { exportMarkdownNotes } from "@/core/native";
-import type { Course, Note } from "@/shared/models";
+import type { Course, Note, ReferenceRecord } from "@/shared/models";
+import { citationKeys, formatReference, type CitationStyle } from "@/modules/student/bibliography";
 import { extractOutline } from "./logic";
 
 type ExportScope = "note" | "folder" | "course";
@@ -12,11 +13,13 @@ export function NoteExportDialog({
   note,
   notes,
   courses,
+  references,
   onClose,
 }: {
   note: Note;
   notes: Note[];
   courses: Course[];
+  references: ReferenceRecord[];
   onClose: () => void;
 }) {
   const [scope, setScope] = useState<ExportScope>("note");
@@ -127,6 +130,7 @@ export function NoteExportDialog({
           titlePage={titlePage}
           tableOfContents={tableOfContents}
           pageNumbers={pageNumbers}
+          references={references}
           {...(scope === "course" && course ? { course } : {})}
         />,
         document.body,
@@ -141,6 +145,7 @@ function PrintDocument({
   titlePage,
   tableOfContents,
   pageNumbers,
+  references,
   course,
 }: {
   title: string;
@@ -148,6 +153,7 @@ function PrintDocument({
   titlePage: boolean;
   tableOfContents: boolean;
   pageNumbers: boolean;
+  references: ReferenceRecord[];
   course?: Course;
 }) {
   return (
@@ -188,7 +194,7 @@ function PrintDocument({
           {!!entry.tags.length && (
             <p className="print-tags">{entry.tags.map((tag) => `#${tag}`).join("  ")}</p>
           )}
-          <div dangerouslySetInnerHTML={{ __html: renderExportHtml(entry.body) }} />
+          <div dangerouslySetInnerHTML={{ __html: renderExportHtml(entry.body, references) }} />
         </article>
       ))}
       {pageNumbers && <footer className="print-page-number" />}
@@ -196,12 +202,53 @@ function PrintDocument({
   );
 }
 
-function renderExportHtml(html: string): string {
+function renderExportHtml(html: string, references: ReferenceRecord[]): string {
   const document = new DOMParser().parseFromString(html, "text/html");
-  document.querySelectorAll<HTMLElement>('[data-type="math-block"]').forEach((element) => {
-    const latex = element.getAttribute("latex") ?? "";
+  const keys = citationKeys(document.body.textContent ?? "");
+  const cited = references.filter((reference) => keys.has(reference.citationKey.toLowerCase()));
+  document.querySelectorAll<HTMLElement>('[data-type="reference-list"]').forEach((element) => {
+    const style = (element.getAttribute("citationstyle") ?? "apa") as CitationStyle;
+    element.replaceChildren();
+    const heading = document.createElement("h2");
+    heading.textContent = "References";
+    element.append(heading);
+    cited.forEach((reference, index) => {
+      const paragraph = document.createElement("p");
+      paragraph.textContent = formatReference(reference, style, index + 1);
+      element.append(paragraph);
+    });
+  });
+  const equations = [...document.querySelectorAll<HTMLElement>('[data-type="math-block"]')];
+  const labels = new Map<string, number>();
+  let number = 0;
+  equations.forEach((element) => {
+    if (element.getAttribute("number") !== "auto") return;
+    number += 1;
+    const label = element.getAttribute("label")?.trim();
+    if (label) labels.set(label, number);
+  });
+  const resolveReferences = (value: string) =>
+    value.replace(/\\ref\{([^}]+)\}/g, (_, label: string) => String(labels.get(label) ?? "??"));
+  number = 0;
+  equations.forEach((element) => {
+    const latex = resolveReferences(element.getAttribute("latex") ?? "");
     element.innerHTML = katex.renderToString(latex, {
       displayMode: true,
+      throwOnError: false,
+      trust: false,
+    });
+    if (element.getAttribute("number") === "auto") {
+      number += 1;
+      const badge = document.createElement("span");
+      badge.className = "equation-number";
+      badge.textContent = `(${number})`;
+      element.append(badge);
+    }
+  });
+  document.querySelectorAll<HTMLElement>('[data-type="math-inline"]').forEach((element) => {
+    const latex = resolveReferences(element.getAttribute("latex") ?? "");
+    element.innerHTML = katex.renderToString(latex, {
+      displayMode: false,
       throwOnError: false,
       trust: false,
     });

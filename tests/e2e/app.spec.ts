@@ -1,7 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function completeOnboarding(page: Page) {
-  await page.goto("/");
   await expect(page.getByRole("heading", { name: "Choose your vault" })).toBeVisible();
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { name: "Make it comfortable" })).toBeVisible();
@@ -15,7 +14,9 @@ async function completeOnboarding(page: Page) {
 }
 
 test.beforeEach(async ({ page }) => {
-  await page.addInitScript(() => localStorage.clear());
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
 });
 
 test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page }) => {
@@ -98,4 +99,62 @@ test("organises, annotates, searches, and revises notes", async ({ page }) => {
   await page.getByRole("button", { name: "Revision history" }).click();
   await expect(page.getByRole("complementary", { name: "Revision history" })).toBeVisible();
   await page.screenshot({ path: "test-results/notes-workflow.png", fullPage: true });
+});
+
+test("creates a course lecture and reviews an authored flashcard", async ({ page }) => {
+  test.setTimeout(60_000);
+  await completeOnboarding(page);
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  const browser = page.locator(".note-browser");
+  await browser.getByRole("button", { name: "Courses" }).click();
+  await expect(page.getByRole("heading", { name: /Distributed Systems/ })).toBeVisible();
+  await page.getByRole("button", { name: "New lecture" }).click();
+  await expect(page.getByLabel("Note title")).toHaveValue(/INFO-H515/);
+  const lectureTitle = await page.getByLabel("Note title").inputValue();
+  const editor = page.getByLabel("Note editor");
+  await page.getByLabel("Insert math").click();
+  await page.getByLabel("Search mathematical symbols").fill("E = mc^2");
+  await page.getByRole("button", { name: "Insert display equation" }).click();
+  await page.locator(".math-node").dblclick();
+  await page.getByLabel("Number equation").check();
+  await page.getByLabel("Equation label").fill("mass");
+  await page.locator(".math-editor-fields").getByRole("button", { name: "Done" }).click();
+  await expect(page.locator(".equation-number")).toHaveText("(1)");
+  await editor.click();
+  await editor.press("Control+End");
+  await editor.pressSequentially("/");
+  await page
+    .locator(".slash-menu")
+    .getByRole("button", { name: /Flashcard/ })
+    .click();
+  await expect(page.locator(".flashcard-node")).toBeVisible();
+  await page.waitForTimeout(800);
+  await browser.getByRole("button", { name: /Review/ }).click();
+  await expect(page.getByRole("heading", { name: "1 cards due" })).toBeVisible();
+  await page.getByRole("button", { name: "Show answer" }).click();
+  await page.getByRole("button", { name: "Good" }).click();
+  await expect(page.getByRole("heading", { name: "0 cards due" })).toBeVisible();
+  await browser.getByRole("button", { name: "Bibliography" }).click();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: "library.bib",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "@article{smith2026, title={Local First Learning}, author={Smith, Jane}, year={2026}}",
+    ),
+  });
+  await expect(page.getByText("Local First Learning", { exact: true })).toBeVisible();
+  await page.locator(".note-list-row").filter({ hasText: lectureTitle }).click();
+  await editor.click();
+  await editor.press("Control+End");
+  await editor.press("Enter");
+  await editor.pressSequentially("@smi");
+  await page.getByRole("option", { name: /Local First Learning/ }).click();
+  await editor.press("Enter");
+  await editor.pressSequentially("/");
+  await page
+    .locator(".slash-menu")
+    .getByRole("button", { name: /Reference list/ })
+    .click();
+  await expect(page.locator(".reference-list-node")).toContainText("Local First Learning");
+  await page.screenshot({ path: "test-results/student-workflow.png", fullPage: true });
 });

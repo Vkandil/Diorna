@@ -15,6 +15,7 @@ import TextAlign from "@tiptap/extension-text-align";
 import UnderlineExtension from "@tiptap/extension-underline";
 import {
   Bold,
+  BookOpen,
   Braces,
   ChevronDown,
   Code2,
@@ -22,18 +23,22 @@ import {
   FilePlus2,
   Folder,
   FolderPlus,
+  GraduationCap,
   Hash,
   Heading1,
   Heading2,
   Highlighter,
+  History,
   Italic,
+  LayoutTemplate,
+  Library,
   Link2,
   List,
   ListChecks,
   ListOrdered,
   MoreHorizontal,
   Network,
-  History,
+  Brain,
   Quote,
   Redo2,
   Replace,
@@ -50,13 +55,17 @@ import { parseWikiLinks, previewReplace, searchNotes } from "./logic";
 import {
   AttachmentBlock,
   CalloutBlock,
+  CodeBlock,
   FlashcardBlock,
   MathBlock,
+  MathInline,
   MermaidBlock,
 } from "./extensions";
 import { NotePropertiesPanel } from "./NoteProperties";
 import { RevisionPanel } from "./RevisionPanel";
 import { NoteExportDialog } from "./NoteExportDialog";
+import { StudentHub, type StudentView } from "@/modules/student/StudentHub";
+import { ReferenceListBlock } from "@/modules/student/ReferenceListBlock";
 
 export function NotesView() {
   const state = useDiornaStore();
@@ -64,7 +73,7 @@ export function NotesView() {
     (note) => !note.trashedAt,
   );
   const [filter, setFilter] = useState("");
-  const [view, setView] = useState<"editor" | "graph">("editor");
+  const [view, setView] = useState<"editor" | "graph" | StudentView>("editor");
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [replaceSearch, setReplaceSearch] = useState("");
   const [replaceWith, setReplaceWith] = useState("");
@@ -105,6 +114,9 @@ export function NotesView() {
     [notes, replaceSearch, replaceWith],
   );
   const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+  const studentWorkspace =
+    state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId)?.kind ===
+    "student";
   const [selectedId, setSelectedId] = useState(activeTab?.entityId ?? notes[0]?.id);
   useEffect(() => {
     if (activeTab?.entityId) setSelectedId(activeTab.entityId);
@@ -264,6 +276,34 @@ export function NotesView() {
               ))}
             </details>
           )}
+          {studentWorkspace && (
+            <details open>
+              <summary>
+                <GraduationCap size={13} /> Study
+              </summary>
+              <button onClick={() => setView("courses")}>
+                <BookOpen size={13} /> Courses
+              </button>
+              <button onClick={() => setView("templates")}>
+                <LayoutTemplate size={13} /> Templates
+              </button>
+              <button onClick={() => setView("review")}>
+                <Brain size={13} /> Review{" "}
+                <small>
+                  {
+                    state.flashcards.filter(
+                      (card) =>
+                        card.workspaceId === state.activeWorkspaceId &&
+                        card.dueDate <= new Date().toISOString().slice(0, 10),
+                    ).length
+                  }
+                </small>
+              </button>
+              <button onClick={() => setView("references")}>
+                <Library size={13} /> Bibliography
+              </button>
+            </details>
+          )}
         </div>
         {replaceOpen && (
           <section className="replace-panel" aria-label="Search and replace">
@@ -332,6 +372,7 @@ export function NotesView() {
               <button
                 onClick={() => {
                   setSelectedId(entry.id);
+                  setView("editor");
                   state.openTab({
                     module: "notes",
                     title: entry.title,
@@ -373,6 +414,15 @@ export function NotesView() {
             setSelectedId(id);
             setView("editor");
             state.openTab({ module: "notes", title: target.title, entityId: id });
+          }}
+        />
+      ) : (["courses", "templates", "review", "references"] as string[]).includes(view) ? (
+        <StudentHub
+          view={view as StudentView}
+          onOpenNote={(target) => {
+            setSelectedId(target.id);
+            setView("editor");
+            state.openTab({ module: "notes", title: target.title, entityId: target.id });
           }}
         />
       ) : note ? (
@@ -578,11 +628,14 @@ function Editor({ noteId }: { noteId: string }) {
   const [slashOpen, setSlashOpen] = useState(false);
   const [slashQuery, setSlashQuery] = useState("");
   const [wikiQuery, setWikiQuery] = useState<string>();
+  const [citationQuery, setCitationQuery] = useState<string>();
   const [historyOpen, setHistoryOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [tagInput, setTagInput] = useState("");
   const [addingTag, setAddingTag] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [mathPickerOpen, setMathPickerOpen] = useState(false);
+  const [mathSearch, setMathSearch] = useState("");
   const [focusMode, setFocusMode] = useState(false);
   const [typewriter, setTypewriter] = useState(false);
   const [lineWidth, setLineWidth] = useState<"narrow" | "normal" | "wide" | "full">("normal");
@@ -591,6 +644,7 @@ function Editor({ noteId }: { noteId: string }) {
     (entry) => entry.workspaceId === note.workspaceId && !entry.trashedAt,
   );
   const courses = state.courses.filter((entry) => entry.workspaceId === note.workspaceId);
+  const references = state.references.filter((entry) => entry.workspaceId === note.workspaceId);
   const notesRef = useRef(workspaceNotes);
   const noteRef = useRef(note);
   notesRef.current = workspaceNotes;
@@ -610,7 +664,7 @@ function Editor({ noteId }: { noteId: string }) {
   };
   const editor = useEditor({
     extensions: [
-      StarterKit,
+      StarterKit.configure({ codeBlock: false }),
       Highlight.configure({ multicolor: true }),
       Link.configure({
         openOnClick: false,
@@ -629,8 +683,11 @@ function Editor({ noteId }: { noteId: string }) {
       TextAlign.configure({ types: ["heading", "paragraph", "image"] }),
       UnderlineExtension,
       MathBlock,
+      MathInline,
+      CodeBlock,
       CalloutBlock,
       FlashcardBlock,
+      ReferenceListBlock,
       MermaidBlock,
       AttachmentBlock,
     ],
@@ -641,6 +698,10 @@ function Editor({ noteId }: { noteId: string }) {
       const beforeCursor = $from.parent.textBetween(0, $from.parentOffset, " ", " ");
       const wikiMatch = beforeCursor.match(/\[\[([^\]]*)$/);
       setWikiQuery(wikiMatch?.[1]);
+      const citationMatch = wikiMatch
+        ? undefined
+        : beforeCursor.match(/(?:^|\s)@([\p{L}\p{N}_-]*)$/u);
+      setCitationQuery(citationMatch?.[1]);
       window.clearTimeout(saveTimer.current);
       saveTimer.current = window.setTimeout(
         () =>
@@ -676,6 +737,7 @@ function Editor({ noteId }: { noteId: string }) {
         if (event.key === "Escape") {
           setSlashOpen(false);
           setWikiQuery(undefined);
+          setCitationQuery(undefined);
         }
         return false;
       },
@@ -928,6 +990,7 @@ function Editor({ noteId }: { noteId: string }) {
           attrs: { kind: "toc", title: "Table of contents" },
         }),
     ],
+    ["Reference list", "Study", () => editor.commands.insertContent({ type: "referenceList" })],
     ["Flashcard", "Study", () => editor.commands.insertContent({ type: "flashcardBlock" })],
   ] as const;
   const runSlash = (run: () => unknown) => {
@@ -954,10 +1017,19 @@ function Editor({ noteId }: { noteId: string }) {
         <button title="Insert link">
           <Link2 size={15} />
         </button>
-        <button title="Insert math">
+        <button
+          title="Insert math"
+          aria-label="Insert math"
+          className={mathPickerOpen ? "active" : ""}
+          onClick={() => setMathPickerOpen((open) => !open)}
+        >
           <Sigma size={15} />
         </button>
-        <button title="Insert code">
+        <button
+          title="Insert code"
+          aria-label="Insert code"
+          onClick={() => editor.chain().focus().toggleCodeBlock().run()}
+        >
           <Braces size={15} />
         </button>
         <span className="toolbar-spacer" />
@@ -997,6 +1069,50 @@ function Editor({ noteId }: { noteId: string }) {
               />{" "}
               Typewriter scrolling
             </label>
+          </div>
+        )}
+        {mathPickerOpen && (
+          <div className="math-picker">
+            <header>
+              <Search size={14} />
+              <input
+                autoFocus
+                aria-label="Search mathematical symbols"
+                placeholder="Search symbols and macros"
+                value={mathSearch}
+                onChange={(event) => setMathSearch(event.target.value)}
+              />
+            </header>
+            <div>
+              {mathSymbols
+                .filter(([name, latex]) =>
+                  `${name} ${latex}`.toLocaleLowerCase().includes(mathSearch.toLocaleLowerCase()),
+                )
+                .map(([name, latex]) => (
+                  <button
+                    title={`${name} · ${latex}`}
+                    key={latex}
+                    onClick={() => {
+                      editor.commands.insertContent({ type: "mathInline", attrs: { latex } });
+                      setMathPickerOpen(false);
+                    }}
+                  >
+                    {latex}
+                  </button>
+                ))}
+            </div>
+            <button
+              className="button compact"
+              onClick={() => {
+                editor.commands.insertContent({
+                  type: "mathBlock",
+                  attrs: { latex: mathSearch || "E = mc^2", number: "" },
+                });
+                setMathPickerOpen(false);
+              }}
+            >
+              Insert display equation
+            </button>
           </div>
         )}
       </header>
@@ -1096,6 +1212,44 @@ function Editor({ noteId }: { noteId: string }) {
             )}
           </div>
         )}
+        {citationQuery !== undefined && !!references.length && (
+          <div className="wiki-menu citation-menu" role="listbox" aria-label="Insert citation">
+            <header>
+              <Library size={14} />
+              <span>Insert citation</span>
+            </header>
+            {references
+              .filter((reference) =>
+                `${reference.citationKey} ${reference.title}`
+                  .toLocaleLowerCase()
+                  .includes(citationQuery.toLocaleLowerCase()),
+              )
+              .slice(0, 8)
+              .map((reference) => (
+                <button
+                  role="option"
+                  aria-selected="false"
+                  key={reference.id}
+                  onClick={() => {
+                    const from = Math.max(
+                      1,
+                      editor.state.selection.from - citationQuery.length - 1,
+                    );
+                    editor
+                      .chain()
+                      .focus()
+                      .deleteRange({ from, to: editor.state.selection.from })
+                      .insertContent(`[@${reference.citationKey}]`)
+                      .run();
+                    setCitationQuery(undefined);
+                  }}
+                >
+                  <strong>@{reference.citationKey}</strong>
+                  <small>{reference.title}</small>
+                </button>
+              ))}
+          </div>
+        )}
         <NotePropertiesPanel
           note={note}
           courses={courses}
@@ -1191,6 +1345,7 @@ function Editor({ noteId }: { noteId: string }) {
           note={note}
           notes={workspaceNotes}
           courses={courses}
+          references={references}
           onClose={() => setExportOpen(false)}
         />
       )}
@@ -1236,3 +1391,34 @@ function availableTitle(requested: string, note: Note, notes: Note[]): string {
   }
   return title;
 }
+
+const mathSymbols = [
+  ["alpha", "\\alpha"],
+  ["beta", "\\beta"],
+  ["gamma", "\\gamma"],
+  ["delta", "\\delta"],
+  ["theta", "\\theta"],
+  ["lambda", "\\lambda"],
+  ["mu", "\\mu"],
+  ["pi", "\\pi"],
+  ["sigma", "\\sigma"],
+  ["omega", "\\omega"],
+  ["sum", "\\sum_{i=1}^{n}"],
+  ["integral", "\\int_{a}^{b}"],
+  ["fraction", "\\frac{a}{b}"],
+  ["square root", "\\sqrt{x}"],
+  ["limit", "\\lim_{x \\to \\infty}"],
+  ["partial", "\\partial"],
+  ["nabla", "\\nabla"],
+  ["infinity", "\\infty"],
+  ["approximately", "\\approx"],
+  ["not equal", "\\neq"],
+  ["less or equal", "\\leq"],
+  ["greater or equal", "\\geq"],
+  ["element of", "\\in"],
+  ["subset", "\\subseteq"],
+  ["forall", "\\forall"],
+  ["exists", "\\exists"],
+  ["vector", "\\vec{v}"],
+  ["matrix", "\\begin{bmatrix}a & b \\\\ c & d\\end{bmatrix}"],
+] as const;

@@ -29,7 +29,7 @@ const stats: RecapStatistics = {
   },
   notes: { created: 3, edited: 5, wordsWritten: 600, titles: [] },
   maps: { created: 1, nodesCreated: 4 },
-  flashcards: { reviewed: 0, retentionRate: null, courses: [] },
+  flashcards: { reviewed: 0, retentionRate: null, streak: 0, courses: [] },
   dailyScores: [],
 };
 

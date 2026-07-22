@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from "react";
-import { Node, mergeAttributes } from "@tiptap/core";
+import { Node, mergeAttributes, nodeInputRule } from "@tiptap/core";
+import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import {
   NodeViewContent,
   NodeViewWrapper,
@@ -9,6 +10,16 @@ import {
 import katex from "katex";
 import mermaid from "mermaid";
 import DOMPurify from "dompurify";
+import { common, createLowlight } from "lowlight";
+import python from "highlight.js/lib/languages/python";
+import r from "highlight.js/lib/languages/r";
+import sql from "highlight.js/lib/languages/sql";
+import javascript from "highlight.js/lib/languages/javascript";
+import typescript from "highlight.js/lib/languages/typescript";
+import bash from "highlight.js/lib/languages/bash";
+import json from "highlight.js/lib/languages/json";
+import yaml from "highlight.js/lib/languages/yaml";
+import latex from "highlight.js/lib/languages/latex";
 import {
   AlertCircle,
   File,
@@ -26,13 +37,94 @@ mermaid.initialize({
   theme: "neutral",
 });
 
+const codeLowlight = createLowlight(common);
+codeLowlight.register({ python, r, sql, javascript, typescript, bash, json, yaml, latex });
+
+export const CodeBlock = CodeBlockLowlight.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      language: { default: "python" },
+      lineNumbers: { default: true },
+      wrap: { default: false },
+      filename: { default: "" },
+    };
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(CodeBlockView);
+  },
+}).configure({ lowlight: codeLowlight });
+
+function CodeBlockView({ node, updateAttributes, selected }: NodeViewProps) {
+  return (
+    <NodeViewWrapper
+      className={`code-block-node ${selected ? "selected" : ""} ${node.attrs.lineNumbers ? "line-numbers" : ""} ${node.attrs.wrap ? "wrap" : ""}`}
+    >
+      <header contentEditable={false}>
+        <input
+          aria-label="Code filename"
+          placeholder="filename"
+          value={String(node.attrs.filename ?? "")}
+          onChange={(event) => updateAttributes({ filename: event.target.value })}
+        />
+        <select
+          aria-label="Code language"
+          value={String(node.attrs.language ?? "python")}
+          onChange={(event) => updateAttributes({ language: event.target.value })}
+        >
+          {["python", "r", "sql", "javascript", "typescript", "bash", "json", "yaml", "latex"].map(
+            (language) => (
+              <option value={language} key={language}>
+                {language}
+              </option>
+            ),
+          )}
+        </select>
+        <label>
+          <input
+            type="checkbox"
+            checked={Boolean(node.attrs.lineNumbers)}
+            onChange={(event) => updateAttributes({ lineNumbers: event.target.checked })}
+          />
+          Lines
+        </label>
+        <label>
+          <input
+            type="checkbox"
+            checked={Boolean(node.attrs.wrap)}
+            onChange={(event) => updateAttributes({ wrap: event.target.checked })}
+          />
+          Wrap
+        </label>
+        <button onClick={() => void navigator.clipboard.writeText(node.textContent)}>Copy</button>
+      </header>
+      <div className="code-block-body">
+        {node.attrs.lineNumbers && (
+          <span className="code-line-numbers" contentEditable={false} aria-hidden="true">
+            {node.textContent.split("\n").map((_, index) => (
+              <i key={index}>{index + 1}</i>
+            ))}
+          </span>
+        )}
+        <pre>
+          <NodeViewContent as="code" />
+        </pre>
+      </div>
+    </NodeViewWrapper>
+  );
+}
+
 export const MathBlock = Node.create({
   name: "mathBlock",
   group: "block",
   atom: true,
   draggable: true,
   addAttributes() {
-    return { latex: { default: "E = mc^2" }, number: { default: "" } };
+    return {
+      latex: { default: "E = mc^2" },
+      number: { default: "" },
+      label: { default: "" },
+    };
   },
   parseHTML() {
     return [{ tag: 'div[data-type="math-block"]' }];
@@ -43,15 +135,105 @@ export const MathBlock = Node.create({
   addNodeView() {
     return ReactNodeViewRenderer(MathBlockView);
   },
+  addInputRules() {
+    return [
+      nodeInputRule({
+        find: /\$\$([^$]+)\$\$$/,
+        type: this.type,
+        getAttributes: (match) => ({ latex: match[1] }),
+      }),
+    ];
+  },
 });
 
-function MathBlockView({ node, updateAttributes, selected }: NodeViewProps) {
-  const latex = String(node.attrs.latex);
+export const MathInline = Node.create({
+  name: "mathInline",
+  group: "inline",
+  inline: true,
+  atom: true,
+  addAttributes() {
+    return { latex: { default: "x" } };
+  },
+  parseHTML() {
+    return [{ tag: 'span[data-type="math-inline"]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["span", mergeAttributes(HTMLAttributes, { "data-type": "math-inline" })];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(MathInlineView);
+  },
+  addInputRules() {
+    return [
+      nodeInputRule({
+        find: /(?<!\$)\$([^$\n]+)\$$/,
+        type: this.type,
+        getAttributes: (match) => ({ latex: match[1] }),
+      }),
+    ];
+  },
+});
+
+function MathInlineView({ node, updateAttributes, selected, editor }: NodeViewProps) {
   const [editing, setEditing] = useState(false);
+  const latex = String(node.attrs.latex);
   let html = "";
   let error = "";
   try {
-    html = katex.renderToString(latex, {
+    html = katex.renderToString(resolveEditorReferences(latex, editor), {
+      displayMode: false,
+      throwOnError: true,
+      trust: false,
+    });
+  } catch (value) {
+    error = value instanceof Error ? value.message : "Invalid LaTeX";
+    html = katex.renderToString(latex, { displayMode: false, throwOnError: false, trust: false });
+  }
+  return (
+    <NodeViewWrapper
+      as="span"
+      className={`math-inline ${selected ? "selected" : ""} ${error ? "error" : ""}`}
+      title={error || latex}
+      onDoubleClick={() => setEditing(true)}
+    >
+      {editing ? (
+        <input
+          autoFocus
+          value={latex}
+          aria-label="Inline LaTeX"
+          onChange={(event) => updateAttributes({ latex: event.target.value })}
+          onBlur={() => setEditing(false)}
+          onKeyDown={(event) => event.key === "Enter" && setEditing(false)}
+        />
+      ) : (
+        <span dangerouslySetInnerHTML={{ __html: html }} />
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+function MathBlockView({ node, updateAttributes, selected, editor, getPos }: NodeViewProps) {
+  const latex = String(node.attrs.latex);
+  const [editing, setEditing] = useState(false);
+  const numbered = node.attrs.number === "auto";
+  const position = typeof getPos === "function" ? getPos() : undefined;
+  let equationNumber = "";
+  if (numbered) {
+    let count = 0;
+    editor.state.doc.descendants((child, pos) => {
+      if (
+        child.type.name === "mathBlock" &&
+        child.attrs.number === "auto" &&
+        (typeof position !== "number" || pos <= position)
+      )
+        count += 1;
+    });
+    equationNumber = String(count);
+  }
+  let html = "";
+  let error = "";
+  try {
+    html = katex.renderToString(resolveEditorReferences(latex, editor), {
       displayMode: true,
       throwOnError: true,
       trust: false,
@@ -70,13 +252,32 @@ function MathBlockView({ node, updateAttributes, selected }: NodeViewProps) {
       onDoubleClick={() => setEditing(true)}
     >
       {editing ? (
-        <input
-          autoFocus
-          value={latex}
-          onChange={(event) => updateAttributes({ latex: event.target.value })}
-          onBlur={() => setEditing(false)}
-          onKeyDown={(event) => event.key === "Enter" && setEditing(false)}
-        />
+        <div className="math-editor-fields">
+          <input
+            autoFocus
+            value={latex}
+            aria-label="Display LaTeX"
+            onChange={(event) => updateAttributes({ latex: event.target.value })}
+            onKeyDown={(event) => event.key === "Enter" && setEditing(false)}
+          />
+          <label>
+            <input
+              type="checkbox"
+              checked={numbered}
+              onChange={(event) => updateAttributes({ number: event.target.checked ? "auto" : "" })}
+            />
+            Number equation
+          </label>
+          <input
+            aria-label="Equation label"
+            placeholder="Label for \\ref{label}"
+            value={String(node.attrs.label)}
+            onChange={(event) => updateAttributes({ label: event.target.value })}
+          />
+          <button className="button compact" onClick={() => setEditing(false)}>
+            Done
+          </button>
+        </div>
       ) : (
         <div dangerouslySetInnerHTML={{ __html: html }} />
       )}
@@ -86,8 +287,22 @@ function MathBlockView({ node, updateAttributes, selected }: NodeViewProps) {
           {error}
         </small>
       )}
-      {node.attrs.number && <span className="equation-number">({node.attrs.number})</span>}
+      {numbered && <span className="equation-number">({equationNumber})</span>}
     </NodeViewWrapper>
+  );
+}
+
+function resolveEditorReferences(latex: string, editor: NodeViewProps["editor"]): string {
+  const labels = new Map<string, number>();
+  let number = 0;
+  editor.state.doc.descendants((child) => {
+    if (child.type.name !== "mathBlock" || child.attrs.number !== "auto") return;
+    number += 1;
+    const label = String(child.attrs.label ?? "").trim();
+    if (label) labels.set(label, number);
+  });
+  return latex.replace(/\\ref\{([^}]+)\}/g, (_, label: string) =>
+    String(labels.get(label) ?? "??"),
   );
 }
 

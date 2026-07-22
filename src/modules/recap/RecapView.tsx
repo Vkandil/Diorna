@@ -67,7 +67,9 @@ export function RecapView() {
         items: selectWorkspace(state.items, workspace.id),
         notes: selectWorkspace(state.notes, workspace.id),
         maps: selectWorkspace(state.maps, workspace.id),
-        flashcards: [],
+        flashcards: selectWorkspace(state.flashcards, workspace.id),
+        reviewLogs: selectWorkspace(state.reviewLogs, workspace.id),
+        courses: selectWorkspace(state.courses, workspace.id),
         categoryNames: Object.fromEntries(
           categories.map((category) => [category.id, category.name]),
         ),
@@ -270,6 +272,14 @@ function RecapDetail({
           />
           <DeltaStat label="Notes created" value={String(stats.notes.created)} />
           <DeltaStat label="Words written" value={String(stats.notes.wordsWritten)} />
+          <DeltaStat label="Cards reviewed" value={String(stats.flashcards.reviewed)} />
+          <DeltaStat
+            label="Flashcard retention"
+            value={
+              stats.flashcards.retentionRate === null ? "—" : `${stats.flashcards.retentionRate}%`
+            }
+          />
+          <DeltaStat label="Review streak" value={`${stats.flashcards.streak} days`} />
         </div>
         <Narrative narrative={recap.narrative} />
         <section>
