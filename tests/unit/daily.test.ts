@@ -5,8 +5,10 @@ import {
   habitStatistics,
   isEntryComplete,
   isHabitApplicable,
+  monthOverMonthDelta,
+  periodSummary,
 } from "@/modules/daily/logic";
-import type { Habit, HabitEntry } from "@/shared/models";
+import type { Habit, HabitEntry, MetricEntry } from "@/shared/models";
 
 const habit = (changes: Partial<Habit> = {}): Habit => ({
   id: "h1",
@@ -39,6 +41,10 @@ describe("daily completion scoring", () => {
     ).toBe(50));
   it("excludes archived habits", () =>
     expect(completionScore([habit({ archived: true })], [], "2026-07-20")).toBeNull());
+  it("can include archived habits for historical recaps", () =>
+    expect(
+      completionScore([habit({ archived: true })], [entry("2026-07-20")], "2026-07-20", true),
+    ).toBe(100));
   it("excludes weekdays that are inactive", () =>
     expect(isHabitApplicable(habit({ activeWeekdays: [2] }), "2026-07-20")).toBe(false));
   it("includes an active weekday", () =>
@@ -102,5 +108,53 @@ describe("daily completion scoring", () => {
     );
     expect(scores[1]).toBe(100);
     expect(scores[2]).toBe(0);
+  });
+  it("summarises a period and ranks habits", () => {
+    const summary = periodSummary(
+      [habit(), habit({ id: "h2", name: "Train" })],
+      [entry("2026-07-20")],
+      "2026-07-20",
+      "2026-07-20",
+    );
+    expect(summary.score).toBe(50);
+    expect(summary.best).toMatchObject({ habit: { name: "Read" }, rate: 100 });
+    expect(summary.worst).toMatchObject({ habit: { name: "Train" }, rate: 0 });
+  });
+  it("returns an empty period summary when nothing applies", () =>
+    expect(periodSummary([], [], "2026-07-20", "2026-07-21")).toEqual({ score: null }));
+  it("computes a month-over-month metric delta from the last values", () => {
+    const metricEntry = (date: string, value: number): MetricEntry => ({
+      workspaceId: "w1",
+      metricId: "m1",
+      date,
+      value,
+    });
+    expect(
+      monthOverMonthDelta(
+        [
+          metricEntry("2026-06-01", 70),
+          metricEntry("2026-06-30", 80),
+          metricEntry("2026-07-01", 90),
+          metricEntry("2026-07-20", 100),
+        ],
+        "2026-07-01",
+      ),
+    ).toEqual({ current: 100, previous: 80, percent: 25 });
+  });
+  it("does not invent a metric percentage without a non-zero baseline", () => {
+    const values: MetricEntry[] = [
+      { workspaceId: "w1", metricId: "m1", date: "2026-06-30", value: 0 },
+      { workspaceId: "w1", metricId: "m1", date: "2026-07-20", value: 4 },
+    ];
+    expect(monthOverMonthDelta(values, "2026-07-01")).toEqual({
+      current: 4,
+      previous: 0,
+      percent: null,
+    });
+    expect(monthOverMonthDelta([], "2026-07-01")).toEqual({
+      current: null,
+      previous: null,
+      percent: null,
+    });
   });
 });

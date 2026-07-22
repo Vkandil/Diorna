@@ -17,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { startOfYear } from "date-fns";
 import { useDiornaStore } from "@/core/store";
 import type { ModuleId } from "@/shared/models";
 import { CommandPalette } from "./CommandPalette";
@@ -29,6 +30,7 @@ import {
   findUnlinkedMentions,
 } from "@/modules/notes/logic";
 import { listenForReminderActions, scheduleNativeReminders } from "@/modules/calendar/reminders";
+import { dateKey, habitStatistics } from "@/modules/daily/logic";
 
 const NotesView = lazy(() =>
   import("@/modules/notes/NotesView").then((module) => ({
@@ -370,6 +372,22 @@ function RightPanel({ module }: { module: ModuleId }) {
             !item.trashedAt,
         )
       : undefined;
+  const dailyHabit =
+    module === "daily"
+      ? state.habits.find(
+          (habit) =>
+            habit.id === state.selectedDailyHabitId &&
+            habit.workspaceId === state.activeWorkspaceId,
+        )
+      : undefined;
+  const dailyHabitStats = dailyHabit
+    ? habitStatistics(
+        dailyHabit,
+        state.habitEntries.filter((entry) => entry.workspaceId === state.activeWorkspaceId),
+        dateKey(startOfYear(new Date())),
+        dateKey(new Date()),
+      )
+    : undefined;
   return (
     <>
       <header className="panel-header">
@@ -390,7 +408,7 @@ function RightPanel({ module }: { module: ModuleId }) {
       </header>
       <div className="panel-body">
         <span className="eyebrow">Current context</span>
-        {module !== "calendar" && (
+        {module !== "calendar" && module !== "daily" && (
           <p className="muted">Select an item to inspect its details here.</p>
         )}
         {module === "notes" && (
@@ -577,6 +595,43 @@ function RightPanel({ module }: { module: ModuleId }) {
         )}
         {module === "calendar" && !calendarItem && (
           <div className="empty-mini">Select a calendar item to inspect it.</div>
+        )}
+        {module === "daily" && dailyHabit && dailyHabitStats && (
+          <section className="daily-context-details">
+            <i
+              style={{
+                background: state.categories.find(
+                  (category) => category.id === dailyHabit.categoryId,
+                )?.color,
+              }}
+            />
+            <h3>{dailyHabit.name}</h3>
+            {dailyHabit.description && <p>{dailyHabit.description}</p>}
+            <dl>
+              <dt>Current streak</dt>
+              <dd>{dailyHabitStats.currentStreak} days</dd>
+              <dt>Longest streak</dt>
+              <dd>{dailyHabitStats.longestStreak} days</dd>
+              <dt>Year completion</dt>
+              <dd>{dailyHabitStats.rate === null ? "—" : `${dailyHabitStats.rate}%`}</dd>
+              <dt>Completed</dt>
+              <dd>
+                {dailyHabitStats.completed} / {dailyHabitStats.applicable} applicable days
+              </dd>
+              <dt>Schedule</dt>
+              <dd>
+                {dailyHabit.activeWeekdays.length === 7
+                  ? "Every day"
+                  : dailyHabit.activeWeekdays
+                      .map((day) => ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][day])
+                      .join(", ")}
+              </dd>
+            </dl>
+            {dailyHabit.archived && <span className="status-badge">Archived</span>}
+          </section>
+        )}
+        {module === "daily" && !dailyHabit && (
+          <div className="empty-mini">Select a habit row to inspect its statistics.</div>
         )}
       </div>
     </>

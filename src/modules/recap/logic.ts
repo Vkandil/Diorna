@@ -47,10 +47,17 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
   });
   const previousStart = input.previousPeriodStart;
   const habitStats = input.habits.map((habit) =>
-    habitStatistics(habit, input.habitEntries, input.periodStart, input.periodEnd, input.periodEnd),
+    habitStatistics(
+      habit,
+      input.habitEntries,
+      input.periodStart,
+      input.periodEnd,
+      input.periodEnd,
+      true,
+    ),
   );
   const previousHabitStats = input.habits.map((habit) =>
-    habitStatistics(habit, input.habitEntries, previousStart, previousEnd, previousEnd),
+    habitStatistics(habit, input.habitEntries, previousStart, previousEnd, previousEnd, true),
   );
   const applicable = habitStats.reduce((sum, stat) => sum + stat.applicable, 0);
   const completed = habitStats.reduce((sum, stat) => sum + stat.completed, 0);
@@ -113,7 +120,7 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
     const key = formatISO(date, { representation: "date" });
     return {
       date: key,
-      score: completionScore(input.habits, input.habitEntries, key),
+      score: completionScore(input.habits, input.habitEntries, key, true),
     };
   });
   const reviewed = input.reviewLogs.filter((log) =>

@@ -82,6 +82,66 @@ test("supports keyboard command palette and daily habit entry", async ({ page })
   await expect(grid).toBeVisible();
 });
 
+test("defines, backfills, analyses, and restores daily series", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await completeOnboarding(page);
+  await page.getByLabel("Workspace").selectOption("workspace-personal");
+  await page.getByRole("button", { name: "Daily Ctrl 4" }).click();
+
+  await page.getByRole("button", { name: "Add habit" }).click();
+  const habitDialog = page.getByRole("dialog", { name: "Add habit" });
+  await habitDialog.getByLabel("Name").fill("Hydration acceptance");
+  await habitDialog.getByLabel("Type").selectOption("quantity");
+  await habitDialog.getByLabel("Daily target").fill("2");
+  await habitDialog.getByLabel("Unit").fill("L");
+  await habitDialog.getByLabel("Note / protocol").fill("Backfill after each training session");
+  await habitDialog.getByRole("button", { name: "Save habit" }).click();
+  const habitRow = page.locator(".habit-name").filter({ hasText: "Hydration acceptance" });
+  await expect(habitRow).toBeVisible();
+  const habitCell = habitRow.locator("+ .habit-cell");
+  await habitCell.click();
+  await habitCell.getByRole("spinbutton").fill("2.5");
+  await habitCell.getByRole("spinbutton").press("Enter");
+  await expect(habitCell).toContainText("2.5");
+  await habitRow.click();
+  await expect(page.getByRole("heading", { name: "Hydration acceptance" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Metrics", exact: true }).click();
+  await page.getByRole("button", { name: "Add metric" }).click();
+  const metricDialog = page.getByRole("dialog", { name: "Add metric" });
+  await metricDialog.getByLabel("Name").fill("Sleep acceptance");
+  await metricDialog.getByLabel("Unit").fill("h");
+  await metricDialog.getByLabel("Optional target").fill("8");
+  await metricDialog.getByRole("button", { name: "Save metric" }).click();
+  const metricRow = page.locator(".metric-name").filter({ hasText: "Sleep acceptance" });
+  await expect(metricRow).toBeVisible();
+  const metricCell = metricRow.locator("+ .metric-cell");
+  await metricCell.click();
+  await metricCell.getByRole("spinbutton").fill("7.5");
+  await metricCell.getByRole("spinbutton").press("Enter");
+  await expect(metricCell).toContainText("7.5 h");
+  await metricRow.click();
+  await expect(page.getByRole("dialog", { name: "Sleep acceptance chart" })).toBeVisible();
+  await page.getByRole("dialog", { name: "Sleep acceptance chart" }).getByLabel("Close").click();
+
+  await page.getByLabel("Date window").selectOption("custom");
+  await page.getByLabel("Range start").fill("2026-07-01");
+  await page.getByLabel("Range end").fill("2026-07-03");
+  await expect(page.locator(".date-cell")).toHaveCount(3);
+  await page.reload();
+  await expect(page.getByLabel("Date window")).toHaveValue("custom");
+  await expect(page.getByLabel("Range start")).toHaveValue("2026-07-01");
+  await expect(page.getByLabel("Range end")).toHaveValue("2026-07-03");
+  await page.getByRole("button", { name: "Statistics", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Completion statistics" })).toBeVisible();
+  await expect(page.getByText("Trailing twelve months")).toBeVisible();
+  await page.screenshot({ path: "test-results/daily-grid.png", fullPage: true });
+  expect(errors).toEqual([]);
+});
+
 test("creates a deterministic recap and stores it as a note", async ({ page }) => {
   await completeOnboarding(page);
   await page.getByLabel("Workspace").selectOption("workspace-personal");

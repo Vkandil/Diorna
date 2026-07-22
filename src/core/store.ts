@@ -49,6 +49,7 @@ interface DiornaState {
   sidebarOpen: boolean;
   rightPanelOpen: boolean;
   selectedCalendarItemId: Id | undefined;
+  selectedDailyHabitId: Id | undefined;
   commandPaletteOpen: boolean;
   tabs: TabState[];
   activeTabId: string;
@@ -79,6 +80,7 @@ interface DiornaState {
   toggleSidebar: () => void;
   toggleRightPanel: () => void;
   selectCalendarItem: (id?: Id) => void;
+  selectDailyHabit: (id?: Id) => void;
   setCommandPaletteOpen: (open: boolean) => void;
   openTab: (
     tab: Omit<TabState, "id" | "pinned"> & Partial<Pick<TabState, "id" | "pinned">>,
@@ -107,7 +109,27 @@ interface DiornaState {
   ) => CalendarItem;
   updateItem: (id: Id, changes: Partial<CalendarItem>) => void;
   addHabit: (habit: Pick<Habit, "name" | "categoryId" | "type"> & Partial<Habit>) => Habit;
+  updateHabit: (
+    id: Id,
+    changes: Omit<Partial<Habit>, "unit" | "target" | "startDate" | "endDate"> & {
+      unit?: string | null;
+      target?: number | null;
+      startDate?: string | null;
+      endDate?: string | null;
+    },
+  ) => void;
+  moveHabit: (id: Id, targetId: Id) => void;
   updateHabitEntry: (habitId: Id, date: string, value: boolean | number) => void;
+  updateHabitEntryNote: (habitId: Id, date: string, note?: string) => void;
+  clearHabitEntry: (habitId: Id, date: string) => void;
+  addMetric: (metric: Pick<Metric, "name" | "unit" | "categoryId"> & Partial<Metric>) => Metric;
+  updateMetric: (
+    id: Id,
+    changes: Omit<Partial<Metric>, "target"> & { target?: number | null },
+  ) => void;
+  deleteMetric: (id: Id) => void;
+  updateMetricEntry: (metricId: Id, date: string, value: number) => void;
+  clearMetricEntry: (metricId: Id, date: string) => void;
   updateSettings: (changes: Partial<AppSettings>) => void;
   hydrateStructured: (snapshot: {
     workspaces: Workspace[];
@@ -529,6 +551,7 @@ const initial = {
   sidebarOpen: true,
   rightPanelOpen: true,
   selectedCalendarItemId: undefined,
+  selectedDailyHabitId: undefined,
   commandPaletteOpen: false,
   tabs: [{ id: "home", module: "home" as ModuleId, title: "Home", pinned: true }],
   activeTabId: "home",
@@ -601,6 +624,7 @@ export const useDiornaStore = create<DiornaState>()(
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
       selectCalendarItem: (id) => set({ selectedCalendarItemId: id }),
+      selectDailyHabit: (id) => set({ selectedDailyHabitId: id }),
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
       openTab: (tab) =>
         set((state) => {
@@ -1139,14 +1163,56 @@ export const useDiornaStore = create<DiornaState>()(
           type: data.type,
           activeWeekdays: data.activeWeekdays ?? [0, 1, 2, 3, 4, 5, 6],
           description: data.description ?? "",
-          sortOrder: get().habits.length,
-          archived: false,
+          sortOrder:
+            Math.max(
+              -1,
+              ...get()
+                .habits.filter((entry) => entry.workspaceId === get().activeWorkspaceId)
+                .map((entry) => entry.sortOrder),
+            ) + 1,
+          archived: data.archived ?? false,
           ...(data.unit ? { unit: data.unit } : {}),
           ...(data.target !== undefined ? { target: data.target } : {}),
+          ...(data.startDate ? { startDate: data.startDate } : {}),
+          ...(data.endDate ? { endDate: data.endDate } : {}),
         };
         set((state) => ({ habits: [...state.habits, habit] }));
         return habit;
       },
+      updateHabit: (id, changes) =>
+        set((state) => ({
+          habits: state.habits.map((habit) => {
+            if (habit.id !== id || habit.workspaceId !== state.activeWorkspaceId) return habit;
+            const next = {
+              ...habit,
+              ...changes,
+              id: habit.id,
+              workspaceId: habit.workspaceId,
+            } as Habit & Record<string, unknown>;
+            for (const key of ["unit", "target", "startDate", "endDate"])
+              if (next[key] === null) delete next[key];
+            return next;
+          }),
+        })),
+      moveHabit: (id, targetId) =>
+        set((state) => {
+          const scoped = state.habits
+            .filter((habit) => habit.workspaceId === state.activeWorkspaceId)
+            .sort((a, b) => a.sortOrder - b.sortOrder);
+          const source = scoped.findIndex((habit) => habit.id === id);
+          const target = scoped.findIndex((habit) => habit.id === targetId);
+          if (source < 0 || target < 0 || source === target) return state;
+          const reordered = [...scoped];
+          const [moved] = reordered.splice(source, 1);
+          if (!moved) return state;
+          reordered.splice(target, 0, moved);
+          const order = new Map(reordered.map((habit, index) => [habit.id, index]));
+          return {
+            habits: state.habits.map((habit) =>
+              order.has(habit.id) ? { ...habit, sortOrder: order.get(habit.id)! } : habit,
+            ),
+          };
+        }),
       updateHabitEntry: (habitId, date, value) =>
         set((state) => {
           const habit = state.habits.find(
@@ -1159,12 +1225,14 @@ export const useDiornaStore = create<DiornaState>()(
           const next: HabitEntry =
             typeof value === "boolean"
               ? {
+                  ...existing,
                   workspaceId: state.activeWorkspaceId,
                   habitId,
                   date,
                   done: value,
                 }
               : {
+                  ...existing,
                   workspaceId: state.activeWorkspaceId,
                   habitId,
                   date,
@@ -1177,6 +1245,123 @@ export const useDiornaStore = create<DiornaState>()(
               : [...state.habitEntries, next],
           };
         }),
+      updateHabitEntryNote: (habitId, date, note) =>
+        set((state) => {
+          const habit = state.habits.find(
+            (entry) => entry.id === habitId && entry.workspaceId === state.activeWorkspaceId,
+          );
+          if (!habit) return state;
+          const existing = state.habitEntries.find(
+            (entry) =>
+              entry.workspaceId === state.activeWorkspaceId &&
+              entry.habitId === habitId &&
+              entry.date === date,
+          );
+          const base: HabitEntry = existing ?? {
+            workspaceId: state.activeWorkspaceId,
+            habitId,
+            date,
+            done: false,
+          };
+          const next: HabitEntry = { ...base };
+          if (note?.trim()) next.note = note.trim();
+          else delete next.note;
+          return {
+            habitEntries: existing
+              ? state.habitEntries.map((entry) => (entry === existing ? next : entry))
+              : [...state.habitEntries, next],
+          };
+        }),
+      clearHabitEntry: (habitId, date) =>
+        set((state) => ({
+          habitEntries: state.habitEntries.filter(
+            (entry) =>
+              !(
+                entry.workspaceId === state.activeWorkspaceId &&
+                entry.habitId === habitId &&
+                entry.date === date
+              ),
+          ),
+        })),
+      addMetric: (data) => {
+        const metric: Metric = {
+          id: createId("metric"),
+          workspaceId: get().activeWorkspaceId,
+          name: data.name,
+          unit: data.unit,
+          categoryId: data.categoryId,
+          sortOrder:
+            Math.max(
+              -1,
+              ...get()
+                .metrics.filter((entry) => entry.workspaceId === get().activeWorkspaceId)
+                .map((entry) => entry.sortOrder),
+            ) + 1,
+          ...(data.target !== undefined ? { target: data.target } : {}),
+        };
+        set((state) => ({ metrics: [...state.metrics, metric] }));
+        return metric;
+      },
+      updateMetric: (id, changes) =>
+        set((state) => ({
+          metrics: state.metrics.map((metric) => {
+            if (metric.id !== id || metric.workspaceId !== state.activeWorkspaceId) return metric;
+            const next = {
+              ...metric,
+              ...changes,
+              id: metric.id,
+              workspaceId: metric.workspaceId,
+            } as Metric & Record<string, unknown>;
+            if (next.target === null) delete next.target;
+            return next;
+          }),
+        })),
+      deleteMetric: (id) =>
+        set((state) => ({
+          metrics: state.metrics.filter(
+            (metric) => !(metric.id === id && metric.workspaceId === state.activeWorkspaceId),
+          ),
+          metricEntries: state.metricEntries.filter(
+            (entry) => !(entry.metricId === id && entry.workspaceId === state.activeWorkspaceId),
+          ),
+        })),
+      updateMetricEntry: (metricId, date, value) =>
+        set((state) => {
+          if (
+            !state.metrics.some(
+              (metric) => metric.id === metricId && metric.workspaceId === state.activeWorkspaceId,
+            )
+          )
+            return state;
+          const existing = state.metricEntries.find(
+            (entry) =>
+              entry.workspaceId === state.activeWorkspaceId &&
+              entry.metricId === metricId &&
+              entry.date === date,
+          );
+          const next: MetricEntry = {
+            workspaceId: state.activeWorkspaceId,
+            metricId,
+            date,
+            value,
+          };
+          return {
+            metricEntries: existing
+              ? state.metricEntries.map((entry) => (entry === existing ? next : entry))
+              : [...state.metricEntries, next],
+          };
+        }),
+      clearMetricEntry: (metricId, date) =>
+        set((state) => ({
+          metricEntries: state.metricEntries.filter(
+            (entry) =>
+              !(
+                entry.workspaceId === state.activeWorkspaceId &&
+                entry.metricId === metricId &&
+                entry.date === date
+              ),
+          ),
+        })),
       updateSettings: (changes) => {
         const settings = { ...get().settings, ...changes };
         set({ settings });
