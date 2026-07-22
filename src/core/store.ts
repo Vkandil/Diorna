@@ -1196,6 +1196,8 @@ export const useDiornaStore = create<DiornaState>()(
       updateNote: (id, changes) => {
         const previous = get().notes.find((entry) => entry.id === id);
         const renamed = Boolean(previous && changes.title && previous.title !== changes.title);
+        const nextPath = changes.path;
+        const pathChanged = Boolean(previous && nextPath && previous.path !== nextPath);
         const linkedNoteIds = renamed
           ? get()
               .notes.filter(
@@ -1208,27 +1210,48 @@ export const useDiornaStore = create<DiornaState>()(
               )
               .map((note) => note.id)
           : [];
-        set((state) => ({
-          notes: state.notes.map((note) =>
-            note.id === id && note.workspaceId === state.activeWorkspaceId
-              ? { ...note, ...changes, updatedAt: new Date().toISOString() }
-              : previous &&
-                  changes.title &&
-                  previous.title !== changes.title &&
-                  note.workspaceId === state.activeWorkspaceId
-                ? {
-                    ...note,
-                    body: rewriteWikiLinks(note.body, previous.title, changes.title),
-                    updatedAt: new Date().toISOString(),
-                  }
-                : note,
-          ),
-          tabs: changes.title
-            ? state.tabs.map((tab) =>
-                tab.entityId === id ? { ...tab, title: changes.title! } : tab,
-              )
-            : state.tabs,
-        }));
+        set((state) => {
+          const updatedAt = new Date().toISOString();
+          return {
+            notes: state.notes.map((note) =>
+              note.id === id && note.workspaceId === state.activeWorkspaceId
+                ? { ...note, ...changes, updatedAt }
+                : previous &&
+                    changes.title &&
+                    previous.title !== changes.title &&
+                    note.workspaceId === state.activeWorkspaceId
+                  ? {
+                      ...note,
+                      body: rewriteWikiLinks(note.body, previous.title, changes.title),
+                      updatedAt,
+                    }
+                  : note,
+            ),
+            maps:
+              pathChanged && previous && nextPath
+                ? state.maps.map((map) => {
+                    if (map.workspaceId !== previous.workspaceId) return map;
+                    let changed = false;
+                    const nodes = map.nodes.map((node) => {
+                      if (node.diorna?.nodeType !== "note" || node.file !== previous.path)
+                        return node;
+                      changed = true;
+                      return {
+                        ...node,
+                        file: nextPath,
+                        ...(changes.title ? { text: changes.title } : {}),
+                      };
+                    });
+                    return changed ? { ...map, nodes, updatedAt } : map;
+                  })
+                : state.maps,
+            tabs: changes.title
+              ? state.tabs.map((tab) =>
+                  tab.entityId === id ? { ...tab, title: changes.title! } : tab,
+                )
+              : state.tabs,
+          };
+        });
         const affectedNotes = get().notes.filter(
           (entry) => entry.id === id || linkedNoteIds.includes(entry.id),
         );
@@ -1238,6 +1261,17 @@ export const useDiornaStore = create<DiornaState>()(
               console.error("Native note save failed", error),
             ),
         );
+        if (pathChanged && nextPath)
+          get()
+            .maps.filter((map) =>
+              map.nodes.some((node) => node.diorna?.nodeType === "note" && node.file === nextPath),
+            )
+            .forEach(
+              (map) =>
+                void persistNativeCanvas(map).catch((error: unknown) =>
+                  console.error("Native canvas save failed", error),
+                ),
+            );
         const note = affectedNotes.find((entry) => entry.id === id);
         const deadline = note
           ? Object.values(note.properties).find((property) => property.type === "deadline")

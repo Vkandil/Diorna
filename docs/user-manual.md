@@ -50,6 +50,10 @@ from its surface; drag interactive video, audio, PDF, and file cards by their ti
 bar. Use the selection handles to resize any media. Multiple files dropped together
 are arranged in a small grid instead of overlapping.
 
+Linked note cards always render the current rich note, including headings, lists,
+images, video, audio, PDFs, and file blocks. Their content is scrollable inside the
+card and refreshes when the note is edited, renamed, or moved to another folder.
+
 ## Calendar and tasks
 
 Switch Day, Week, Month, and Agenda with the toolbar or D/W/M/A. Quick add

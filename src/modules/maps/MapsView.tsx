@@ -43,6 +43,7 @@ import {
   Trash2,
 } from "lucide-react";
 import html2canvas from "html2canvas";
+import DOMPurify from "dompurify";
 import {
   importNativeAttachmentBytes,
   importNativeAttachmentFile,
@@ -67,7 +68,8 @@ const palette = [
   "#ffffff",
 ];
 
-type MapNodeData = { node: CanvasNode; preview: string } & Record<string, unknown>;
+type LinkedNotePreview = Pick<DiornaNote, "id" | "title" | "body" | "updatedAt">;
+type MapNodeData = { node: CanvasNode; note?: LinkedNotePreview } & Record<string, unknown>;
 type MapFlowNode = Node<MapNodeData, "diorna">;
 type MapSnapshot = { nodes: CanvasNode[]; edges: CanvasEdge[] };
 type MapNodeType = NonNullable<NonNullable<CanvasNode["diorna"]>["nodeType"]>;
@@ -200,6 +202,37 @@ function CanvasEditor({
   useEffect(() => {
     selectedEdgesRef.current = selectedEdges;
   }, [selectedEdges]);
+  useEffect(() => {
+    setNodes((current) =>
+      current.map((flowNode) => {
+        const canvasNode = map.nodes.find((entry) => entry.id === flowNode.id);
+        if (!canvasNode) return flowNode;
+        if (canvasNode.diorna?.nodeType !== "note") {
+          if (flowNode.data.node === canvasNode) return flowNode;
+          return { ...flowNode, data: { ...flowNode.data, node: canvasNode } };
+        }
+        const note = notes.find((entry) => entry.path === canvasNode.file);
+        const linked = note ? linkedNotePreview(note) : undefined;
+        if (
+          flowNode.data.node === canvasNode &&
+          flowNode.data.note?.id === linked?.id &&
+          flowNode.data.note?.title === linked?.title &&
+          flowNode.data.note?.body === linked?.body &&
+          flowNode.data.note?.updatedAt === linked?.updatedAt
+        )
+          return flowNode;
+        const { note: _previousNote, ...data } = flowNode.data;
+        return {
+          ...flowNode,
+          data: {
+            ...data,
+            node: canvasNode,
+            ...(linked ? { note: linked } : {}),
+          },
+        };
+      }),
+    );
+  }, [map.nodes, notes, setNodes]);
 
   const persist = useCallback(
     (canvasNodes: CanvasNode[], canvasEdges: CanvasEdge[], record = true) => {
@@ -1421,6 +1454,7 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
   const node = data.node;
   const type = node.diorna?.nodeType ?? "text";
   const title = (
+    (type === "note" ? data.note?.title : undefined) ??
     (type === "link" ? node.diorna?.linkTitle : undefined) ??
     node.text ??
     node.label ??
@@ -1429,11 +1463,9 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
     "Untitled"
   ).split("\n")[0];
   const body =
-    type === "note"
-      ? data.preview
-      : type === "link"
-        ? (node.diorna?.linkDescription ?? "")
-        : (node.text ?? "").split("\n").slice(1).join("\n").trim();
+    type === "link"
+      ? (node.diorna?.linkDescription ?? "")
+      : (node.text ?? "").split("\n").slice(1).join("\n").trim();
   const mediaSource = isMapMediaType(type) ? (node.url ?? node.file) : undefined;
   return (
     <>
@@ -1506,8 +1538,15 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
             <span>{title}</span>
           </a>
         )}
+        {!node.diorna?.collapsed && type === "note" && data.note && (
+          <MapNotePreview note={data.note} />
+        )}
+        {!node.diorna?.collapsed && type === "note" && !data.note && (
+          <p className="canvas-note-missing">Linked note unavailable</p>
+        )}
         {!node.diorna?.collapsed &&
           body &&
+          type !== "note" &&
           (type === "text" ? <MarkdownPreview value={body} /> : <p>{body}</p>)}
         {!node.diorna?.collapsed && type === "link" && node.url && (
           <small>{safeHost(node.url)}</small>
@@ -1522,6 +1561,18 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
         />
       ))}
     </>
+  );
+}
+
+function MapNotePreview({ note }: { note: LinkedNotePreview }) {
+  const html = useMemo(() => mapNotePreviewHtml(note.body), [note.body]);
+  return (
+    <div
+      className="canvas-note-preview nodrag nowheel"
+      data-note-id={note.id}
+      onDragStart={(event) => event.preventDefault()}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
   );
 }
 
@@ -1569,7 +1620,7 @@ function toFlowNode(node: CanvasNode, notes: DiornaNote[]): MapFlowNode {
     id: node.id,
     type: "diorna",
     position: { x: node.x, y: node.y },
-    data: { node, preview: note ? stripHtml(note.body).slice(0, 220) : "" },
+    data: { node, ...(note ? { note: linkedNotePreview(note) } : {}) },
     style: {
       width: node.width,
       height: node.diorna?.collapsed ? 44 : node.height,
@@ -1582,6 +1633,68 @@ function toFlowNode(node: CanvasNode, notes: DiornaNote[]): MapFlowNode {
     },
     draggable: !node.diorna?.locked,
   };
+}
+
+function linkedNotePreview(note: DiornaNote): LinkedNotePreview {
+  return { id: note.id, title: note.title, body: note.body, updatedAt: note.updatedAt };
+}
+
+function mapNotePreviewHtml(value: string): string {
+  const document = new DOMParser().parseFromString(value, "text/html");
+  for (const attachment of document.querySelectorAll<HTMLElement>(
+    'figure[data-type="attachment"]',
+  )) {
+    const kind = attachment.getAttribute("kind") ?? "file";
+    const source = attachment.getAttribute("src") ?? "";
+    const title = attachment.getAttribute("title") ?? "Attachment";
+    const caption = attachment.getAttribute("caption") ?? "";
+    const width = Math.min(100, Math.max(20, Number(attachment.getAttribute("width")) || 100));
+    const align = attachment.getAttribute("align") ?? "center";
+    attachment.className = `canvas-note-attachment kind-${kind} align-${align}`;
+    attachment.style.width = `${width}%`;
+    attachment.replaceChildren();
+
+    let media: HTMLElement;
+    if (kind === "image") {
+      const image = document.createElement("img");
+      image.src = source;
+      image.alt = caption || title;
+      image.draggable = false;
+      media = image;
+    } else if (kind === "video") {
+      const video = document.createElement("video");
+      video.src = source;
+      video.controls = true;
+      media = video;
+    } else if (kind === "audio") {
+      const audio = document.createElement("audio");
+      audio.src = source;
+      audio.controls = true;
+      media = audio;
+    } else if (kind === "pdf") {
+      const frame = document.createElement("iframe");
+      frame.src = source;
+      frame.title = title;
+      frame.loading = "lazy";
+      media = frame;
+    } else {
+      const file = document.createElement("span");
+      file.className = "canvas-note-file";
+      file.textContent = `📎 ${title}`;
+      media = file;
+    }
+    attachment.append(media);
+    if (caption) {
+      const label = document.createElement("figcaption");
+      label.textContent = caption;
+      attachment.append(label);
+    }
+  }
+  for (const image of document.querySelectorAll("img")) image.setAttribute("draggable", "false");
+  return DOMPurify.sanitize(document.body.innerHTML, {
+    ADD_TAGS: ["iframe"],
+    ADD_ATTR: ["controls", "loading", "draggable"],
+  });
 }
 
 function toFlowNodes(nodes: CanvasNode[], notes: DiornaNote[]): MapFlowNode[] {
@@ -1806,10 +1919,6 @@ async function loadLinkPreview(url: string) {
   } catch {
     return { linkTitle: safeHost(url), linkDescription: url };
   }
-}
-function stripHtml(value: string) {
-  const document = new DOMParser().parseFromString(value, "text/html");
-  return document.body.textContent?.replace(/\s+/g, " ").trim() ?? "";
 }
 function escapeXml(value: string) {
   return value.replace(

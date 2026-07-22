@@ -231,6 +231,70 @@ test("drops, renders, moves, and restores media on a map", async ({ page }) => {
   ).toBeVisible();
 });
 
+test("keeps linked map notes current with complete rich media", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByLabel("Workspace").selectOption("workspace-personal");
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  await page.getByRole("button", { name: "New note" }).click();
+  const liveEditor = page.locator(".note-editor-live:not([hidden])");
+  const title = liveEditor.getByLabel("Note title");
+  await expect(title).toHaveValue(/^Untitled/);
+  await title.fill("Map live note");
+  await title.blur();
+  await expect(title).toHaveValue("Map live note");
+  const editor = liveEditor.locator('.prose-editor[contenteditable="true"]');
+  await editor.fill("Initial map note content");
+  await page.waitForTimeout(800);
+
+  await page.getByRole("button", { name: "Maps Ctrl 2" }).click();
+  await page.getByRole("button", { name: "Add node" }).click();
+  await page.getByText("New idea", { exact: true }).click();
+  await page.getByLabel("Node type").selectOption("note");
+  await page.getByLabel("Linked note").selectOption({ label: "Map live note" });
+  const noteNode = page.locator(".react-flow__node:has(.canvas-card.type-note)");
+  await expect(noteNode.getByText("Map live note", { exact: true })).toBeVisible();
+  await expect(noteNode.locator(".canvas-note-preview")).toContainText("Initial map note content");
+
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  await page.locator(".note-list-row").filter({ hasText: "Map live note" }).click();
+  await title.fill("Map live note updated");
+  await title.blur();
+  await editor.click();
+  await editor.press("Control+End");
+  await editor.press("Enter");
+  await editor.pressSequentially(
+    `${"Complete updated content. ".repeat(14)}Final synchronized marker.`,
+  );
+  await editor.evaluate((target) => {
+    const bytes = Uint8Array.from(
+      atob(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      ),
+      (character) => character.charCodeAt(0),
+    );
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], "map-note-image.png", { type: "image/png" }));
+    (target as HTMLElement).focus();
+    const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: transfer });
+    target.dispatchEvent(event);
+  });
+  await expect(page.locator("figure.attachment-node.image").getByRole("img")).toBeVisible();
+  await page.waitForTimeout(800);
+
+  await page.getByRole("button", { name: "Maps Ctrl 2" }).click();
+  await expect(noteNode.getByText("Map live note updated", { exact: true })).toBeVisible();
+  const preview = noteNode.locator(".canvas-note-preview");
+  await expect(preview).toContainText("Final synchronized marker.");
+  const previewImage = preview.getByRole("img", { name: "map-note-image.png" });
+  await expect(previewImage).toBeAttached();
+  await preview.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(previewImage).toBeVisible();
+  await page.screenshot({ path: "test-results/map-linked-note-update.png", fullPage: true });
+});
+
 test("supports keyboard command palette and daily habit entry", async ({ page }) => {
   await completeOnboarding(page);
   await page.getByLabel("Workspace").selectOption("workspace-personal");

@@ -11,6 +11,11 @@ move directly from their surface, while title bars remain available around
 interactive media controls. The Gym fixture is the acceptance scenario and its
 exact node transform is checked after a browser restart.
 
+Linked-note nodes subscribe to the live note record rather than copying its body.
+Their scrollable preview renders the complete current rich-text document, including
+portable image, video, audio, PDF, and file attachment blocks. Editing or renaming a
+note therefore updates every open map reference without changing canvas geometry.
+
 Canvas files use Obsidian's node/edge fields. Diorna extensions live in an
 additive `diorna` object, including sub-map ancestry and cached link previews.
 Native renames preserve stable IDs and remove the superseded file. PNG and SVG
