@@ -20,6 +20,12 @@ export interface Replacement {
   line: number;
 }
 
+export interface OutlineEntry {
+  level: number;
+  text: string;
+  anchor: string;
+}
+
 export function parseWikiLinks(text: string): WikiLink[] {
   return [...text.matchAll(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g)].map((match) => ({
     target: match[1]!.trim(),
@@ -127,21 +133,15 @@ export function applyTemplate(
 }
 
 export function searchNotes(notes: Note[], query: string): Note[] {
-  const terms = tokenizeQuery(query);
-  return notes.filter((note) =>
-    terms.every((term) => {
-      const negated = term.startsWith("NOT ");
-      const value = negated ? term.slice(4) : term;
-      const match = matchesTerm(note, value);
-      return negated ? !match : match;
-    }),
-  );
+  const tokens = tokenizeQuery(query);
+  if (!tokens.length) return notes;
+  return notes.filter((note) => evaluateQuery(note, tokens));
 }
 
 export function previewReplace(notes: Note[], search: string, replacement: string): Replacement[] {
   if (!search) return [];
   return notes.flatMap((note) =>
-    stripHtml(note.body)
+    htmlToLines(note.body)
       .split(/\r?\n/)
       .flatMap((line, index) =>
         line.includes(search)
@@ -156,6 +156,33 @@ export function previewReplace(notes: Note[], search: string, replacement: strin
             ]
           : [],
       ),
+  );
+}
+
+export function extractOutline(html: string): OutlineEntry[] {
+  return [...html.matchAll(/<h([1-4])[^>]*>([\s\S]*?)<\/h\1>/gi)].map((match, index) => {
+    const text = stripHtml(match[2] ?? "") || `Heading ${index + 1}`;
+    return {
+      level: Number(match[1]),
+      text,
+      anchor: `${slugify(text)}-${index + 1}`,
+    };
+  });
+}
+
+export function convertFirstUnlinkedMention(body: string, title: string): string {
+  const escaped = title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const linked = new RegExp(`\\[\\[${escaped}(?:\\|[^\\]]+)?\\]\\]`, "i");
+  const placeholders: string[] = [];
+  const protectedBody = body.replace(/\[\[[^\]]+\]\]/g, (value) => {
+    placeholders.push(value);
+    return `DIORNA-WIKILINK-${placeholders.length - 1}-END`;
+  });
+  if (linked.test(body) && !new RegExp(escaped, "i").test(protectedBody)) return body;
+  const replaced = protectedBody.replace(new RegExp(escaped, "i"), () => `[[${title}]]`);
+  return replaced.replace(
+    /DIORNA-WIKILINK-(\d+)-END/g,
+    (_, index: string) => placeholders[Number(index)]!,
   );
 }
 
@@ -190,9 +217,49 @@ function matchesTerm(note: Note, term: string): boolean {
 }
 
 function tokenizeQuery(query: string): string[] {
-  return [...query.matchAll(/NOT\s+(?:"[^"]+"|\S+)|"[^"]+"|\S+/gi)]
-    .map((match) => match[0]!)
-    .filter((term) => !["AND", "OR", "(", ")"].includes(term.toUpperCase()));
+  return [...query.matchAll(/(?:[^\s():]+:)?"[^"]*"|\(|\)|\b(?:AND|OR|NOT)\b|[^\s()]+/gi)].map(
+    (match) => match[0]!,
+  );
+}
+
+function evaluateQuery(note: Note, tokens: string[]): boolean {
+  let index = 0;
+  const peek = () => tokens[index]?.toUpperCase();
+  const consume = () => tokens[index++];
+  const primary = (): boolean => {
+    if (peek() === "(") {
+      consume();
+      const result = or();
+      if (peek() === ")") consume();
+      return result;
+    }
+    const token = consume();
+    return token ? matchesTerm(note, token) : true;
+  };
+  const not = (): boolean => {
+    if (peek() === "NOT") {
+      consume();
+      return !not();
+    }
+    return primary();
+  };
+  const and = (): boolean => {
+    let result = not();
+    while (index < tokens.length && peek() !== "OR" && peek() !== ")") {
+      if (peek() === "AND") consume();
+      result = not() && result;
+    }
+    return result;
+  };
+  const or = (): boolean => {
+    let result = and();
+    while (peek() === "OR") {
+      consume();
+      result = and() || result;
+    }
+    return result;
+  };
+  return or();
 }
 function sentenceAt(text: string, index: number): string {
   const start = Math.max(text.lastIndexOf(".", index) + 1, text.lastIndexOf("\n", index) + 1);
@@ -208,6 +275,26 @@ function stripHtml(value: string): string {
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function htmlToLines(value: string): string {
+  return value
+    .replace(/<\/(?:p|div|li|h[1-6]|blockquote|pre|tr)>/gi, "\n")
+    .replace(/<br\s*\/?\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function slugify(value: string): string {
+  return value
+    .toLocaleLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-|-$/g, "");
 }
 function getIsoWeek(date: Date): number {
   const target = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));

@@ -568,11 +568,24 @@ export const useDiornaStore = create<DiornaState>()(
           return { tabs };
         }),
       addNote: (title = "Untitled") => {
+        const workspaceId = get().activeWorkspaceId;
+        const usedTitles = new Set(
+          get()
+            .notes.filter((entry) => entry.workspaceId === workspaceId && !entry.trashedAt)
+            .map((entry) => entry.title.toLocaleLowerCase()),
+        );
+        const requestedTitle = title.trim() || "Untitled";
+        let uniqueTitle = requestedTitle;
+        let suffix = 2;
+        while (usedTitles.has(uniqueTitle.toLocaleLowerCase())) {
+          uniqueTitle = `${requestedTitle} ${suffix}`;
+          suffix += 1;
+        }
         const note: Note = {
           id: createId("note"),
-          workspaceId: get().activeWorkspaceId,
-          path: `notes/${title}.md`,
-          title,
+          workspaceId,
+          path: `notes/${uniqueTitle}.md`,
+          title: uniqueTitle,
           body: "<p></p>",
           tags: [],
           properties: {},
@@ -586,6 +599,19 @@ export const useDiornaStore = create<DiornaState>()(
       },
       updateNote: (id, changes) => {
         const previous = get().notes.find((entry) => entry.id === id);
+        const renamed = Boolean(previous && changes.title && previous.title !== changes.title);
+        const linkedNoteIds = renamed
+          ? get()
+              .notes.filter(
+                (note) =>
+                  note.workspaceId === get().activeWorkspaceId &&
+                  note.id !== id &&
+                  note.body
+                    .toLocaleLowerCase()
+                    .includes(`[[${previous!.title.toLocaleLowerCase()}`),
+              )
+              .map((note) => note.id)
+          : [];
         set((state) => ({
           notes: state.notes.map((note) =>
             note.id === id && note.workspaceId === state.activeWorkspaceId
@@ -601,12 +627,22 @@ export const useDiornaStore = create<DiornaState>()(
                   }
                 : note,
           ),
+          tabs: changes.title
+            ? state.tabs.map((tab) =>
+                tab.entityId === id ? { ...tab, title: changes.title! } : tab,
+              )
+            : state.tabs,
         }));
-        const note = get().notes.find((entry) => entry.id === id);
-        if (note)
-          void persistNativeNote(note).catch((error: unknown) =>
-            console.error("Native note save failed", error),
-          );
+        const affectedNotes = get().notes.filter(
+          (entry) => entry.id === id || linkedNoteIds.includes(entry.id),
+        );
+        affectedNotes.forEach(
+          (entry) =>
+            void persistNativeNote(entry).catch((error: unknown) =>
+              console.error("Native note save failed", error),
+            ),
+        );
+        const note = affectedNotes.find((entry) => entry.id === id);
         const deadline = note
           ? Object.values(note.properties).find((property) => property.type === "deadline")
           : undefined;

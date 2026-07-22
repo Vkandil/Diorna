@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   applyTemplate,
+  convertFirstUnlinkedMention,
   extractTags,
+  extractOutline,
   findBacklinks,
   findUnlinkedMentions,
   parseWikiLinks,
@@ -115,10 +117,34 @@ describe("note linking and organisation", () => {
         (item) => item.id,
       ),
     ).toEqual(["1"]));
+  it("supports boolean precedence and parentheses", () => {
+    const values = [
+      note("1", "Alpha", "systems", { tags: ["exam"] }),
+      note("2", "Beta", "systems draft"),
+      note("3", "Gamma", "biology"),
+    ];
+    expect(searchNotes(values, "systems AND NOT draft").map((item) => item.id)).toEqual(["1"]);
+    expect(searchNotes(values, "biology OR (tag:exam AND systems)").map((item) => item.id)).toEqual(
+      ["1", "3"],
+    );
+  });
+  it("extracts a nested document outline", () =>
+    expect(extractOutline("<h1>Intro</h1><p>x</p><h3>Deep <em>idea</em></h3>")).toEqual([
+      expect.objectContaining({ level: 1, text: "Intro" }),
+      expect.objectContaining({ level: 3, text: "Deep idea" }),
+    ]));
+  it("converts only the first unlinked mention", () =>
+    expect(convertFirstUnlinkedMention("<p>Target and [[Target]]</p>", "Target")).toBe(
+      "<p>[[Target]] and [[Target]]</p>",
+    ));
   it("previews workspace replacements by line", () =>
     expect(previewReplace([note("1", "A", "hello world")], "world", "Diorna")[0]).toMatchObject({
       before: "hello world",
       after: "hello Diorna",
       line: 1,
     }));
+  it("previews replacements on their original block lines", () =>
+    expect(
+      previewReplace([note("1", "A", "<p>first</p><p>hello world</p>")], "world", "x")[0],
+    ).toMatchObject({ before: "hello world", line: 2 }));
 });

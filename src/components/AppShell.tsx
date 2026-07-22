@@ -22,7 +22,12 @@ import type { ModuleId } from "@/shared/models";
 import { CommandPalette } from "./CommandPalette";
 import { QuickCapture } from "./QuickCapture";
 import { HomeView } from "@/modules/home/HomeView";
-import { findBacklinks, findUnlinkedMentions } from "@/modules/notes/logic";
+import {
+  convertFirstUnlinkedMention,
+  extractOutline,
+  findBacklinks,
+  findUnlinkedMentions,
+} from "@/modules/notes/logic";
 import { scheduleNativeReminders } from "@/modules/calendar/reminders";
 
 const NotesView = lazy(() =>
@@ -330,6 +335,7 @@ function RightPanel({ module }: { module: ModuleId }) {
     : undefined;
   const backlinks = note ? findBacklinks(state.notes, note) : [];
   const mentions = note ? findUnlinkedMentions(state.notes, note) : [];
+  const outline = note ? extractOutline(note.body) : [];
   return (
     <>
       <header className="panel-header">
@@ -354,8 +360,24 @@ function RightPanel({ module }: { module: ModuleId }) {
         {module === "notes" && (
           <>
             <h3>Outline</h3>
-            <button className="outline-link">Introduction</button>
-            <button className="outline-link nested">Start here</button>
+            {outline.map((heading) => (
+              <button
+                className="outline-link"
+                style={{ paddingInlineStart: `${8 + (heading.level - 1) * 12}px` }}
+                key={heading.anchor}
+                onClick={() => {
+                  const headings = document.querySelectorAll(
+                    ".prose-editor h1, .prose-editor h2, .prose-editor h3, .prose-editor h4",
+                  );
+                  [...headings]
+                    .find((element) => element.textContent?.trim() === heading.text)
+                    ?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+              >
+                {heading.text}
+              </button>
+            ))}
+            {!outline.length && <div className="empty-mini">No headings yet</div>}
             <h3>Linked mentions</h3>
             {backlinks.map((link) => (
               <button
@@ -375,11 +397,38 @@ function RightPanel({ module }: { module: ModuleId }) {
             ))}
             {!backlinks.length && <div className="empty-mini">No backlinks yet</div>}
             <h3>Unlinked mentions</h3>
-            {mentions.map((link) => (
-              <button className="outline-link" key={`${link.sourceNoteId}-${link.index}`}>
-                {link.sourceTitle}
-              </button>
-            ))}
+            {mentions.map((link) => {
+              const source = state.notes.find((entry) => entry.id === link.sourceNoteId);
+              return (
+                <div className="mention-row" key={`${link.sourceNoteId}-${link.index}`}>
+                  <button
+                    className="outline-link"
+                    onClick={() =>
+                      state.openTab({
+                        module: "notes",
+                        title: link.sourceTitle,
+                        entityId: link.sourceNoteId,
+                      })
+                    }
+                  >
+                    <strong>{link.sourceTitle}</strong>
+                    <small>{link.context}</small>
+                  </button>
+                  <button
+                    className="button compact"
+                    disabled={!source || !note}
+                    onClick={() => {
+                      if (source && note)
+                        state.updateNote(source.id, {
+                          body: convertFirstUnlinkedMention(source.body, note.title),
+                        });
+                    }}
+                  >
+                    Link
+                  </button>
+                </div>
+              );
+            })}
             {!mentions.length && <div className="empty-mini">No unlinked mentions</div>}
           </>
         )}

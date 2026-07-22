@@ -8,7 +8,7 @@ mod structured;
 use std::{path::PathBuf, sync::Arc};
 
 use parking_lot::RwLock;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use storage::{DiskContent, SaveNoteInput, SavedFile, SearchHit, Vault, WorkspaceRecord};
 use tauri::{
     AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder,
@@ -266,6 +266,31 @@ fn export_xlsx(path: String, sheets: Vec<spreadsheet::SheetInput>) -> Result<()>
     spreadsheet::export_xlsx(&PathBuf::from(path), sheets)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TextExportFile {
+    relative_path: String,
+    content: String,
+}
+
+#[tauri::command]
+fn export_text_file(path: String, content: String) -> Result<String> {
+    let path = PathBuf::from(path);
+    storage::atomic_write(&path, content.as_bytes())?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+fn export_text_bundle(destination: String, files: Vec<TextExportFile>) -> Result<String> {
+    let destination = PathBuf::from(destination);
+    std::fs::create_dir_all(&destination)?;
+    for file in files {
+        let relative = storage::safe_relative_path(std::path::Path::new(&file.relative_path))?;
+        storage::atomic_write(&destination.join(relative), file.content.as_bytes())?;
+    }
+    Ok(destination.to_string_lossy().into_owned())
+}
+
 #[tauri::command]
 async fn persist_structured_state(
     snapshot: structured::StructuredSnapshot,
@@ -284,6 +309,18 @@ async fn load_structured_state(
 #[tauri::command]
 async fn load_file_content(state: State<'_, AppState>) -> Result<DiskContent> {
     state.get_vault()?.load_file_content().await
+}
+
+#[tauri::command]
+async fn list_note_revisions(
+    workspace_id: String,
+    note_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<storage::NoteRevision>> {
+    state
+        .get_vault()?
+        .note_revisions(&workspace_id, &note_id)
+        .await
 }
 
 fn show_main(app: &AppHandle) {
@@ -373,7 +410,10 @@ pub fn run() {
             export_xlsx,
             persist_structured_state,
             load_structured_state,
-            load_file_content
+            load_file_content,
+            list_note_revisions,
+            export_text_file,
+            export_text_bundle
         ])
         .setup(|app| {
             let show = MenuItemBuilder::with_id("show", "Show / Hide").build(app)?;

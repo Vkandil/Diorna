@@ -1,6 +1,4 @@
 import { invoke } from "@tauri-apps/api/core";
-import DOMPurify from "dompurify";
-import { marked } from "marked";
 import TurndownService from "turndown";
 import type {
   AppSettings,
@@ -82,6 +80,8 @@ interface DiskNote {
   markdown: string;
   courseId?: string;
   tags: string[];
+  properties: Note["properties"];
+  starred: boolean;
   createdAt: string;
   updatedAt: string;
   wordCount: number;
@@ -91,6 +91,10 @@ export async function readNativeFileContent(): Promise<
   { notes: Note[]; maps: CanvasMap[] } | undefined
 > {
   if (!isTauri()) return undefined;
+  const [{ default: DOMPurify }, { marked }] = await Promise.all([
+    import("dompurify"),
+    import("marked"),
+  ]);
   const content = await invoke<{
     notes: DiskNote[];
     maps: CanvasMap[];
@@ -99,7 +103,6 @@ export async function readNativeFileContent(): Promise<
     notes: content.notes.map(({ markdown, ...note }) => ({
       ...note,
       body: DOMPurify.sanitize(marked.parse(markdown, { async: false }) as string),
-      properties: {},
     })),
     maps: content.maps,
   };
@@ -115,9 +118,99 @@ export async function persistNativeNote(note: Note): Promise<void> {
       relativePath: note.path.replace(/^notes[\\/]/, ""),
       title: note.title,
       markdown,
+      courseId: note.courseId ?? null,
+      tags: note.tags,
+      properties: note.properties,
+      starred: note.starred ?? false,
       expectedHash: null,
     },
   });
+}
+
+export interface NoteRevision {
+  id: string;
+  noteId: string;
+  markdown: string;
+  html: string;
+  createdAt: string;
+}
+
+export async function readNativeNoteRevisions(
+  workspaceId: string,
+  noteId: string,
+): Promise<NoteRevision[]> {
+  if (!isTauri()) return [];
+  const [{ default: DOMPurify }, { marked }] = await Promise.all([
+    import("dompurify"),
+    import("marked"),
+  ]);
+  const revisions = await invoke<Array<Omit<NoteRevision, "html">>>("list_note_revisions", {
+    workspaceId,
+    noteId,
+  });
+  return revisions.map((revision) => ({
+    ...revision,
+    html: DOMPurify.sanitize(marked.parse(revision.markdown, { async: false }) as string),
+  }));
+}
+
+export async function exportMarkdownNotes(notes: Note[], exportName: string): Promise<void> {
+  const files = await Promise.all(
+    notes.map(async (note) => ({
+      relativePath: `${safeFileName(note.title)}.md`,
+      content: await noteToMarkdown(note),
+    })),
+  );
+  if (!isTauri()) {
+    const content =
+      files.length === 1
+        ? files[0]!.content
+        : files.map((file) => `<!-- ${file.relativePath} -->\n\n${file.content}`).join("\n\n");
+    downloadText(`${safeFileName(exportName)}.md`, content);
+    return;
+  }
+  const { open, save } = await import("@tauri-apps/plugin-dialog");
+  if (files.length === 1) {
+    const path = await save({
+      defaultPath: files[0]!.relativePath,
+      filters: [{ name: "Markdown", extensions: ["md"] }],
+    });
+    if (path) await invoke("export_text_file", { path, content: files[0]!.content });
+    return;
+  }
+  const destination = await open({
+    directory: true,
+    multiple: false,
+    title: `Export ${exportName} as Markdown`,
+  });
+  if (typeof destination === "string") await invoke("export_text_bundle", { destination, files });
+}
+
+async function noteToMarkdown(note: Note): Promise<string> {
+  const { stringify } = await import("yaml");
+  const metadata = stringify({
+    id: note.id,
+    title: note.title,
+    ...(note.courseId ? { courseId: note.courseId } : {}),
+    tags: note.tags,
+    properties: note.properties,
+    created: note.createdAt,
+    updated: note.updatedAt,
+  }).trim();
+  return `---\n${metadata}\n---\n\n${turndown.turndown(note.body)}\n`;
+}
+
+function safeFileName(value: string): string {
+  return value.replace(/[<>:"/\\|?*]/g, "-").trim() || "Diorna export";
+}
+
+function downloadText(name: string, content: string): void {
+  const url = URL.createObjectURL(new Blob([content], { type: "text/markdown;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = name;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export async function persistNativeCanvas(map: CanvasMap): Promise<void> {

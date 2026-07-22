@@ -6,6 +6,14 @@ backlinks, tags, query parsing, templates, and search/replace planning.
 rendering boundary for KaTeX and Mermaid. Persistence is requested through the
 core native adapter; no note component writes files directly.
 
+The workspace UI includes nested folder and tag browsers, pinned saved
+searches, boolean/field queries, replacement previews with undo, typed
+frontmatter properties, course assignment, a filtered read-only graph, live
+wiki-link completion, revision diffs/restoration, and note/folder/course
+Markdown and print-to-PDF export. Native saves preserve stable IDs and metadata,
+move renamed files, index tags/properties, and retain the newest 50 revisions
+plus every revision from the last 30 days.
+
 Public invariants: autosave is at most one second; Markdown is portable; note
 rename rewrites workspace links; rendered untrusted content is sanitised; note
 deadlines synchronise through the shared item interface.
