@@ -3,12 +3,13 @@ mod lifecycle;
 mod secrets;
 mod spreadsheet;
 mod storage;
+mod structured;
 
 use std::{path::PathBuf, sync::Arc};
 
 use parking_lot::RwLock;
 use serde::Serialize;
-use storage::{SaveNoteInput, SavedFile, SearchHit, Vault, WorkspaceRecord};
+use storage::{DiskContent, SaveNoteInput, SavedFile, SearchHit, Vault, WorkspaceRecord};
 use tauri::{
     AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder,
     menu::{MenuBuilder, MenuItemBuilder},
@@ -93,6 +94,7 @@ async fn save_note(input: SaveNoteInput, state: State<'_, AppState>) -> Result<S
 
 #[tauri::command]
 async fn save_canvas(
+    map_id: Option<String>,
     workspace_id: String,
     relative_path: String,
     canvas_json: String,
@@ -100,7 +102,12 @@ async fn save_canvas(
 ) -> Result<SavedFile> {
     state
         .get_vault()?
-        .save_canvas(&workspace_id, &relative_path, &canvas_json)
+        .save_canvas(
+            map_id.as_deref(),
+            &workspace_id,
+            &relative_path,
+            &canvas_json,
+        )
         .await
 }
 
@@ -259,6 +266,26 @@ fn export_xlsx(path: String, sheets: Vec<spreadsheet::SheetInput>) -> Result<()>
     spreadsheet::export_xlsx(&PathBuf::from(path), sheets)
 }
 
+#[tauri::command]
+async fn persist_structured_state(
+    snapshot: structured::StructuredSnapshot,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    structured::persist(&state.get_vault()?.pool, snapshot).await
+}
+
+#[tauri::command]
+async fn load_structured_state(
+    state: State<'_, AppState>,
+) -> Result<structured::LoadedStructuredState> {
+    structured::load(&state.get_vault()?.pool).await
+}
+
+#[tauri::command]
+async fn load_file_content(state: State<'_, AppState>) -> Result<DiskContent> {
+    state.get_vault()?.load_file_content().await
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -343,7 +370,10 @@ pub fn run() {
             reveal_api_key,
             store_api_key,
             load_api_key,
-            export_xlsx
+            export_xlsx,
+            persist_structured_state,
+            load_structured_state,
+            load_file_content
         ])
         .setup(|app| {
             let show = MenuItemBuilder::with_id("show", "Show / Hide").build(app)?;

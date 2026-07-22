@@ -4,6 +4,7 @@ coverage/
 playwright-report/
 test-results/
 src-tauri/target/
+src-tauri/gen/schemas/
 LICENSE
 product-specification.md
 package-lock.json

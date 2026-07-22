@@ -1,6 +1,21 @@
 import { invoke } from "@tauri-apps/api/core";
+import DOMPurify from "dompurify";
+import { marked } from "marked";
 import TurndownService from "turndown";
-import type { AppSettings, CanvasMap, Note } from "@/shared/models";
+import type {
+  AppSettings,
+  CalendarItem,
+  CanvasMap,
+  Category,
+  Course,
+  Habit,
+  HabitEntry,
+  Metric,
+  MetricEntry,
+  Note,
+  Recap,
+  Workspace,
+} from "@/shared/models";
 
 const turndown = new TurndownService({
   headingStyle: "atx",
@@ -35,11 +50,67 @@ export async function readNativeSettings(): Promise<Partial<AppSettings> | undef
   return invoke<Partial<AppSettings>>("read_settings");
 }
 
+export interface StructuredSnapshot {
+  workspaces: Workspace[];
+  categories: Category[];
+  courses: Course[];
+  items: CalendarItem[];
+  habits: Habit[];
+  habitEntries: HabitEntry[];
+  metrics: Metric[];
+  metricEntries: MetricEntry[];
+  recaps: Recap[];
+}
+
+export async function persistNativeStructuredState(snapshot: StructuredSnapshot): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("persist_structured_state", { snapshot });
+}
+
+export async function readNativeStructuredState(): Promise<
+  { initialized: boolean; snapshot: StructuredSnapshot } | undefined
+> {
+  if (!isTauri()) return undefined;
+  return invoke<{ initialized: boolean; snapshot: StructuredSnapshot }>("load_structured_state");
+}
+
+interface DiskNote {
+  id: string;
+  workspaceId: string;
+  path: string;
+  title: string;
+  markdown: string;
+  courseId?: string;
+  tags: string[];
+  createdAt: string;
+  updatedAt: string;
+  wordCount: number;
+}
+
+export async function readNativeFileContent(): Promise<
+  { notes: Note[]; maps: CanvasMap[] } | undefined
+> {
+  if (!isTauri()) return undefined;
+  const content = await invoke<{
+    notes: DiskNote[];
+    maps: CanvasMap[];
+  }>("load_file_content");
+  return {
+    notes: content.notes.map(({ markdown, ...note }) => ({
+      ...note,
+      body: DOMPurify.sanitize(marked.parse(markdown, { async: false }) as string),
+      properties: {},
+    })),
+    maps: content.maps,
+  };
+}
+
 export async function persistNativeNote(note: Note): Promise<void> {
   if (!isTauri()) return;
   const markdown = turndown.turndown(note.body);
   await invoke("save_note", {
     input: {
+      id: note.id,
       workspaceId: note.workspaceId,
       relativePath: note.path.replace(/^notes[\\/]/, ""),
       title: note.title,
@@ -52,6 +123,7 @@ export async function persistNativeNote(note: Note): Promise<void> {
 export async function persistNativeCanvas(map: CanvasMap): Promise<void> {
   if (!isTauri()) return;
   await invoke("save_canvas", {
+    mapId: map.id,
     workspaceId: map.workspaceId,
     relativePath: map.path.replace(/^maps[\\/]/, ""),
     canvasJson: JSON.stringify({ nodes: map.nodes, edges: map.edges }),

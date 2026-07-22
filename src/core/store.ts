@@ -79,6 +79,18 @@ interface DiornaState {
   addHabit: (habit: Pick<Habit, "name" | "categoryId" | "type"> & Partial<Habit>) => Habit;
   updateHabitEntry: (habitId: Id, date: string, value: boolean | number) => void;
   updateSettings: (changes: Partial<AppSettings>) => void;
+  hydrateStructured: (snapshot: {
+    workspaces: Workspace[];
+    categories: Category[];
+    courses: Course[];
+    items: CalendarItem[];
+    habits: Habit[];
+    habitEntries: HabitEntry[];
+    metrics: Metric[];
+    metricEntries: MetricEntry[];
+    recaps: Recap[];
+  }) => void;
+  hydrateFileContent: (content: { notes: Note[]; maps: CanvasMap[] }) => void;
   addWorkspace: (name: string, color: string) => void;
   renameWorkspace: (id: Id, name: string) => void;
   deleteWorkspace: (id: Id) => void;
@@ -467,7 +479,7 @@ export const useDiornaStore = create<DiornaState>()(
   persist(
     (set, get) => ({
       ...initial,
-      finishOnboarding: (studentName, personalName, theme, loadSample) =>
+      finishOnboarding: (studentName, personalName, theme, loadSample) => {
         set((state) => ({
           onboardingComplete: true,
           settings: { ...state.settings, theme },
@@ -489,7 +501,10 @@ export const useDiornaStore = create<DiornaState>()(
                 metricEntries: [],
               }
             : {}),
-        })),
+        }));
+        for (const note of get().notes) void persistNativeNote(note);
+        for (const map of get().maps) void persistNativeCanvas(map);
+      },
       setWorkspace: (id) =>
         set({
           activeWorkspaceId: id,
@@ -566,6 +581,7 @@ export const useDiornaStore = create<DiornaState>()(
           wordCount: 0,
         };
         set((state) => ({ notes: [...state.notes, note] }));
+        void persistNativeNote(note);
         return note;
       },
       updateNote: (id, changes) => {
@@ -634,6 +650,7 @@ export const useDiornaStore = create<DiornaState>()(
           updatedAt: new Date().toISOString(),
         };
         set((state) => ({ maps: [...state.maps, map] }));
+        void persistNativeCanvas(map);
         return map;
       },
       updateMap: (id, changes) => {
@@ -721,6 +738,16 @@ export const useDiornaStore = create<DiornaState>()(
         set({ settings });
         void persistNativeSettings(settings);
       },
+      hydrateStructured: (snapshot) =>
+        set((state) => ({
+          ...snapshot,
+          activeWorkspaceId: snapshot.workspaces.some(
+            (workspace) => workspace.id === state.activeWorkspaceId,
+          )
+            ? state.activeWorkspaceId
+            : (snapshot.workspaces[0]?.id ?? state.activeWorkspaceId),
+        })),
+      hydrateFileContent: (content) => set(content),
       addWorkspace: (name, color) =>
         set((state) => ({
           workspaces: [

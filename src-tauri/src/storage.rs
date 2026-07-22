@@ -41,6 +41,7 @@ pub struct WorkspaceRecord {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveNoteInput {
+    pub id: Option<String>,
     pub workspace_id: String,
     pub relative_path: String,
     pub title: String,
@@ -54,6 +55,41 @@ pub struct SavedFile {
     pub id: String,
     pub path: String,
     pub hash: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskContent {
+    pub notes: Vec<DiskNote>,
+    pub maps: Vec<DiskMap>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskNote {
+    pub id: String,
+    pub workspace_id: String,
+    pub path: String,
+    pub title: String,
+    pub markdown: String,
+    pub course_id: Option<String>,
+    pub tags: Vec<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub word_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskMap {
+    pub id: String,
+    pub workspace_id: String,
+    pub path: String,
+    pub name: String,
+    pub parent_map_id: Option<String>,
+    pub nodes: serde_json::Value,
+    pub edges: serde_json::Value,
     pub updated_at: String,
 }
 
@@ -181,6 +217,7 @@ impl Vault {
             .fetch_optional(&self.pool)
             .await?
             .map(|row| row.get::<String, _>(0))
+            .or(input.id.clone())
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let markdown = ensure_frontmatter(&input.markdown, &id, &input.title, &now);
         atomic_write(&path, markdown.as_bytes())?;
@@ -211,6 +248,7 @@ impl Vault {
 
     pub async fn save_canvas(
         &self,
+        map_id: Option<&str>,
         workspace_id: &str,
         relative_path: &str,
         json: &str,
@@ -236,6 +274,7 @@ impl Vault {
             .fetch_optional(&self.pool)
             .await?
             .map(|row| row.get::<String, _>(0))
+            .or_else(|| map_id.map(ToOwned::to_owned))
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let name = relative
             .file_stem()
@@ -319,6 +358,127 @@ impl Vault {
         }
         transaction.commit().await?;
         Ok(count)
+    }
+
+    pub async fn load_file_content(&self) -> Result<DiskContent> {
+        let mut notes = Vec::new();
+        let mut maps = Vec::new();
+        for workspace in self.workspaces().await? {
+            let notes_root = self.root.join(&workspace.folder_name).join("notes");
+            for entry in WalkDir::new(&notes_root)
+                .into_iter()
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| {
+                    entry.file_type().is_file()
+                        && entry
+                            .path()
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("md"))
+                })
+            {
+                let path = entry.path();
+                let content = fs::read_to_string(path)?;
+                let relative = path
+                    .strip_prefix(&notes_root)
+                    .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+                let metadata = fs::metadata(path)?;
+                let created: chrono::DateTime<Utc> = metadata
+                    .created()
+                    .unwrap_or(std::time::SystemTime::now())
+                    .into();
+                let updated: chrono::DateTime<Utc> = metadata
+                    .modified()
+                    .unwrap_or(std::time::SystemTime::now())
+                    .into();
+                let title = frontmatter_value(&content, "title")
+                    .or_else(|| {
+                        path.file_stem()
+                            .and_then(|value| value.to_str())
+                            .map(str::to_owned)
+                    })
+                    .unwrap_or_else(|| "Untitled".into());
+                let id = frontmatter_value(&content, "id")
+                    .unwrap_or_else(|| stable_content_id("note", &workspace.id, relative));
+                let markdown = without_frontmatter(&content).to_owned();
+                let tags = extract_markdown_tags(&markdown);
+                notes.push(DiskNote {
+                    id,
+                    workspace_id: workspace.id.clone(),
+                    path: format!("notes/{}", relative.to_string_lossy().replace('\\', "/")),
+                    title,
+                    course_id: frontmatter_value(&content, "courseId"),
+                    tags,
+                    word_count: markdown.split_whitespace().count(),
+                    markdown,
+                    created_at: created.to_rfc3339(),
+                    updated_at: updated.to_rfc3339(),
+                });
+            }
+            let maps_root = self.root.join(&workspace.folder_name).join("maps");
+            for entry in WalkDir::new(&maps_root)
+                .into_iter()
+                .filter_map(std::result::Result::ok)
+                .filter(|entry| {
+                    entry.file_type().is_file()
+                        && entry
+                            .path()
+                            .extension()
+                            .is_some_and(|ext| ext.eq_ignore_ascii_case("canvas"))
+                })
+            {
+                let path = entry.path();
+                let content: serde_json::Value =
+                    serde_json::from_slice(&fs::read(path)?).map_err(|error| {
+                        DiornaError::InvalidData(format!(
+                            "Invalid Canvas {}: {error}",
+                            path.display()
+                        ))
+                    })?;
+                validate_canvas(&content)?;
+                let relative = path
+                    .strip_prefix(&maps_root)
+                    .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+                let relative_text = relative.to_string_lossy().replace('\\', "/");
+                let database = sqlx::query("SELECT id,parent_map_id,name,updated_at FROM map WHERE workspace_id=? AND path=?")
+                    .bind(&workspace.id).bind(&relative_text).fetch_optional(&self.pool).await?;
+                let metadata = fs::metadata(path)?;
+                let updated: chrono::DateTime<Utc> = metadata
+                    .modified()
+                    .unwrap_or(std::time::SystemTime::now())
+                    .into();
+                let fallback_name = path
+                    .file_stem()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("Untitled")
+                    .to_owned();
+                maps.push(DiskMap {
+                    id: database
+                        .as_ref()
+                        .map(|row| row.get("id"))
+                        .unwrap_or_else(|| stable_content_id("map", &workspace.id, relative)),
+                    workspace_id: workspace.id.clone(),
+                    path: format!("maps/{relative_text}"),
+                    name: database
+                        .as_ref()
+                        .map(|row| row.get("name"))
+                        .unwrap_or(fallback_name),
+                    parent_map_id: database.as_ref().and_then(|row| row.get("parent_map_id")),
+                    nodes: content
+                        .get("nodes")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!([])),
+                    edges: content
+                        .get("edges")
+                        .cloned()
+                        .unwrap_or_else(|| serde_json::json!([])),
+                    updated_at: database
+                        .as_ref()
+                        .map(|row| row.get("updated_at"))
+                        .unwrap_or_else(|| updated.to_rfc3339()),
+                });
+            }
+        }
+        Ok(DiskContent { notes, maps })
     }
 
     pub fn backup(&self, destination: &Path) -> Result<PathBuf> {
@@ -564,6 +724,32 @@ fn frontmatter_value(content: &str, key: &str) -> Option<String> {
         .find_map(|line| line.strip_prefix(&format!("{key}: ")).map(str::to_owned))
 }
 
+fn without_frontmatter(content: &str) -> &str {
+    if !content.starts_with("---") {
+        return content;
+    }
+    content
+        .find("\n---\n")
+        .map(|index| content[index + 5..].trim_start())
+        .unwrap_or(content)
+}
+
+fn extract_markdown_tags(content: &str) -> Vec<String> {
+    let pattern = regex::Regex::new(r"(?:^|\s)#([\p{L}\p{N}_/-]+)").expect("valid tag regex");
+    let mut tags = pattern
+        .captures_iter(content)
+        .map(|capture| capture[1].to_owned())
+        .collect::<Vec<_>>();
+    tags.sort();
+    tags.dedup();
+    tags
+}
+
+fn stable_content_id(kind: &str, workspace_id: &str, relative: &Path) -> String {
+    let digest = bytes_hash(format!("{workspace_id}:{}", relative.to_string_lossy()).as_bytes());
+    format!("{kind}-{}", &digest[..24])
+}
+
 fn file_hash(path: &Path) -> Result<String> {
     let mut file = File::open(path)?;
     let mut bytes = Vec::new();
@@ -595,6 +781,38 @@ mod tests {
         atomic_write(&path, b"first").unwrap();
         atomic_write(&path, b"second complete value").unwrap();
         assert_eq!(fs::read_to_string(path).unwrap(), "second complete value");
+    }
+
+    #[tokio::test]
+    async fn preserves_frontend_ids_for_notes_and_canvases() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = Vault::open(directory.path().to_path_buf()).await.unwrap();
+        let note = vault
+            .save_note(SaveNoteInput {
+                id: Some("note-stable".into()),
+                workspace_id: "workspace-student".into(),
+                relative_path: "Stable.md".into(),
+                title: "Stable".into(),
+                markdown: "# Stable\n\n#course/statistics".into(),
+                expected_hash: None,
+            })
+            .await
+            .unwrap();
+        let map = vault
+            .save_canvas(
+                Some("map-stable"),
+                "workspace-student",
+                "Stable.canvas",
+                r#"{"nodes":[],"edges":[]}"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(note.id, "note-stable");
+        assert_eq!(map.id, "map-stable");
+        let content = vault.load_file_content().await.unwrap();
+        assert_eq!(content.notes[0].id, "note-stable");
+        assert_eq!(content.notes[0].tags, vec!["course/statistics"]);
+        assert_eq!(content.maps[0].id, "map-stable");
     }
 
     #[test]

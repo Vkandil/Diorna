@@ -2,7 +2,16 @@ import { Component, type ErrorInfo, type ReactNode, useEffect, useState } from "
 import { AppShell } from "@/components/AppShell";
 import { Onboarding } from "@/components/Onboarding";
 import { useDiornaStore } from "@/core/store";
-import { hideCurrentWindow, initialiseNativeVault, readNativeSettings } from "@/core/native";
+import {
+  hideCurrentWindow,
+  initialiseNativeVault,
+  persistNativeCanvas,
+  persistNativeNote,
+  persistNativeStructuredState,
+  readNativeFileContent,
+  readNativeSettings,
+  readNativeStructuredState,
+} from "@/core/native";
 import { QuickCapture } from "@/components/QuickCapture";
 import i18n from "@/i18n";
 
@@ -64,8 +73,50 @@ export default function App() {
       .then(async () => {
         const nativeSettings = await readNativeSettings();
         if (nativeSettings) useDiornaStore.getState().updateSettings(nativeSettings);
+        const loaded = await readNativeStructuredState();
+        const files = await readNativeFileContent();
+        if (loaded?.initialized) {
+          useDiornaStore.getState().hydrateStructured(loaded.snapshot);
+          if (files) useDiornaStore.getState().hydrateFileContent(files);
+        } else {
+          const state = useDiornaStore.getState();
+          if (state.onboardingComplete) {
+            await Promise.all([
+              ...state.notes.map(persistNativeNote),
+              ...state.maps.map(persistNativeCanvas),
+            ]);
+            await persistNativeStructuredState(structuredSnapshot(state));
+          }
+        }
       })
       .catch((error: unknown) => console.error("Unable to initialise the native vault", error));
+  }, []);
+  useEffect(() => {
+    let timer = 0;
+    const unsubscribe = useDiornaStore.subscribe((state, previous) => {
+      if (
+        state.workspaces === previous.workspaces &&
+        state.categories === previous.categories &&
+        state.courses === previous.courses &&
+        state.items === previous.items &&
+        state.habits === previous.habits &&
+        state.habitEntries === previous.habitEntries &&
+        state.metrics === previous.metrics &&
+        state.metricEntries === previous.metricEntries &&
+        state.recaps === previous.recaps
+      )
+        return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => {
+        void persistNativeStructuredState(structuredSnapshot(state)).catch((error: unknown) =>
+          console.error("Unable to persist structured state", error),
+        );
+      }, 500);
+    });
+    return () => {
+      window.clearTimeout(timer);
+      unsubscribe();
+    };
   }, []);
   useEffect(() => {
     let lastDiskValue = "";
@@ -92,4 +143,18 @@ export default function App() {
     return <QuickCapture onClose={() => void hideCurrentWindow()} />;
   }
   return <ErrorBoundary>{onboardingComplete ? <AppShell /> : <Onboarding />}</ErrorBoundary>;
+}
+
+function structuredSnapshot(state: ReturnType<typeof useDiornaStore.getState>) {
+  return {
+    workspaces: state.workspaces,
+    categories: state.categories,
+    courses: state.courses,
+    items: state.items,
+    habits: state.habits,
+    habitEntries: state.habitEntries,
+    metrics: state.metrics,
+    metricEntries: state.metricEntries,
+    recaps: state.recaps,
+  };
 }
