@@ -50,6 +50,7 @@ import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md?raw";
 import projectLicense from "../../../LICENSE?raw";
 import releaseNotes from "../../../CHANGELOG.md?raw";
 import { listOllamaModels } from "@/modules/recap/summarizer";
+import { checkAndDownloadUpdate, isPortableBuild, type UpdateState } from "@/core/updater";
 
 const sections = [
   ["general", "General", UserRound],
@@ -103,6 +104,8 @@ export function SettingsView() {
   const [query, setQuery] = useState("");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [vaultInfo, setVaultInfo] = useState<NativeVaultInfo>();
+  const [updateState, setUpdateState] = useState<UpdateState>();
+  const [portable, setPortable] = useState(false);
   const [ollamaStatus, setOllamaStatus] = useState<"idle" | "checking" | "ready" | "offline">(
     "idle",
   );
@@ -118,6 +121,7 @@ export function SettingsView() {
   }, [state.settings.recapProvider]);
   useEffect(() => {
     void getNativeVaultInfo().then((info) => info && setVaultInfo(info));
+    void isPortableBuild().then(setPortable);
     void readNativeKeymap().then((keymap) => {
       if (keymap) {
         const current = useDiornaStore.getState();
@@ -162,7 +166,17 @@ export function SettingsView() {
           <span className="eyebrow">Preferences</span>
           <h1>{sections.find(([id]) => id === active)?.[1]}</h1>
         </header>
-        {renderSection(active, state, ollamaModels, ollamaStatus, vaultInfo, setVaultInfo)}
+        {renderSection(
+          active,
+          state,
+          ollamaModels,
+          ollamaStatus,
+          vaultInfo,
+          setVaultInfo,
+          portable,
+          updateState,
+          setUpdateState,
+        )}
       </div>
     </div>
   );
@@ -175,6 +189,9 @@ function renderSection(
   ollamaStatus: "idle" | "checking" | "ready" | "offline",
   vaultInfo: NativeVaultInfo | undefined,
   setVaultInfo: (info: NativeVaultInfo) => void,
+  portable: boolean,
+  updateState: UpdateState | undefined,
+  setUpdateState: (state: UpdateState) => void,
 ) {
   if (active === "appearance")
     return (
@@ -197,9 +214,17 @@ function renderSection(
         </Field>
         <Field label="Accent color">
           <div className="swatches">
+            <button
+              aria-label="Use Windows accent color"
+              title="Windows accent"
+              className={state.settings.accentColor === "system" ? "selected" : ""}
+              style={{ background: "AccentColor" }}
+              onClick={() => state.updateSettings({ accentColor: "system" })}
+            />
             {["#5b5bd6", "#3f70b5", "#168a68", "#b47619", "#c0445c", "#795ac8"].map((color) => (
               <button
                 key={color}
+                aria-label={`Use accent color ${color}`}
                 className={state.settings.accentColor === color ? "selected" : ""}
                 style={{ background: color }}
                 onClick={() => state.updateSettings({ accentColor: color })}
@@ -296,7 +321,19 @@ function renderSection(
                     state.updateWorkspace(workspace.id, { name: event.target.value })
                   }
                 />
-                <span>{workspace.kind}</span>
+                <select
+                  aria-label={`${workspace.name} workspace type`}
+                  value={workspace.kind}
+                  onChange={(event) =>
+                    state.updateWorkspace(workspace.id, {
+                      kind: event.target.value as typeof workspace.kind,
+                    })
+                  }
+                >
+                  <option value="student">Study</option>
+                  <option value="personal">Personal</option>
+                  <option value="custom">Custom</option>
+                </select>
                 <button
                   className="icon-button"
                   aria-label={`Move ${workspace.name} up`}
@@ -900,6 +937,9 @@ function renderSection(
               onChange={(event) =>
                 state.updateSettings({
                   language: event.target.value as "en" | "fr",
+                  weekStartsOn: event.target.value === "fr" ? 1 : 0,
+                  dailyWeekStartsOn: event.target.value === "fr" ? 1 : 0,
+                  spellCheckLanguage: event.target.value === "fr" ? "fr-FR" : "en-US",
                 })
               }
             >
@@ -909,8 +949,13 @@ function renderSection(
           </Field>
           <Toggle
             label="Start with Windows"
-            description="Launch Diorna when you sign in."
+            description={
+              portable
+                ? "Portable mode never writes a startup registration."
+                : "Launch Diorna when you sign in."
+            }
             checked={state.settings.startWithWindows}
+            disabled={portable}
             onChange={(checked) => state.updateSettings({ startWithWindows: checked })}
           />
           <Toggle
@@ -948,10 +993,41 @@ function renderSection(
           </Field>
           <Toggle
             label="Automatic updates"
-            description="Disable for a fully manual update workflow."
+            description={
+              portable
+                ? "Portable builds never contact the update service."
+                : "Disable for a fully manual update workflow."
+            }
             checked={state.settings.updateEnabled}
+            disabled={portable}
             onChange={(checked) => state.updateSettings({ updateEnabled: checked })}
           />
+          <div className="settings-action-row">
+            <button
+              className="button icon-text"
+              disabled={
+                portable ||
+                updateState?.status === "checking" ||
+                updateState?.status === "downloading"
+              }
+              onClick={() =>
+                void checkAndDownloadUpdate(true, state.settings.updateChannel).then(setUpdateState)
+              }
+            >
+              <RotateCcw size={15} /> Check for updates
+            </button>
+            {updateState?.status === "current" && <small>Diorna is up to date.</small>}
+            {updateState?.status === "checking" && <small>Checking…</small>}
+            {updateState?.status === "downloading" && (
+              <small>
+                Downloading {updateState.progress === null ? "…" : `${updateState.progress}%`}
+              </small>
+            )}
+            {updateState?.status === "ready" && (
+              <small>Version {updateState.version} is ready to install.</small>
+            )}
+            {updateState?.status === "error" && <small role="alert">{updateState.message}</small>}
+          </div>
         </>
       )}
       {active === "daily" && (
@@ -1287,11 +1363,13 @@ function Toggle({
   description,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string;
   description: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <label className="toggle-field">
@@ -1301,6 +1379,7 @@ function Toggle({
       </span>
       <input
         type="checkbox"
+        disabled={disabled}
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
       />

@@ -10,14 +10,15 @@ Windows 10 1809 and Windows 11 systems before a signed public release.
 | ------------------------- | ---------------------------------------------------------------------------------- |
 | TypeScript strict build   | Pass                                                                               |
 | ESLint, zero warnings     | Pass                                                                               |
-| Business-logic unit tests | 153/153 pass                                                                       |
-| Business-logic coverage   | 97.65% statements, 83.37% branches, 96.36% functions                               |
+| Business-logic unit tests | 193/193 pass                                                                       |
+| Business-logic coverage   | 97.78% statements, 83.10% branches, 97.40% functions                               |
 | Parser corpus             | 63 cases pass                                                                      |
 | Workspace isolation       | 19 tests covering all 16 content entity classes                                    |
-| Rust tests                | 7/7 pass, including atomic replace and XLSX archive                                |
-| Playwright acceptance     | Onboarding/isolation/Gym persistence, keyboard Daily/palette, deterministic Recap  |
+| Rust tests                | 19/19 pass, including recovery, conflicts, attachments, trash, and XLSX            |
+| Playwright acceptance     | 13/13 pass, including custom workspaces, month drag/drop, attachments, and WCAG    |
+| Reference web performance | Pass at 5,000 notes, 50 maps, 3,000 items, and 730 days of habit history           |
 | npm production audit      | 0 known vulnerabilities                                                            |
-| Production web build      | Pass; shell entry about 331 kB minified / 108 kB gzip; feature modules lazy-loaded |
+| Production web build      | Pass; shell entry about 472 kB minified / 153 kB gzip; feature modules lazy-loaded |
 | Native release compile    | Pass; optimized `diorna.exe` built from a clean Cargo target                       |
 | Windows bundles           | Pass; x64 EN/FR MSI and NSIS generated locally                                     |
 

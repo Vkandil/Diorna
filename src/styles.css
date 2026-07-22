@@ -17,13 +17,15 @@
   --border-strong: #c8c8c1;
   --text: #202124;
   --text-secondary: #62656b;
-  --text-muted: #8a8d92;
+  --text-muted: #666a70;
   --danger: #b83d50;
   --warning: #a56711;
   --success: #16795e;
   --focus: color-mix(in srgb, var(--accent) 38%, transparent);
+  --accent-text: color-mix(in srgb, var(--accent) 65%, var(--text));
   --shadow-sm: 0 1px 2px rgb(20 24 32 / 8%);
   --shadow-md: 0 10px 35px rgb(20 24 32 / 14%);
+  --shadow-lg: 0 18px 60px rgb(20 24 32 / 18%);
   --radius-sm: 5px;
   --radius-md: 8px;
   --radius-lg: 12px;
@@ -61,12 +63,13 @@
   --border-strong: #4a4d54;
   --text: #ececee;
   --text-secondary: #adafb6;
-  --text-muted: #81848d;
+  --text-muted: #a0a3ab;
   --danger: #ef8292;
   --warning: #e0a658;
   --success: #6fc6a7;
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 35%);
   --shadow-md: 0 12px 45px rgb(0 0 0 / 40%);
+  --shadow-lg: 0 20px 70px rgb(0 0 0 / 52%);
 }
 
 * {
@@ -241,7 +244,7 @@ select {
   gap: 5px;
   padding: 3px 0;
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .link-button svg {
@@ -361,6 +364,39 @@ select {
   font-weight: 600;
 }
 .onboarding-card label input {
+  height: 38px;
+}
+.onboarding-workspaces {
+  display: grid;
+  width: 100%;
+  max-height: 230px;
+  gap: 8px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}
+.onboarding-workspace {
+  display: grid;
+  width: 100%;
+  grid-template-columns: 38px minmax(0, 1fr) 130px 32px;
+  align-items: end;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+.onboarding-card .onboarding-workspace label:not(.check-row) {
+  width: auto;
+  gap: 3px;
+  margin: 0;
+  font-size: var(--type-xs);
+}
+.onboarding-workspace > input[type="color"] {
+  width: 38px;
+  height: 38px;
+  padding: 3px;
+}
+.onboarding-workspace select {
   height: 38px;
 }
 .onboarding-card footer {
@@ -487,10 +523,15 @@ select {
   min-width: 0;
   flex: 1;
   border: 0;
-  background: transparent;
+  background: var(--surface);
+  color: var(--text);
   padding: 0;
   font-weight: 650;
   appearance: none;
+}
+.workspace-switcher select option {
+  background: var(--surface-raised);
+  color: var(--text);
 }
 .workspace-dot {
   width: 9px;
@@ -524,7 +565,7 @@ select {
 }
 .module-rail button.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 650;
 }
 .module-rail button span {
@@ -1611,7 +1652,29 @@ select {
   -webkit-line-clamp: 2;
 }
 .note-list small {
-  color: var(--accent);
+  color: var(--accent-text);
+}
+.note-editor-host {
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+.note-editor-live,
+.note-editor-live > .note-editor {
+  width: 100%;
+  height: 100%;
+}
+.note-opening-preview {
+  position: absolute;
+  z-index: 20;
+  inset: 0;
+  display: block;
+  background: var(--surface);
+}
+.note-opening-preview .prose-editor {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
 }
 .note-editor {
   position: relative;
@@ -1619,6 +1682,20 @@ select {
   min-width: 0;
   height: 100%;
   grid-template-rows: 39px minmax(0, 1fr) 27px;
+}
+.note-editor.native-drop-active::after {
+  position: absolute;
+  z-index: 30;
+  inset: 8px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  color: var(--accent-text);
+  content: "Drop to embed in this note";
+  font-weight: 700;
+  pointer-events: none;
 }
 .editor-toolbar {
   position: relative;
@@ -1787,7 +1864,7 @@ select {
   padding: 2px 6px;
   border-radius: 4px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-size: var(--type-xs);
 }
 .tag-row input {
@@ -2822,6 +2899,45 @@ select {
   max-width: 100%;
   max-height: 620px;
 }
+
+.attachment-node.image.align-left {
+  margin-right: auto;
+  margin-left: 0;
+}
+
+.attachment-node.image.align-center {
+  margin-right: auto;
+  margin-left: auto;
+}
+
+.attachment-node.image.align-right {
+  margin-right: 0;
+  margin-left: auto;
+}
+
+.attachment-controls {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 6px;
+}
+
+.attachment-controls input {
+  flex: 1;
+}
+
+.attachment-controls button {
+  width: 26px;
+  height: 24px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+}
+
+.attachment-controls button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
 .attachment-node.image input {
   display: block;
   width: 100%;
@@ -3349,7 +3465,7 @@ select {
 }
 .category-filter button:last-child {
   margin-left: auto;
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .overdue-bar {
   display: flex;
@@ -3471,10 +3587,9 @@ select {
 }
 .mini-days button.outside {
   color: var(--text-muted);
-  opacity: 0.55;
 }
 .mini-days button.today {
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 700;
 }
 .mini-days button.selected {
@@ -3557,6 +3672,13 @@ select {
   border-right: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   padding: 5px;
+  transition:
+    background var(--motion),
+    box-shadow var(--motion);
+}
+.month-days > div.drop-target {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 .month-days > div.outside {
   background: var(--bg);
@@ -3589,6 +3711,10 @@ select {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: grab;
+}
+.month-days button:active {
+  cursor: grabbing;
 }
 .month-days button svg {
   width: 10px;
@@ -3635,7 +3761,7 @@ select {
   text-transform: uppercase;
 }
 .timeline-header strong.today {
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .all-day-row {
   position: sticky;
@@ -3857,7 +3983,7 @@ select {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--surface);
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
 }
 .day-popover > header {
   display: flex;
@@ -4283,7 +4409,7 @@ select {
 .date-cell.today {
   border-inline: 2px solid var(--accent);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .grid-stats-head {
   right: 0;
@@ -4520,7 +4646,7 @@ select {
 .score-footer.today {
   border-inline: 2px solid var(--accent);
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
 }
 .grid-stats-footer {
   right: 0;
@@ -4980,7 +5106,7 @@ select {
 }
 .privacy-note button {
   background: transparent;
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .recap-generator {
@@ -5368,7 +5494,7 @@ article.ready .timeline-dot {
 }
 .settings-layout > aside > button.active {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 600;
 }
 .settings-content {
@@ -5516,6 +5642,9 @@ article.ready .timeline-dot {
 .workspace-setting input:focus {
   border-color: var(--border);
   background: var(--surface);
+}
+.workspace-setting select {
+  width: 105px;
 }
 .workspace-setting span {
   color: var(--text-muted);
@@ -5913,6 +6042,43 @@ article.ready .timeline-dot {
   white-space: pre-wrap;
   font: var(--type-sm) / 1.55 var(--font-mono);
   color: var(--text-muted);
+}
+
+.update-prompt {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 120;
+  width: min(420px, calc(100vw - 40px));
+  padding: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-lg);
+}
+
+.update-prompt p,
+.update-prompt small {
+  display: block;
+  margin: 8px 0;
+}
+
+.update-prompt small {
+  max-height: 100px;
+  overflow: auto;
+  color: var(--text-muted);
+}
+
+.update-progress {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 120;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-md);
 }
 
 @media (prefers-reduced-motion: reduce) {

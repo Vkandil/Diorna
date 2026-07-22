@@ -223,6 +223,10 @@ export function DailyView() {
         </div>
         <div
           className="score-progress"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          {...(todayScore === null ? {} : { "aria-valuenow": todayScore })}
           aria-label={`Today's score ${todayScore ?? "not available"}`}
         >
           <i style={{ width: `${todayScore ?? 0}%` }} />

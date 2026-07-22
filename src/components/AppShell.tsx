@@ -35,6 +35,8 @@ import {
 import { listenForReminderActions, scheduleNativeReminders } from "@/modules/calendar/reminders";
 import { dateKey, habitStatistics } from "@/modules/daily/logic";
 import { matchesShortcut } from "@/core/shortcuts";
+import { installDownloadedUpdate, type UpdateState } from "@/core/updater";
+import { getNativeVaultInfo, takeNativeOpenRequests } from "@/core/native";
 
 const NotesView = lazy(() =>
   import("@/modules/notes/NotesView").then((module) => ({
@@ -92,6 +94,7 @@ export function AppShell() {
   const [draggedTab, setDraggedTab] = useState<string>();
   const [coachVisible, setCoachVisible] = useState(false);
   const [toast, setToast] = useState<string>();
+  const [updateState, setUpdateState] = useState<UpdateState>();
   const workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId)!;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -191,6 +194,61 @@ export function AppShell() {
     };
   }, []);
   useEffect(() => {
+    const openRequestedFiles = async () => {
+      const requested = await takeNativeOpenRequests();
+      if (!requested.length) return;
+      const vault = await getNativeVaultInfo();
+      if (!vault) return;
+      const normalize = (value: string) => value.replace(/\\/g, "/").toLocaleLowerCase();
+      const current = useDiornaStore.getState();
+      for (const request of requested) {
+        if (request === "--quick-capture") {
+          setCaptureOpen(true);
+          continue;
+        }
+        if (request === "--new-note") {
+          const note = useDiornaStore.getState().addNote();
+          useDiornaStore.getState().openTab({
+            module: "notes",
+            title: note.title,
+            entityId: note.id,
+          });
+          continue;
+        }
+        if (request === "--today") {
+          useDiornaStore.getState().setModule("home");
+          continue;
+        }
+        const absolute = normalize(request);
+        const entity = [...current.notes, ...current.maps].find((entry) => {
+          const workspace = current.workspaces.find((item) => item.id === entry.workspaceId);
+          if (!workspace) return false;
+          return normalize(`${vault.path}/${workspace.folderName}/${entry.path}`) === absolute;
+        });
+        if (!entity) {
+          window.dispatchEvent(
+            new CustomEvent("diorna-toast", {
+              detail: `The requested file is outside this vault: ${request}`,
+            }),
+          );
+          continue;
+        }
+        if (entity.workspaceId !== current.activeWorkspaceId)
+          current.setWorkspace(entity.workspaceId);
+        const next = useDiornaStore.getState();
+        const module = request.toLocaleLowerCase().endsWith(".canvas") ? "maps" : "notes";
+        next.openTab({
+          module,
+          title: "title" in entity ? entity.title : entity.name,
+          entityId: entity.id,
+        });
+      }
+    };
+    void openRequestedFiles();
+    const timer = window.setInterval(() => void openRequestedFiles(), 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
     if (["home", "settings", "components"].includes(state.activeModule)) {
       setCoachVisible(false);
       return;
@@ -214,6 +272,18 @@ export function AppShell() {
     const openCapture = () => setCaptureOpen(true);
     window.addEventListener("diorna-open-quick-capture", openCapture);
     return () => window.removeEventListener("diorna-open-quick-capture", openCapture);
+  }, []);
+  useEffect(() => {
+    const onUpdate = (event: Event) => {
+      const next = (event as CustomEvent<UpdateState>).detail;
+      setUpdateState(next);
+      if (next.status === "current") {
+        setToast("Diorna is up to date.");
+        window.setTimeout(() => setToast(undefined), 4_000);
+      }
+    };
+    window.addEventListener("diorna-update-state", onUpdate);
+    return () => window.removeEventListener("diorna-update-state", onUpdate);
   }, []);
   return (
     <div
@@ -279,6 +349,9 @@ export function AppShell() {
           role="separator"
           aria-orientation="vertical"
           aria-label="Resize sidebar"
+          aria-valuemin={190}
+          aria-valuemax={420}
+          aria-valuenow={state.sidebarWidth}
           tabIndex={0}
           onKeyDown={(event) => {
             if (event.key === "ArrowLeft") state.setSidebarWidth(state.sidebarWidth - 10);
@@ -350,6 +423,32 @@ export function AppShell() {
       {toast && (
         <div className="app-toast" role="status">
           {toast}
+        </div>
+      )}
+      {updateState?.status === "ready" && (
+        <section
+          className="update-prompt"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Update ready"
+        >
+          <strong>Diorna {updateState.version} is ready</strong>
+          <p>The signed update has been downloaded. Restart to install it now.</p>
+          {updateState.notes && <small>{updateState.notes}</small>}
+          <div className="button-row">
+            <button className="button" onClick={() => setUpdateState(undefined)}>
+              Later
+            </button>
+            <button className="button primary" onClick={() => void installDownloadedUpdate()}>
+              Restart and install
+            </button>
+          </div>
+        </section>
+      )}
+      {updateState?.status === "downloading" && (
+        <div className="update-progress" role="status">
+          Downloading Diorna {updateState.version}
+          {updateState.progress === null ? "…" : ` · ${updateState.progress}%`}
         </div>
       )}
     </div>
@@ -612,7 +711,7 @@ function RightPanel({ module }: { module: ModuleId }) {
                   ? "Statistics"
                   : "Context"}
         </span>
-        <button className="icon-button">
+        <button className="icon-button" aria-label="Refresh context">
           <RotateCcw size={14} />
         </button>
       </header>

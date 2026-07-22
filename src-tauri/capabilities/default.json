@@ -11,6 +11,8 @@
     "notification:default",
     "opener:default",
     "updater:default",
-    "autostart:default"
+    "autostart:default",
+    "process:default",
+    "log:default"
   ]
 }

@@ -6,12 +6,15 @@ import {
   Database,
   Moon,
   Palette,
+  Plus,
   Sun,
+  Trash2,
   Upload,
   Users,
 } from "lucide-react";
 import { useDiornaStore } from "@/core/store";
-import type { AppSettings } from "@/shared/models";
+import type { AppSettings, Workspace } from "@/shared/models";
+import { createId } from "@/shared/id";
 import {
   chooseDirectory,
   chooseVaultFolder,
@@ -24,8 +27,26 @@ export function Onboarding() {
   const updateSettings = useDiornaStore((state) => state.updateSettings);
   const [step, setStep] = useState(0);
   const [theme, setTheme] = useState<AppSettings["theme"]>("system");
-  const [studentName, setStudentName] = useState("Student");
-  const [personalName, setPersonalName] = useState("Personal");
+  const [workspaces, setWorkspaces] = useState<Workspace[]>([
+    {
+      id: "workspace-student",
+      name: "Student",
+      color: "#5b5bd6",
+      folderName: "Student",
+      sortOrder: 0,
+      kind: "student",
+      createdAt: new Date().toISOString(),
+    },
+    {
+      id: "workspace-personal",
+      name: "Personal",
+      color: "#168a68",
+      folderName: "Personal",
+      sortOrder: 1,
+      kind: "personal",
+      createdAt: new Date().toISOString(),
+    },
+  ]);
   const [sample, setSample] = useState(true);
   const [vaultPath, setVaultPath] = useState("Documents\\Diorna");
   const [importSource, setImportSource] = useState<{
@@ -40,12 +61,12 @@ export function Onboarding() {
         vaultPath === "Documents\\Diorna" ? undefined : vaultPath,
       );
       updateSettings({ vaultLocation: vault?.path ?? vaultPath });
-      finish(studentName || "Student", personalName || "Personal", theme, sample);
+      await finish(workspaces, theme, sample);
       if (importSource) {
         const report = await importNativeFolder(
           importSource.kind,
           importSource.path,
-          "workspace-student",
+          workspaces[0]!.id,
         );
         if (report)
           window.alert(
@@ -97,15 +118,97 @@ export function Onboarding() {
       <Users size={28} />
       <span className="eyebrow">Step 3 of 4</span>
       <h1>Separate your worlds</h1>
-      <p>Workspaces never leak data into one another.</p>
-      <label>
-        Study workspace
-        <input value={studentName} onChange={(event) => setStudentName(event.target.value)} />
-      </label>
-      <label>
-        Personal workspace
-        <input value={personalName} onChange={(event) => setPersonalName(event.target.value)} />
-      </label>
+      <p>Workspaces never leak data into one another. Keep one, rename them, or build your own.</p>
+      <div className="onboarding-workspaces">
+        {workspaces.map((workspace, index) => (
+          <div className="onboarding-workspace" key={workspace.id}>
+            <input
+              type="color"
+              aria-label={`${workspace.name} workspace color`}
+              value={workspace.color}
+              onChange={(event) =>
+                setWorkspaces((current) =>
+                  current.map((entry) =>
+                    entry.id === workspace.id ? { ...entry, color: event.target.value } : entry,
+                  ),
+                )
+              }
+            />
+            <label>
+              <span>Name</span>
+              <input
+                aria-label={
+                  workspace.id === "workspace-student"
+                    ? "Study workspace"
+                    : workspace.id === "workspace-personal"
+                      ? "Personal workspace"
+                      : `Workspace ${index + 1} name`
+                }
+                value={workspace.name}
+                onChange={(event) =>
+                  setWorkspaces((current) =>
+                    current.map((entry) =>
+                      entry.id === workspace.id ? { ...entry, name: event.target.value } : entry,
+                    ),
+                  )
+                }
+              />
+            </label>
+            <label>
+              <span>Type</span>
+              <select
+                aria-label={`${workspace.name} workspace type`}
+                value={workspace.kind}
+                onChange={(event) =>
+                  setWorkspaces((current) =>
+                    current.map((entry) =>
+                      entry.id === workspace.id
+                        ? { ...entry, kind: event.target.value as Workspace["kind"] }
+                        : entry,
+                    ),
+                  )
+                }
+              >
+                <option value="student">Study</option>
+                <option value="personal">Personal</option>
+                <option value="custom">Custom</option>
+              </select>
+            </label>
+            <button
+              className="icon-button danger"
+              aria-label={`Remove ${workspace.name} workspace`}
+              disabled={workspaces.length === 1}
+              onClick={() => {
+                setWorkspaces((current) => current.filter((entry) => entry.id !== workspace.id));
+                if (workspace.id === "workspace-student") setSample(false);
+              }}
+            >
+              <Trash2 />
+            </button>
+          </div>
+        ))}
+      </div>
+      <button
+        className="button icon-text"
+        onClick={() => {
+          const index = workspaces.length + 1;
+          const name = `Workspace ${index}`;
+          setWorkspaces((current) => [
+            ...current,
+            {
+              id: createId("workspace"),
+              name,
+              color: "#657287",
+              folderName: name,
+              sortOrder: current.length,
+              kind: "custom",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        }}
+      >
+        <Plus /> Add workspace
+      </button>
     </section>,
     <section key="import">
       <Upload size={28} />

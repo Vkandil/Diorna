@@ -10,6 +10,7 @@ import {
 import katex from "katex";
 import mermaid from "mermaid";
 import DOMPurify from "dompurify";
+import { chooseAndImportNativeAttachment } from "@/core/native";
 import { common, createLowlight } from "lowlight";
 import python from "highlight.js/lib/languages/python";
 import r from "highlight.js/lib/languages/r";
@@ -434,9 +435,17 @@ export const AttachmentBlock = Node.create({
     return {
       kind: { default: "file" },
       src: { default: "" },
+      relativePath: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("data-relative-path") ?? "",
+        renderHTML: (attributes) => ({ "data-relative-path": attributes.relativePath }),
+      },
+      workspaceId: { default: "" },
       title: { default: "Untitled attachment" },
       size: { default: "" },
       caption: { default: "" },
+      width: { default: 100 },
+      align: { default: "center" },
     };
   },
   parseHTML() {
@@ -468,9 +477,34 @@ function AttachmentView({ node, updateAttributes, selected }: NodeViewProps) {
     return (
       <NodeViewWrapper
         as="figure"
-        className={`attachment-node image ${selected ? "selected" : ""}`}
+        className={`attachment-node image align-${node.attrs.align} ${selected ? "selected" : ""}`}
+        style={{ width: `${node.attrs.width}%` }}
       >
         <img src={node.attrs.src} alt={node.attrs.caption || node.attrs.title} />
+        {selected && (
+          <div className="attachment-controls" contentEditable={false}>
+            <input
+              aria-label="Image width"
+              type="range"
+              min="20"
+              max="100"
+              value={node.attrs.width}
+              onInput={(event) =>
+                updateAttributes({ width: Number((event.target as HTMLInputElement).value) })
+              }
+            />
+            {(["left", "center", "right"] as const).map((align) => (
+              <button
+                key={align}
+                aria-label={`Align image ${align}`}
+                className={node.attrs.align === align ? "active" : ""}
+                onClick={() => updateAttributes({ align })}
+              >
+                {align[0]!.toUpperCase()}
+              </button>
+            ))}
+          </div>
+        )}
         <input
           value={node.attrs.caption}
           onChange={(event) => updateAttributes({ caption: event.target.value })}
@@ -507,7 +541,38 @@ function AttachmentView({ node, updateAttributes, selected }: NodeViewProps) {
           {node.attrs.size ? ` · ${node.attrs.size}` : ""}
         </small>
       </span>
-      <button contentEditable={false}>Choose file…</button>
+      <button
+        contentEditable={false}
+        onClick={() =>
+          void chooseAndImportNativeAttachment(String(node.attrs.workspaceId)).then(
+            (attachment) =>
+              attachment &&
+              updateAttributes({
+                src: attachment.displayUrl,
+                relativePath: attachment.relativePath,
+                title: attachment.name,
+                size: humanFileSize(attachment.size),
+                kind: attachmentKind(attachment.name),
+              }),
+          )
+        }
+      >
+        Choose file…
+      </button>
     </NodeViewWrapper>
   );
+}
+
+function attachmentKind(name: string): "image" | "video" | "audio" | "pdf" | "file" {
+  const extension = name.split(".").pop()?.toLocaleLowerCase();
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(extension ?? "")) return "image";
+  if (["mp4", "webm", "mov", "m4v"].includes(extension ?? "")) return "video";
+  if (["mp3", "wav", "ogg", "m4a"].includes(extension ?? "")) return "audio";
+  return extension === "pdf" ? "pdf" : "file";
+}
+
+function humanFileSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }

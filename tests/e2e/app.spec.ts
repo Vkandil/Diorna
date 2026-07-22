@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
 
 async function completeOnboarding(page: Page) {
   await expect(page.getByRole("heading", { name: "Choose your vault" })).toBeVisible();
@@ -6,8 +7,8 @@ async function completeOnboarding(page: Page) {
   await expect(page.getByRole("heading", { name: "Make it comfortable" })).toBeVisible();
   await page.getByRole("button", { name: "Dark" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByLabel("Study workspace").fill("University");
-  await page.getByLabel("Personal workspace").fill("Studio");
+  await page.getByLabel("Study workspace", { exact: true }).fill("University");
+  await page.getByLabel("Personal workspace", { exact: true }).fill("Studio");
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Enter Diorna" }).click();
   await expect(page.getByRole("heading", { name: "University" })).toBeVisible();
@@ -17,6 +18,22 @@ test.beforeEach(async ({ page }) => {
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
+});
+
+test("customizes and replaces both starter workspaces during onboarding", async ({ page }) => {
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Dark" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Remove Student workspace" }).click();
+  await page.getByRole("button", { name: "Add workspace" }).click();
+  await page.getByLabel("Workspace 2 name").fill("Projects");
+  await page.getByLabel("Projects workspace type").selectOption("custom");
+  await page.getByRole("button", { name: "Remove Personal workspace" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Enter Diorna" }).click();
+  await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
+  await expect(page.getByLabel("Workspace").locator("option")).toHaveCount(2);
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
 test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page }) => {
@@ -229,6 +246,34 @@ test("plans, recurs, completes, and reloads a calendar item", async ({ page }) =
   expect(errors).toEqual([]);
 });
 
+test("moves a calendar event to another day in month view", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByRole("button", { name: "Calendar Ctrl 3" }).click();
+  await page.getByRole("button", { name: "New item" }).click();
+  const dialog = page.getByRole("dialog", { name: "New calendar item" });
+  await dialog.getByLabel("Title *").fill("Month drag acceptance");
+  await dialog.getByRole("button", { name: "Save item" }).click();
+  await page.getByRole("button", { name: "M", exact: true }).click();
+  const event = page.getByTitle("Drag Month drag acceptance to another day");
+  await expect(event).toBeVisible();
+  const original = await event.evaluate(
+    (element) => element.closest<HTMLElement>("[data-date]")!.dataset.date!,
+  );
+  const target = new Date(`${original}T12:00:00`);
+  target.setDate(target.getDate() + 2);
+  const targetDate = [
+    target.getFullYear(),
+    String(target.getMonth() + 1).padStart(2, "0"),
+    String(target.getDate()).padStart(2, "0"),
+  ].join("-");
+  await event.dragTo(page.locator(`[data-date="${targetDate}"]`));
+  await expect
+    .poll(() =>
+      event.evaluate((element) => element.closest<HTMLElement>("[data-date]")!.dataset.date),
+    )
+    .toBe(targetDate);
+});
+
 test("organises, annotates, searches, and revises notes", async ({ page }) => {
   await completeOnboarding(page);
   await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
@@ -395,4 +440,85 @@ test("duplicates, trashes, and restores a note", async ({ page }) => {
   await expect(
     page.locator(".note-list-row").filter({ hasText: /^Trash acceptance(?! copy)/ }),
   ).toBeVisible();
+});
+
+test("meets the shell accessibility gate and switches to French", async ({ page }) => {
+  await completeOnboarding(page);
+  for (const module of ["Home", "Notes", "Maps", "Calendar", "Daily", "Recap", "Settings"]) {
+    await page
+      .getByRole("button", { name: module === "Home" ? "Home" : new RegExp(`^${module}`) })
+      .first()
+      .click();
+    await page.waitForTimeout(150);
+    const accessibility = await new AxeBuilder({ page })
+      .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+      .analyze();
+    expect(
+      accessibility.violations.map(({ id, impact, nodes }) => ({
+        id,
+        impact,
+        targets: nodes.map((node) => node.target),
+      })),
+      `${module} accessibility violations`,
+    ).toEqual([]);
+  }
+
+  await page.getByLabel("Language").selectOption("fr");
+  await expect(page.getByRole("heading", { name: "Général", level: 1 })).toBeVisible();
+  await expect(page.getByText("Mises à jour automatiques", { exact: true })).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("lang", "fr");
+});
+
+test("pastes a screenshot into a portable attachment block", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByRole("button", { name: /^Notes/ }).click();
+  const editor = page.locator(
+    '.note-editor-live:not([hidden]) .prose-editor[contenteditable="true"]',
+  );
+  await expect(editor).toBeVisible();
+  await editor.click();
+  await editor.evaluate((target) => {
+    const bytes = Uint8Array.from(
+      atob(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      ),
+      (character) => character.charCodeAt(0),
+    );
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([bytes], "screenshot.png", { type: "image/png" }));
+    (target as HTMLElement).focus();
+    const event = new ClipboardEvent("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: transfer });
+    target.dispatchEvent(event);
+  });
+  const attachment = page.locator("figure.attachment-node.image");
+  await expect(attachment.getByRole("img")).toBeVisible();
+  await attachment.click();
+  await attachment.getByLabel("Image width").evaluate((input) => {
+    (input as HTMLInputElement).value = "60";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await attachment.getByLabel("Align image right").click();
+  await attachment.getByPlaceholder("Add a caption…").fill("Screenshot evidence");
+  await expect(attachment).toHaveClass(/align-right/);
+  await expect(attachment).toHaveAttribute("style", /width: 60%/);
+
+  await editor.evaluate((target) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File(["%PDF-1.7"], "reading.pdf", { type: "application/pdf" }));
+    transfer.items.add(new File(["video"], "lecture.mp4", { type: "video/mp4" }));
+    const rect = target.getBoundingClientRect();
+    target.dispatchEvent(
+      new DragEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        clientX: rect.left + 20,
+        clientY: rect.bottom - 20,
+        dataTransfer: transfer,
+      }),
+    );
+  });
+  await expect(page.locator(".attachment-node.pdf iframe")).toBeVisible();
+  await expect(page.locator(".attachment-node video")).toBeVisible();
 });

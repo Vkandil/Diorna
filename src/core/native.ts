@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import TurndownService from "turndown";
 import type {
   AppSettings,
@@ -24,8 +24,15 @@ const turndown = new TurndownService({
   codeBlockStyle: "fenced",
   bulletListMarker: "-",
 });
+turndown.keep(["figure"]);
 
 export const isTauri = (): boolean => "__TAURI_INTERNALS__" in window;
+
+export async function logNativeError(message: string): Promise<void> {
+  if (!isTauri()) return;
+  const { error } = await import("@tauri-apps/plugin-log");
+  await error(message);
+}
 
 export async function openExternalUrl(url: string): Promise<void> {
   if (isTauri()) {
@@ -39,7 +46,78 @@ export async function openExternalUrl(url: string): Promise<void> {
 export interface NativeVaultInfo {
   path: string;
   totalBytes: number;
-  workspaces: Array<{ workspaceId: string; name: string; bytes: number }>;
+  workspaces: Array<{ workspaceId: string; name: string; folderName: string; bytes: number }>;
+}
+
+export interface ImportedAttachment {
+  relativePath: string;
+  displayUrl: string;
+  size: number;
+  name: string;
+}
+
+interface SavedAttachment {
+  relativePath: string;
+  absolutePath: string;
+  size: number;
+}
+
+function attachmentResult(saved: SavedAttachment): ImportedAttachment {
+  return {
+    relativePath: saved.relativePath,
+    displayUrl: convertFileSrc(saved.absolutePath),
+    size: saved.size,
+    name: saved.absolutePath.split(/[\\/]/).pop() ?? "attachment",
+  };
+}
+
+export async function importNativeAttachmentFile(
+  workspaceId: string,
+  sourcePath: string,
+): Promise<ImportedAttachment> {
+  const saved = await invoke<SavedAttachment>("import_attachment", {
+    workspaceId,
+    name: sourcePath.split(/[\\/]/).pop() ?? "attachment",
+    sourcePath,
+    dataBase64: null,
+  });
+  return attachmentResult(saved);
+}
+
+export async function importNativeAttachmentBytes(
+  workspaceId: string,
+  file: File,
+): Promise<ImportedAttachment> {
+  if (!isTauri()) {
+    return {
+      relativePath: `attachments/${file.name}`,
+      displayUrl: URL.createObjectURL(file),
+      size: file.size,
+      name: file.name,
+    };
+  }
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read attachment"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
+  const saved = await invoke<SavedAttachment>("import_attachment", {
+    workspaceId,
+    name: file.name || `screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`,
+    sourcePath: null,
+    dataBase64: dataUrl.slice(dataUrl.indexOf(",") + 1),
+  });
+  return attachmentResult(saved);
+}
+
+export async function chooseAndImportNativeAttachment(
+  workspaceId: string,
+): Promise<ImportedAttachment | undefined> {
+  if (!isTauri()) return undefined;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const path = await open({ multiple: false, title: "Choose an attachment" });
+  return typeof path === "string" ? importNativeAttachmentFile(workspaceId, path) : undefined;
 }
 
 export async function initialiseNativeVault(path?: string): Promise<NativeVaultInfo | undefined> {
@@ -56,9 +134,12 @@ export async function persistNativeSettings(settings: AppSettings): Promise<void
 
 export async function applyNativeShellSettings(settings: AppSettings): Promise<void> {
   if (!isTauri()) return;
+  const runtime = await invoke<{ portable: boolean }>("runtime_info");
   await Promise.all([
     invoke("set_close_to_tray", { enabled: settings.minimizeToTray }),
-    invoke("set_start_with_windows", { enabled: settings.startWithWindows }),
+    ...(runtime.portable
+      ? []
+      : [invoke("set_start_with_windows", { enabled: settings.startWithWindows })]),
     invoke("set_global_shortcut", { shortcut: settings.keymap.quickCapture }),
   ]);
 }
@@ -66,6 +147,11 @@ export async function applyNativeShellSettings(settings: AppSettings): Promise<v
 export async function updateNativeTrayScore(score: number | null): Promise<void> {
   if (!isTauri()) return;
   await invoke("update_tray_score", { score });
+}
+
+export async function takeNativeOpenRequests(): Promise<string[]> {
+  if (!isTauri()) return [];
+  return invoke<string[]>("take_open_requests");
 }
 
 export async function readNativeSettings(): Promise<Partial<AppSettings> | undefined> {
@@ -194,6 +280,34 @@ interface DiskNote {
   createdAt: string;
   updatedAt: string;
   wordCount: number;
+  hash: string;
+}
+
+type DiskMap = CanvasMap & { hash: string };
+const nativeFileHashes = new Map<string, string>();
+const nativeSaveQueues = new Map<string, Promise<void>>();
+
+async function enqueueNativeSave(key: string, operation: () => Promise<void>): Promise<void> {
+  const previous = nativeSaveQueues.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  nativeSaveQueues.set(key, current);
+  try {
+    await current;
+  } finally {
+    if (nativeSaveQueues.get(key) === current) nativeSaveQueues.delete(key);
+  }
+}
+
+function nativeSaveError(error: unknown): never {
+  const message = String(error);
+  window.dispatchEvent(
+    new CustomEvent("diorna-toast", {
+      detail: message.toLocaleLowerCase().includes("changed outside")
+        ? "This file changed outside Diorna. Reload before saving so neither version is lost."
+        : `Unable to save: ${message}`,
+    }),
+  );
+  throw error;
 }
 
 export async function readNativeFileContent(): Promise<
@@ -206,33 +320,66 @@ export async function readNativeFileContent(): Promise<
   ]);
   const content = await invoke<{
     notes: DiskNote[];
-    maps: CanvasMap[];
+    maps: DiskMap[];
   }>("load_file_content");
+  const vault = await getNativeVaultInfo();
   return {
-    notes: content.notes.map(({ markdown, ...note }) => ({
-      ...note,
-      body: DOMPurify.sanitize(marked.parse(markdown, { async: false }) as string),
-    })),
-    maps: content.maps,
+    notes: content.notes.map(({ markdown, hash, ...note }) => {
+      nativeFileHashes.set(`note:${note.id}`, hash);
+      const sanitized = DOMPurify.sanitize(marked.parse(markdown, { async: false }) as string);
+      const workspace = vault?.workspaces.find((entry) => entry.workspaceId === note.workspaceId);
+      const document = new DOMParser().parseFromString(sanitized, "text/html");
+      if (workspace && vault) {
+        for (const media of document.querySelectorAll<HTMLElement>(
+          "figure[data-type='attachment'], figure[data-type='attachment'] img, figure[data-type='attachment'] video, figure[data-type='attachment'] audio, figure[data-type='attachment'] iframe, img",
+        )) {
+          const relative = media.dataset.relativePath || media.getAttribute("src") || "";
+          if (!relative.startsWith("attachments/")) continue;
+          media.dataset.relativePath = relative;
+          media.setAttribute(
+            "src",
+            convertFileSrc(`${vault.path}/${workspace.folderName}/${relative}`),
+          );
+        }
+      }
+      return { ...note, body: document.body.innerHTML };
+    }),
+    maps: content.maps.map(({ hash, ...map }) => {
+      nativeFileHashes.set(`map:${map.id}`, hash);
+      return map;
+    }),
   };
 }
 
 export async function persistNativeNote(note: Note): Promise<void> {
   if (!isTauri()) return;
-  const markdown = turndown.turndown(note.body);
-  await invoke("save_note", {
-    input: {
-      id: note.id,
-      workspaceId: note.workspaceId,
-      relativePath: note.path.replace(/^notes[\\/]/, ""),
-      title: note.title,
-      markdown,
-      courseId: note.courseId ?? null,
-      tags: note.tags,
-      properties: note.properties,
-      starred: note.starred ?? false,
-      expectedHash: null,
-    },
+  await enqueueNativeSave(`note:${note.id}`, async () => {
+    const document = new DOMParser().parseFromString(note.body, "text/html");
+    for (const media of document.querySelectorAll<HTMLElement>(
+      "figure[data-type='attachment'], figure[data-type='attachment'] img, figure[data-type='attachment'] video, figure[data-type='attachment'] audio, figure[data-type='attachment'] iframe",
+    )) {
+      if (media.dataset.relativePath) media.setAttribute("src", media.dataset.relativePath);
+    }
+    const markdown = turndown.turndown(document.body.innerHTML);
+    try {
+      const saved = await invoke<{ hash: string }>("save_note", {
+        input: {
+          id: note.id,
+          workspaceId: note.workspaceId,
+          relativePath: note.path.replace(/^notes[\\/]/, ""),
+          title: note.title,
+          markdown,
+          courseId: note.courseId ?? null,
+          tags: note.tags,
+          properties: note.properties,
+          starred: note.starred ?? false,
+          expectedHash: nativeFileHashes.get(`note:${note.id}`) ?? null,
+        },
+      });
+      nativeFileHashes.set(`note:${note.id}`, saved.hash);
+    } catch (error) {
+      nativeSaveError(error);
+    }
   });
 }
 
@@ -324,15 +471,23 @@ function downloadText(name: string, content: string): void {
 
 export async function persistNativeCanvas(map: CanvasMap): Promise<void> {
   if (!isTauri()) return;
-  await invoke("save_canvas", {
-    mapId: map.id,
-    workspaceId: map.workspaceId,
-    relativePath: map.path.replace(/^maps[\\/]/, ""),
-    canvasJson: JSON.stringify({
-      nodes: map.nodes,
-      edges: map.edges,
-      diorna: { ...(map.parentMapId ? { parentMapId: map.parentMapId } : {}) },
-    }),
+  await enqueueNativeSave(`map:${map.id}`, async () => {
+    try {
+      const saved = await invoke<{ hash: string }>("save_canvas", {
+        mapId: map.id,
+        workspaceId: map.workspaceId,
+        relativePath: map.path.replace(/^maps[\\/]/, ""),
+        canvasJson: JSON.stringify({
+          nodes: map.nodes,
+          edges: map.edges,
+          diorna: { ...(map.parentMapId ? { parentMapId: map.parentMapId } : {}) },
+        }),
+        expectedHash: nativeFileHashes.get(`map:${map.id}`) ?? null,
+      });
+      nativeFileHashes.set(`map:${map.id}`, saved.hash);
+    } catch (error) {
+      nativeSaveError(error);
+    }
   });
 }
 

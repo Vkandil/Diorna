@@ -88,6 +88,7 @@ pub struct DiskNote {
     pub created_at: String,
     pub updated_at: String,
     pub word_count: usize,
+    pub hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,6 +111,7 @@ pub struct DiskMap {
     pub nodes: serde_json::Value,
     pub edges: serde_json::Value,
     pub updated_at: String,
+    pub hash: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,25 +127,49 @@ impl Vault {
     pub async fn open(root: PathBuf) -> Result<Self> {
         create_vault_layout(&root)?;
         let db_path = root.join(".app").join("index.db");
-        if db_path.exists() {
+        let mut database_existed = db_path.exists();
+        let mut recovered_from_header = false;
+        if database_existed && !has_sqlite_header(&db_path)? {
+            archive_corrupted_database(&db_path, &root.join(".app").join("recovery"))?;
+            database_existed = false;
+            recovered_from_header = true;
+            log::error!("The SQLite index header was invalid; rebuilding file-backed content");
+        }
+        if database_existed {
             backup_database_before_migration(&db_path, &root.join(".app").join("backups"))?;
         }
-        let options =
-            SqliteConnectOptions::from_str(&format!("sqlite://{}", db_path.to_string_lossy()))?
-                .create_if_missing(true)
-                .foreign_keys(true)
-                .journal_mode(SqliteJournalMode::Wal)
-                .synchronous(SqliteSynchronous::Full)
-                .busy_timeout(Duration::from_secs(5));
-        let pool = SqlitePoolOptions::new()
-            .max_connections(8)
-            .connect_with(options)
-            .await?;
+        let (mut pool, mut recovered) = match connect_database(&db_path).await {
+            Ok(pool) => (pool, false),
+            Err(error) if database_existed && database_error_is_corruption(&error) => {
+                archive_corrupted_database(&db_path, &root.join(".app").join("recovery"))?;
+                log::error!(
+                    "Unable to open SQLite index ({error}); rebuilding file-backed content"
+                );
+                (connect_database(&db_path).await?, true)
+            }
+            Err(error) => return Err(error),
+        };
+        recovered |= recovered_from_header;
+        let integrity = sqlx::query_scalar::<_, String>("PRAGMA quick_check")
+            .fetch_one(&pool)
+            .await;
+        if !matches!(integrity, Ok(ref value) if value.eq_ignore_ascii_case("ok")) {
+            pool.close().await;
+            archive_corrupted_database(&db_path, &root.join(".app").join("recovery"))?;
+            pool = connect_database(&db_path).await?;
+            recovered = true;
+            log::error!(
+                "The SQLite index was corrupt and has been archived; rebuilding file-backed content"
+            );
+        }
         MIGRATOR.run(&pool).await?;
         seed_defaults(&pool).await?;
         ensure_workspace_layout(&root, &pool).await?;
         let vault = Self { root, pool };
         vault.ensure_settings()?;
+        if recovered {
+            vault.rebuild_file_index().await?;
+        }
         Ok(vault)
     }
 
@@ -432,6 +458,7 @@ impl Vault {
         workspace_id: &str,
         relative_path: &str,
         json: &str,
+        expected_hash: Option<&str>,
     ) -> Result<SavedFile> {
         let workspace = self.workspace(workspace_id).await?;
         let mut relative = safe_relative_path(Path::new(relative_path))?;
@@ -469,6 +496,15 @@ impl Vault {
                     .join(old_relative),
             )
         });
+        let content_path = old_path
+            .as_ref()
+            .filter(|value| value.exists())
+            .unwrap_or(&path);
+        if let Some(expected) = expected_hash {
+            if content_path.exists() && file_hash(content_path)? != expected {
+                return Err(DiornaError::SyncConflict);
+            }
+        }
         atomic_write(&path, &pretty)?;
         let now = Utc::now().to_rfc3339();
         let id = existing
@@ -654,6 +690,7 @@ impl Vault {
                     markdown,
                     created_at: created.to_rfc3339(),
                     updated_at: updated.to_rfc3339(),
+                    hash: bytes_hash(content.as_bytes()),
                 });
             }
             let maps_root = self.root.join(&workspace.folder_name).join("maps");
@@ -669,13 +706,10 @@ impl Vault {
                 })
             {
                 let path = entry.path();
-                let content: serde_json::Value =
-                    serde_json::from_slice(&fs::read(path)?).map_err(|error| {
-                        DiornaError::InvalidData(format!(
-                            "Invalid Canvas {}: {error}",
-                            path.display()
-                        ))
-                    })?;
+                let raw = fs::read(path)?;
+                let content: serde_json::Value = serde_json::from_slice(&raw).map_err(|error| {
+                    DiornaError::InvalidData(format!("Invalid Canvas {}: {error}", path.display()))
+                })?;
                 validate_canvas(&content)?;
                 let relative = path
                     .strip_prefix(&maps_root)
@@ -726,6 +760,7 @@ impl Vault {
                         .as_ref()
                         .map(|row| row.get("updated_at"))
                         .unwrap_or_else(|| updated.to_rfc3339()),
+                    hash: bytes_hash(&raw),
                 });
             }
         }
@@ -765,6 +800,71 @@ impl Vault {
             .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
         Ok(output)
     }
+}
+
+async fn connect_database(path: &Path) -> Result<SqlitePool> {
+    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.to_string_lossy()))?
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .synchronous(SqliteSynchronous::Full)
+        .busy_timeout(Duration::from_secs(5));
+    Ok(SqlitePoolOptions::new()
+        .max_connections(8)
+        .connect_with(options)
+        .await?)
+}
+
+fn archive_corrupted_database(database: &Path, recovery: &Path) -> Result<()> {
+    fs::create_dir_all(recovery)?;
+    let stamp = Utc::now().format("%Y%m%d-%H%M%S");
+    for suffix in ["", "-wal", "-shm"] {
+        let source = PathBuf::from(format!("{}{}", database.to_string_lossy(), suffix));
+        if !source.exists() {
+            continue;
+        }
+        let name = if suffix.is_empty() {
+            format!("index-corrupt-{stamp}.db")
+        } else {
+            format!("index-corrupt-{stamp}.db{suffix}")
+        };
+        rename_released_database(&source, &recovery.join(name))?;
+    }
+    Ok(())
+}
+
+fn rename_released_database(source: &Path, destination: &Path) -> std::io::Result<()> {
+    const MAX_ATTEMPTS: usize = 20;
+    for attempt in 0..MAX_ATTEMPTS {
+        match fs::rename(source, destination) {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if cfg!(windows)
+                    && matches!(error.raw_os_error(), Some(32) | Some(33))
+                    && attempt + 1 < MAX_ATTEMPTS =>
+            {
+                // SQLite and virus scanners can retain a Windows file handle briefly
+                // after the pool closes. Recovery is rare, so a bounded wait is safer
+                // than abandoning otherwise recoverable file-backed content.
+                std::thread::sleep(Duration::from_millis(25));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the final rename attempt always returns")
+}
+
+fn has_sqlite_header(database: &Path) -> Result<bool> {
+    let mut file = File::open(database)?;
+    let mut header = [0_u8; 16];
+    Ok(file.read_exact(&mut header).is_ok() && &header == b"SQLite format 3\0")
+}
+
+fn database_error_is_corruption(error: &DiornaError) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    message.contains("malformed")
+        || message.contains("not a database")
+        || message.contains("file is encrypted")
 }
 
 pub fn safe_relative_path(path: &Path) -> Result<PathBuf> {
@@ -1106,6 +1206,7 @@ mod tests {
                 "workspace-student",
                 "Stable.canvas",
                 r#"{"nodes":[],"edges":[]}"#,
+                None,
             )
             .await
             .unwrap();
@@ -1129,6 +1230,7 @@ mod tests {
                 "workspace-personal",
                 "Parent.canvas",
                 r#"{"nodes":[],"edges":[]}"#,
+                None,
             )
             .await
             .unwrap();
@@ -1138,6 +1240,7 @@ mod tests {
                 "workspace-personal",
                 "Old.canvas",
                 r#"{"nodes":[],"edges":[]}"#,
+                None,
             )
             .await
             .unwrap();
@@ -1147,6 +1250,7 @@ mod tests {
                 "workspace-personal",
                 "Folder/New.canvas",
                 r#"{"nodes":[],"edges":[],"diorna":{"parentMapId":"map-parent"}}"#,
+                None,
             )
             .await
             .unwrap();
@@ -1204,6 +1308,106 @@ mod tests {
             .unwrap();
         assert_eq!(revisions.len(), 1);
         assert_eq!(revisions[0].markdown, "first version");
+    }
+
+    #[tokio::test]
+    async fn detects_external_note_and_canvas_changes() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = Vault::open(directory.path().to_path_buf()).await.unwrap();
+        let note_input = |expected_hash: Option<String>| SaveNoteInput {
+            id: Some("note-conflict".into()),
+            workspace_id: "workspace-student".into(),
+            relative_path: "Conflict.md".into(),
+            title: "Conflict".into(),
+            markdown: "original".into(),
+            course_id: None,
+            tags: vec![],
+            properties: serde_json::json!({}),
+            starred: false,
+            expected_hash,
+        };
+        let saved_note = vault.save_note(note_input(None)).await.unwrap();
+        fs::write(
+            directory.path().join("Student/notes/Conflict.md"),
+            "external note change",
+        )
+        .unwrap();
+        assert!(matches!(
+            vault
+                .save_note(note_input(Some(saved_note.hash)))
+                .await
+                .unwrap_err(),
+            DiornaError::SyncConflict
+        ));
+
+        let saved_map = vault
+            .save_canvas(
+                Some("map-conflict"),
+                "workspace-student",
+                "Conflict.canvas",
+                r#"{"nodes":[],"edges":[]}"#,
+                None,
+            )
+            .await
+            .unwrap();
+        fs::write(
+            directory.path().join("Student/maps/Conflict.canvas"),
+            r#"{"nodes":[{"id":"external"}],"edges":[]}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            vault
+                .save_canvas(
+                    Some("map-conflict"),
+                    "workspace-student",
+                    "Conflict.canvas",
+                    r#"{"nodes":[],"edges":[]}"#,
+                    Some(&saved_map.hash),
+                )
+                .await
+                .unwrap_err(),
+            DiornaError::SyncConflict
+        ));
+    }
+
+    #[tokio::test]
+    async fn recovers_file_backed_content_from_a_corrupt_index() {
+        let source = tempfile::tempdir().unwrap();
+        let vault = Vault::open(source.path().to_path_buf()).await.unwrap();
+        vault
+            .save_note(SaveNoteInput {
+                id: Some("note-recover".into()),
+                workspace_id: "workspace-student".into(),
+                relative_path: "Recovered.md".into(),
+                title: "Recovered".into(),
+                markdown: "content survives".into(),
+                course_id: None,
+                tags: vec![],
+                properties: serde_json::json!({}),
+                starred: false,
+                expected_hash: None,
+            })
+            .await
+            .unwrap();
+        vault.pool.close().await;
+        drop(vault);
+
+        let directory = tempfile::tempdir().unwrap();
+        create_vault_layout(directory.path()).unwrap();
+        let notes = directory.path().join("Student/notes");
+        fs::create_dir_all(&notes).unwrap();
+        fs::copy(
+            source.path().join("Student/notes/Recovered.md"),
+            notes.join("Recovered.md"),
+        )
+        .unwrap();
+        let database = directory.path().join(".app/index.db");
+        fs::write(&database, b"this is not sqlite").unwrap();
+        assert!(!has_sqlite_header(&database).unwrap());
+
+        let recovered = Vault::open(directory.path().to_path_buf()).await.unwrap();
+        let content = recovered.load_file_content().await.unwrap();
+        assert!(content.notes.iter().any(|note| note.id == "note-recover"));
     }
 
     #[tokio::test]

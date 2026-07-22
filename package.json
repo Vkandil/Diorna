@@ -19,6 +19,7 @@
     "test": "vitest run --coverage",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:performance": "playwright test --config playwright.performance.config.ts",
     "tauri": "tauri",
     "format:check": "prettier --check . && cargo fmt --manifest-path src-tauri/Cargo.toml -- --check",
     "check": "npm run format:check && npm run typecheck && npm run lint && npm run test && cargo test --manifest-path src-tauri/Cargo.toml"
@@ -27,8 +28,11 @@
     "@tanstack/react-query": "^5.83.0",
     "@tauri-apps/api": "^2.8.0",
     "@tauri-apps/plugin-dialog": "^2.3.0",
+    "@tauri-apps/plugin-log": "2.9.0",
     "@tauri-apps/plugin-notification": "^2.3.0",
     "@tauri-apps/plugin-opener": "^2.5.4",
+    "@tauri-apps/plugin-process": "^2.3.0",
+    "@tauri-apps/plugin-updater": "2.10.1",
     "@tiptap/core": "^2.26.1",
     "@tiptap/extension-code-block-lowlight": "^2.26.1",
     "@tiptap/extension-highlight": "^2.26.1",
@@ -69,6 +73,7 @@
     "zustand": "^5.0.6"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
     "@eslint/js": "^9.31.0",
     "@playwright/test": "^1.54.1",
     "@tauri-apps/cli": "^2.7.1",

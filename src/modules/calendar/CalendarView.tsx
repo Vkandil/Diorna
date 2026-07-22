@@ -501,7 +501,7 @@ export function CalendarView() {
           </section>
         </aside>
 
-        <div className="calendar-body">
+        <div className="calendar-body" tabIndex={0} aria-label="Calendar content">
           {view === "month" ? (
             <MonthView
               date={date}
@@ -705,6 +705,7 @@ function MonthView({
   onMore: (date: Date) => void;
   items: CalendarItem[];
 }) {
+  const [dropDate, setDropDate] = useState<string>();
   const start = startOfWeek(startOfMonth(date), { weekStartsOn });
   const end = endOfWeek(endOfMonth(date), { weekStartsOn });
   const days = eachDayOfInterval({ start, end });
@@ -713,7 +714,10 @@ function MonthView({
       ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
       : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   return (
-    <div className="month-grid">
+    <div
+      className="month-grid"
+      aria-label="Month calendar. Drag an item to another day to move it."
+    >
       <div className="weekday-row">
         {labels.map((day) => (
           <strong key={day}>{day}</strong>
@@ -721,13 +725,28 @@ function MonthView({
       </div>
       <div className="month-days">
         {days.map((day) => {
+          const dayKey = format(day, "yyyy-MM-dd");
           const dayItems = occurrences.filter((item) => isSameDay(occurrenceDate(item), day));
           return (
             <div
               key={day.toISOString()}
-              className={`${day.getMonth() !== date.getMonth() ? "outside" : ""} ${isSameDay(day, new Date()) ? "today" : ""}`}
-              onDragOver={(event) => event.preventDefault()}
+              data-date={dayKey}
+              className={`${day.getMonth() !== date.getMonth() ? "outside" : ""} ${isSameDay(day, new Date()) ? "today" : ""} ${dropDate === dayKey ? "drop-target" : ""}`}
+              onDragEnter={(event) => {
+                event.preventDefault();
+                setDropDate(dayKey);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = event.ctrlKey ? "copy" : "move";
+                if (dropDate !== dayKey) setDropDate(dayKey);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+                  setDropDate(undefined);
+              }}
               onDrop={(event) => {
+                setDropDate(undefined);
                 const id = event.dataTransfer.getData("text/diorna-item");
                 const recurrenceId = event.dataTransfer.getData("text/diorna-occurrence");
                 const occurrence =
@@ -757,10 +776,13 @@ function MonthView({
               {dayItems.slice(0, 4).map((item) => (
                 <button
                   draggable
+                  title={`Drag ${item.title} to another day`}
                   onDragStart={(event) => {
                     event.dataTransfer.setData("text/diorna-item", item.id);
                     event.dataTransfer.setData("text/diorna-occurrence", item.recurrenceId);
+                    event.dataTransfer.effectAllowed = "copyMove";
                   }}
+                  onDragEnd={() => setDropDate(undefined)}
                   onClick={() => onOpen(item)}
                   className={item.completedAt ? "complete" : ""}
                   key={item.recurrenceId}

@@ -31,19 +31,46 @@ jobs:
           targets: ${{ matrix.target }}
       - run: npm ci
       - name: Import Authenticode certificate
-        if: env.WINDOWS_CERTIFICATE != ''
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
+          if (-not $env:WINDOWS_CERTIFICATE -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) {
+            throw 'WINDOWS_CERTIFICATE and WINDOWS_CERTIFICATE_PASSWORD are required for releases'
+          }
           $bytes = [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE)
           $path = Join-Path $env:RUNNER_TEMP 'diorna-signing.pfx'
           [IO.File]::WriteAllBytes($path, $bytes)
-          "TAURI_SIGNING_PRIVATE_KEY=$path" >> $env:GITHUB_ENV
-          "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$env:WINDOWS_CERTIFICATE_PASSWORD" >> $env:GITHUB_ENV
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $path -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" >> $env:GITHUB_ENV
+      - name: Configure signed updater
+        shell: pwsh
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          if (-not $env:TAURI_UPDATER_PUBLIC_KEY) { throw 'TAURI_UPDATER_PUBLIC_KEY is required' }
+          $windows = @{
+            digestAlgorithm = 'sha256'
+            timestampUrl = 'http://timestamp.digicert.com'
+          }
+          if ($env:WINDOWS_CERTIFICATE_THUMBPRINT) {
+            $windows.certificateThumbprint = $env:WINDOWS_CERTIFICATE_THUMBPRINT
+          }
+          $config = @{
+            bundle = @{ createUpdaterArtifacts = $true; windows = $windows }
+            plugins = @{ updater = @{
+              pubkey = $env:TAURI_UPDATER_PUBLIC_KEY
+              endpoints = @('https://github.com/diorna-app/diorna/releases/latest/download/{{target}}.json')
+            } }
+          }
+          $config | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $env:RUNNER_TEMP 'release-config.json')
       - name: Build MSI and NSIS
-        run: npm run tauri build -- --target ${{ matrix.target }} --bundles msi,nsis
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri build -- --config "$env:RUNNER_TEMP/release-config.json" --target ${{ matrix.target }} --bundles msi,nsis
       - name: Create portable archive
         shell: pwsh
         run: |
@@ -51,7 +78,16 @@ jobs:
           New-Item -ItemType Directory -Force -Path portable | Out-Null
           Copy-Item "$release/diorna.exe" "portable/Diorna.exe"
           Copy-Item LICENSE,THIRD_PARTY_NOTICES.md portable
+          New-Item -ItemType File -Path portable/portable.flag | Out-Null
           Compress-Archive portable/* "Diorna-${{ matrix.arch }}-portable.zip"
+      - name: Verify Authenticode signatures
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem "src-tauri/target/${{ matrix.target }}/release" -Recurse -File -Include *.exe,*.msi
+          foreach ($file in $files) {
+            $signature = Get-AuthenticodeSignature $file.FullName
+            if ($signature.Status -ne 'Valid') { throw "Invalid Authenticode signature: $($file.FullName)" }
+          }
       - name: Checksums
         shell: pwsh
         run: Get-FileHash -Algorithm SHA256 (Get-ChildItem -Recurse src-tauri/target/${{ matrix.target }}/release/bundle/*/*,Diorna-${{ matrix.arch }}-portable.zip -File) | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content "SHA256-${{ matrix.arch }}.txt"
@@ -61,14 +97,32 @@ jobs:
           path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.zip
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.sig
             Diorna-${{ matrix.arch }}-portable.zip
             SHA256-${{ matrix.arch }}.txt
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: windows-*
+          path: release
+          merge-multiple: true
+      - name: Create signed update manifest
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $channel = if ('${{ github.ref_name }}' -match '-') { 'beta' } else { 'stable' }
+          ./scripts/New-UpdateManifest.ps1 -Artifacts release -Version $version -Channel $channel -Repository '${{ github.repository }}'
       - uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
           draft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
-            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
-            Diorna-${{ matrix.arch }}-portable.zip
-            SHA256-${{ matrix.arch }}.txt
+            release/**/*
+            *.json

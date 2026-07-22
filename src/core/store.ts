@@ -25,9 +25,12 @@ import type {
 import { createId } from "@/shared/id";
 import {
   persistNativeCanvas,
+  deleteNativeWorkspace,
   persistNativeNote,
   persistNativeSettings,
+  persistNativeStructuredState,
   trashNativeFile,
+  isTauri,
 } from "@/core/native";
 import { rewriteWikiLinks } from "@/modules/notes/logic";
 import { applyTemplate } from "@/modules/notes/logic";
@@ -38,6 +41,7 @@ import {
   noteTaskDueAt,
   setDatedNoteTaskChecked,
 } from "@/modules/calendar/noteTasks";
+import { persistStorage } from "@/core/persistStorage";
 
 export interface TabState {
   id: string;
@@ -140,11 +144,10 @@ interface DiornaState {
   recaps: Recap[];
   settings: AppSettings;
   finishOnboarding: (
-    studentName: string,
-    personalName: string,
+    workspaces: Workspace[],
     theme: AppSettings["theme"],
     loadSample: boolean,
-  ) => void;
+  ) => Promise<void>;
   setWorkspace: (id: Id) => void;
   setModule: (module: ModuleId) => void;
   toggleSidebar: () => void;
@@ -233,7 +236,7 @@ interface DiornaState {
   hydrateFileContent: (content: { notes: Note[]; maps: CanvasMap[] }) => void;
   addWorkspace: (name: string, color: string) => void;
   renameWorkspace: (id: Id, name: string) => void;
-  updateWorkspace: (id: Id, changes: Pick<Partial<Workspace>, "name" | "color">) => void;
+  updateWorkspace: (id: Id, changes: Pick<Partial<Workspace>, "name" | "color" | "kind">) => void;
   moveWorkspace: (id: Id, direction: -1 | 1) => void;
   deleteWorkspace: (id: Id) => void;
   resetAll: () => void;
@@ -716,21 +719,104 @@ const initial = {
   settings: defaultSettings,
 };
 
+function persistedSlice(state: DiornaState, includeContent: boolean) {
+  const shell = {
+    onboardingComplete: state.onboardingComplete,
+    activeWorkspaceId: state.activeWorkspaceId,
+    activeModule: state.activeModule,
+    sidebarOpen: state.sidebarOpen,
+    sidebarWidth: state.sidebarWidth,
+    rightPanelOpen: state.rightPanelOpen,
+    selectedCalendarItemId: state.selectedCalendarItemId,
+    selectedDailyHabitId: state.selectedDailyHabitId,
+    commandPaletteOpen: state.commandPaletteOpen,
+    tabs: state.tabs,
+    activeTabId: state.activeTabId,
+    recentTabIds: state.recentTabIds,
+    panes: state.panes,
+    paneLayout: state.paneLayout,
+    activePaneId: state.activePaneId,
+    workspaceSessions: state.workspaceSessions,
+    settings: state.settings,
+  };
+  if (!includeContent) return shell;
+  return {
+    ...shell,
+    workspaces: state.workspaces,
+    categories: state.categories,
+    courses: state.courses,
+    templates: state.templates,
+    flashcards: state.flashcards,
+    reviewLogs: state.reviewLogs,
+    references: state.references,
+    notes: state.notes,
+    maps: state.maps,
+    items: state.items,
+    habits: state.habits,
+    habitEntries: state.habitEntries,
+    metrics: state.metrics,
+    metricEntries: state.metricEntries,
+    recaps: state.recaps,
+  };
+}
+
+function structuredSnapshot(state: DiornaState) {
+  return {
+    workspaces: state.workspaces,
+    categories: state.categories,
+    courses: state.courses,
+    templates: state.templates,
+    flashcards: state.flashcards,
+    reviewLogs: state.reviewLogs,
+    references: state.references,
+    items: state.items,
+    habits: state.habits,
+    habitEntries: state.habitEntries,
+    metrics: state.metrics,
+    metricEntries: state.metricEntries,
+    recaps: state.recaps,
+  };
+}
+
 export const useDiornaStore = create<DiornaState>()(
   persist(
     (set, get) => ({
       ...initial,
-      finishOnboarding: (studentName, personalName, theme, loadSample) => {
+      finishOnboarding: async (requestedWorkspaces, theme, loadSample) => {
+        const workspaces = requestedWorkspaces.map((workspace, sortOrder) => ({
+          ...workspace,
+          name: workspace.name.trim() || `Workspace ${sortOrder + 1}`,
+          sortOrder,
+        }));
+        const workspaceIds = new Set(workspaces.map((workspace) => workspace.id));
         set((state) => ({
           onboardingComplete: true,
-          settings: { ...state.settings, theme },
-          workspaces: state.workspaces.map((workspace) =>
-            workspace.id === studentId
-              ? { ...workspace, name: studentName }
-              : workspace.id === personalId
-                ? { ...workspace, name: personalName }
-                : workspace,
-          ),
+          activeWorkspaceId: workspaces[0]!.id,
+          settings: {
+            ...state.settings,
+            theme,
+            defaultWorkspaceId: workspaces[0]!.id,
+          },
+          workspaces,
+          categories: [
+            ...state.categories.filter((entry) => workspaceIds.has(entry.workspaceId)),
+            ...workspaces
+              .filter(
+                (workspace) =>
+                  !state.categories.some((entry) => entry.workspaceId === workspace.id),
+              )
+              .map((workspace) => ({
+                id: createId("category"),
+                workspaceId: workspace.id,
+                name: "General",
+                color: workspace.color,
+                icon: "Tag",
+                sortOrder: 0,
+              })),
+          ],
+          courses: state.courses.filter((entry) => workspaceIds.has(entry.workspaceId)),
+          templates: state.templates.filter((entry) => workspaceIds.has(entry.workspaceId)),
+          recaps: state.recaps.filter((entry) => workspaceIds.has(entry.workspaceId)),
           ...(!loadSample
             ? {
                 notes: [],
@@ -744,10 +830,32 @@ export const useDiornaStore = create<DiornaState>()(
                 reviewLogs: [],
                 references: [],
               }
-            : {}),
+            : {
+                notes: state.notes.filter((entry) => workspaceIds.has(entry.workspaceId)),
+                maps: state.maps.filter((entry) => workspaceIds.has(entry.workspaceId)),
+                items: state.items.filter((entry) => workspaceIds.has(entry.workspaceId)),
+                habits: state.habits.filter((entry) => workspaceIds.has(entry.workspaceId)),
+                habitEntries: state.habitEntries.filter((entry) =>
+                  workspaceIds.has(entry.workspaceId),
+                ),
+                metrics: state.metrics.filter((entry) => workspaceIds.has(entry.workspaceId)),
+                metricEntries: state.metricEntries.filter((entry) =>
+                  workspaceIds.has(entry.workspaceId),
+                ),
+                flashcards: state.flashcards.filter((entry) => workspaceIds.has(entry.workspaceId)),
+                reviewLogs: state.reviewLogs.filter((entry) => workspaceIds.has(entry.workspaceId)),
+                references: state.references.filter((entry) => workspaceIds.has(entry.workspaceId)),
+              }),
         }));
-        for (const note of get().notes) void persistNativeNote(note);
-        for (const map of get().maps) void persistNativeCanvas(map);
+        const next = get();
+        await Promise.all([
+          ...next.notes.map(persistNativeNote),
+          ...next.maps.map(persistNativeCanvas),
+        ]);
+        await persistNativeStructuredState(structuredSnapshot(next));
+        for (const id of [studentId, personalId]) {
+          if (!workspaceIds.has(id)) await deleteNativeWorkspace(id);
+        }
       },
       setWorkspace: (id) =>
         set((state) => {
@@ -1806,20 +1914,34 @@ export const useDiornaStore = create<DiornaState>()(
         })),
       hydrateFileContent: (content) => set(content),
       addWorkspace: (name, color) =>
-        set((state) => ({
-          workspaces: [
-            ...state.workspaces,
-            {
-              id: createId("workspace"),
-              name,
-              color,
-              folderName: name.replace(/[<>:"/\\|?*]/g, "-"),
-              sortOrder: state.workspaces.length,
-              kind: "custom",
-              createdAt: new Date().toISOString(),
-            },
-          ],
-        })),
+        set((state) => {
+          const id = createId("workspace");
+          return {
+            workspaces: [
+              ...state.workspaces,
+              {
+                id,
+                name,
+                color,
+                folderName: name.replace(/[<>:"/\\|?*]/g, "-"),
+                sortOrder: state.workspaces.length,
+                kind: "custom",
+                createdAt: new Date().toISOString(),
+              },
+            ],
+            categories: [
+              ...state.categories,
+              {
+                id: createId("category"),
+                workspaceId: id,
+                name: "General",
+                color,
+                icon: "Tag",
+                sortOrder: 0,
+              },
+            ],
+          };
+        }),
       renameWorkspace: (id, name) =>
         set((state) => ({
           workspaces: state.workspaces.map((workspace) =>
@@ -1903,7 +2025,8 @@ export const useDiornaStore = create<DiornaState>()(
     }),
     {
       name: "diorna-state-v1",
-      partialize: (state) => state,
+      storage: persistStorage(),
+      partialize: (state) => persistedSlice(state, !isTauri()),
       merge: (persisted, current) => {
         const saved = persisted as Partial<DiornaState>;
         const fallbackPaneId = "pane-main";

@@ -15,11 +15,15 @@ import {
   readNativeStructuredState,
   runNativeBackup,
   updateNativeTrayScore,
+  logNativeError,
 } from "@/core/native";
 import { QuickCapture } from "@/components/QuickCapture";
-import i18n from "@/i18n";
+import i18n, { installDomLocalization } from "@/i18n";
+import { setDefaultOptions } from "date-fns";
+import { enUS, fr } from "date-fns/locale";
 import { generateDueAutomaticRecaps } from "@/modules/recap/automatic";
 import { completionScore, dateKey } from "@/modules/daily/logic";
+import { checkAndDownloadUpdate } from "@/core/updater";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }> {
   state: { error?: Error } = {};
@@ -28,6 +32,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }
   }
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error("Diorna UI error", error, info);
+    void logNativeError(`UI error: ${error.stack ?? error.message}\n${info.componentStack ?? ""}`);
   }
   render() {
     if (!this.state.error) return this.props.children;
@@ -61,6 +66,19 @@ export default function App() {
   const habits = useDiornaStore((state) => state.habits);
   const habitEntries = useDiornaStore((state) => state.habitEntries);
   const [systemDark, setSystemDark] = useState(matchMedia("(prefers-color-scheme: dark)").matches);
+  useEffect(() => installDomLocalization(), []);
+  useEffect(() => {
+    const onError = (event: ErrorEvent) =>
+      void logNativeError(`Unhandled error: ${event.error?.stack ?? event.message}`);
+    const onRejection = (event: PromiseRejectionEvent) =>
+      void logNativeError(`Unhandled promise rejection: ${String(event.reason)}`);
+    window.addEventListener("error", onError);
+    window.addEventListener("unhandledrejection", onRejection);
+    return () => {
+      window.removeEventListener("error", onError);
+      window.removeEventListener("unhandledrejection", onRejection);
+    };
+  }, []);
   useEffect(() => {
     const query = matchMedia("(prefers-color-scheme: dark)");
     const listener = () => setSystemDark(query.matches);
@@ -71,7 +89,10 @@ export default function App() {
   useEffect(() => {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     document.documentElement.dataset.density = settings.density;
-    document.documentElement.style.setProperty("--accent", settings.accentColor);
+    document.documentElement.style.setProperty(
+      "--accent",
+      settings.accentColor === "system" ? "AccentColor" : settings.accentColor,
+    );
     document.documentElement.style.setProperty("--font-ui", fontStack(settings.interfaceFont));
     document.documentElement.style.setProperty("--font-editor", fontStack(settings.editorFont));
     document.documentElement.style.setProperty(
@@ -92,13 +113,28 @@ export default function App() {
     settings.interfaceFont,
   ]);
   useEffect(() => {
+    if (!onboardingComplete || !settings.updateEnabled) return;
+    const timer = window.setTimeout(
+      () => void checkAndDownloadUpdate(false, settings.updateChannel),
+      4_000,
+    );
+    return () => window.clearTimeout(timer);
+  }, [onboardingComplete, settings.updateChannel, settings.updateEnabled]);
+  useEffect(() => {
     void i18n.changeLanguage(settings.language);
     document.documentElement.lang = settings.language;
-  }, [settings.language]);
+    setDefaultOptions({
+      locale: settings.language === "fr" ? fr : enUS,
+      weekStartsOn: settings.language === "fr" ? 1 : settings.weekStartsOn,
+    });
+  }, [settings.language, settings.weekStartsOn]);
   useEffect(() => {
-    void applyNativeShellSettings(settings).catch((error: unknown) =>
-      console.warn("Unable to apply native shell settings", error),
-    );
+    void applyNativeShellSettings(settings).catch((error: unknown) => {
+      console.warn("Unable to apply native shell settings", error);
+      window.dispatchEvent(
+        new CustomEvent("diorna-toast", { detail: `Windows integration: ${String(error)}` }),
+      );
+    });
   }, [settings]);
   useEffect(() => {
     const workspaceHabits = habits.filter(

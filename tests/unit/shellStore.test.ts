@@ -52,4 +52,43 @@ describe("shell layout store", () => {
     useDiornaStore.getState().setActiveTab(notesId);
     expect(useDiornaStore.getState().recentTabIds.slice(0, 2)).toEqual([notesId, mapsId]);
   });
+
+  it("accepts a fully customized onboarding workspace list", async () => {
+    const createdAt = new Date().toISOString();
+    await useDiornaStore.getState().finishOnboarding(
+      [
+        {
+          id: "workspace-personal",
+          name: "Life",
+          color: "#168a68",
+          folderName: "Personal",
+          sortOrder: 0,
+          kind: "personal",
+          createdAt,
+        },
+        {
+          id: "workspace-custom-test",
+          name: "Studio",
+          color: "#657287",
+          folderName: "Studio",
+          sortOrder: 1,
+          kind: "custom",
+          createdAt,
+        },
+      ],
+      "dark",
+      true,
+    );
+    const state = useDiornaStore.getState();
+    expect(state.workspaces.map(({ id, name, kind }) => ({ id, name, kind }))).toEqual([
+      { id: "workspace-personal", name: "Life", kind: "personal" },
+      { id: "workspace-custom-test", name: "Studio", kind: "custom" },
+    ]);
+    expect(state.activeWorkspaceId).toBe("workspace-personal");
+    expect(state.settings.defaultWorkspaceId).toBe("workspace-personal");
+    expect(state.categories.some((entry) => entry.workspaceId === "workspace-custom-test")).toBe(
+      true,
+    );
+    expect(state.notes.some((entry) => entry.workspaceId === "workspace-student")).toBe(false);
+  });
 });
