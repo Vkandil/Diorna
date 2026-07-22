@@ -90,7 +90,12 @@ export function CommandPalette() {
         kind: "item",
         shortcut: "",
         icon: CalendarPlus,
-        run: () => state.setModule("calendar"),
+        color: state.categories.find((category) => category.id === item.categoryId)?.color,
+        run: () => {
+          state.selectCalendarItem(item.id);
+          localStorage.setItem("diorna-open-calendar-item", item.id);
+          state.setModule("calendar");
+        },
       })),
     ];
     const workspaceNotes = selectWorkspace(state.notes, state.activeWorkspaceId);
@@ -174,6 +179,8 @@ export function CommandPalette() {
         <div className="command-results">
           {items.map((item, index) => {
             const Icon = item.icon;
+            const color =
+              "color" in item && typeof item.color === "string" ? item.color : undefined;
             return (
               <button
                 key={item.id}
@@ -182,6 +189,7 @@ export function CommandPalette() {
                 onClick={() => choose(item)}
               >
                 <Icon size={17} />
+                {color && <i className="command-category" style={{ background: color }} />}
                 <span>
                   <strong>{item.title}</strong>
                   <small>{item.detail}</small>

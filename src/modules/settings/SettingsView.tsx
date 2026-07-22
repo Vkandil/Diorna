@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   ArchiveRestore,
+  ArrowDown,
+  ArrowUp,
   Bell,
   Database,
   Download,
@@ -15,6 +17,7 @@ import {
   ShieldCheck,
   Sparkles,
   Tags,
+  Trash2,
   Upload,
   UserRound,
   Wrench,
@@ -163,6 +166,160 @@ function renderSection(active: string, state: ReturnType<typeof useDiornaStore.g
         >
           <Plus /> New workspace
         </button>
+      </SettingsGroup>
+    );
+  if (active === "categories") {
+    const categories = state.categories
+      .filter((category) => category.workspaceId === state.activeWorkspaceId)
+      .sort((a, b) => a.sortOrder - b.sortOrder);
+    return (
+      <SettingsGroup
+        title="Categories"
+        description="Categories provide the color used by calendar items, habits, and metrics."
+      >
+        <div className="category-settings-list">
+          {categories.map((category, index) => (
+            <div key={category.id}>
+              <input
+                className="category-icon-input"
+                aria-label={`${category.name} icon`}
+                value={category.icon}
+                maxLength={2}
+                onChange={(event) =>
+                  state.updateCategory(category.id, { icon: event.target.value })
+                }
+              />
+              <input
+                type="color"
+                aria-label={`${category.name} color`}
+                value={category.color}
+                onChange={(event) =>
+                  state.updateCategory(category.id, { color: event.target.value })
+                }
+              />
+              <input
+                aria-label="Category name"
+                value={category.name}
+                onChange={(event) =>
+                  state.updateCategory(category.id, { name: event.target.value })
+                }
+              />
+              <button
+                className="icon-button"
+                aria-label={`Move ${category.name} up`}
+                disabled={index === 0}
+                onClick={() => state.moveCategory(category.id, -1)}
+              >
+                <ArrowUp />
+              </button>
+              <button
+                className="icon-button"
+                aria-label={`Move ${category.name} down`}
+                disabled={index === categories.length - 1}
+                onClick={() => state.moveCategory(category.id, 1)}
+              >
+                <ArrowDown />
+              </button>
+              <button
+                className="icon-button danger"
+                aria-label={`Delete ${category.name}`}
+                disabled={categories.length === 1}
+                onClick={() => state.deleteCategory(category.id)}
+              >
+                <Trash2 />
+              </button>
+            </div>
+          ))}
+        </div>
+        <button className="button icon-text" onClick={() => state.addCategory()}>
+          <Plus /> New category
+        </button>
+      </SettingsGroup>
+    );
+  }
+  if (active === "calendar")
+    return (
+      <SettingsGroup
+        title="Calendar"
+        description="Choose the hours shown in Day and Week views and default reminder timing."
+      >
+        <Field label="Week starts on">
+          <select
+            value={state.settings.weekStartsOn}
+            onChange={(event) =>
+              state.updateSettings({ weekStartsOn: Number(event.target.value) as 0 | 1 })
+            }
+          >
+            <option value={1}>Monday</option>
+            <option value={0}>Sunday</option>
+          </select>
+        </Field>
+        <Field label="Visible hours">
+          <div className="range-fields">
+            <input
+              type="number"
+              min={0}
+              max={23}
+              aria-label="First visible hour"
+              value={state.settings.calendarVisibleStart}
+              onChange={(event) =>
+                state.updateSettings({
+                  calendarVisibleStart: Math.min(
+                    state.settings.calendarVisibleEnd - 1,
+                    Math.max(0, Number(event.target.value)),
+                  ),
+                })
+              }
+            />
+            <span>to</span>
+            <input
+              type="number"
+              min={1}
+              max={24}
+              aria-label="Last visible hour"
+              value={state.settings.calendarVisibleEnd}
+              onChange={(event) =>
+                state.updateSettings({
+                  calendarVisibleEnd: Math.max(
+                    state.settings.calendarVisibleStart + 1,
+                    Math.min(24, Number(event.target.value)),
+                  ),
+                })
+              }
+            />
+          </div>
+        </Field>
+        <Field label="Default reminder">
+          <select
+            value={state.settings.defaultReminderMinutes}
+            onChange={(event) =>
+              state.updateSettings({ defaultReminderMinutes: Number(event.target.value) })
+            }
+          >
+            <option value={0}>At start time</option>
+            <option value={5}>5 minutes before</option>
+            <option value={10}>10 minutes before</option>
+            <option value={30}>30 minutes before</option>
+            <option value={60}>1 hour before</option>
+            <option value={1440}>1 day before</option>
+          </select>
+        </Field>
+        <Field label="Default event duration">
+          <select
+            value={state.settings.defaultEventDurationMinutes}
+            onChange={(event) =>
+              state.updateSettings({ defaultEventDurationMinutes: Number(event.target.value) })
+            }
+          >
+            <option value={15}>15 minutes</option>
+            <option value={30}>30 minutes</option>
+            <option value={45}>45 minutes</option>
+            <option value={60}>1 hour</option>
+            <option value={90}>1 hour 30 minutes</option>
+            <option value={120}>2 hours</option>
+          </select>
+        </Field>
+        <small>Individual items can override this with one or more reminder times.</small>
       </SettingsGroup>
     );
   if (active === "recap")

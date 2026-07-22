@@ -26,11 +26,19 @@ export function occurrencesBetween(
       : [];
   }
 
-  const rule = rrulestr(
-    item.rrule.startsWith("RRULE:")
-      ? `DTSTART:${toRruleDate(new Date(anchor))}\n${item.rrule}`
-      : `DTSTART:${toRruleDate(new Date(anchor))}\nRRULE:${item.rrule}`,
-  ) as RRule;
+  let rule: RRule;
+  try {
+    rule = rrulestr(
+      item.rrule.startsWith("RRULE:")
+        ? `DTSTART:${toRruleDate(new Date(anchor))}\n${item.rrule}`
+        : `DTSTART:${toRruleDate(new Date(anchor))}\nRRULE:${item.rrule}`,
+    ) as RRule;
+  } catch {
+    const date = new Date(anchor);
+    return date >= rangeStart && date <= rangeEnd
+      ? [{ ...item, occurrenceStart: anchor, recurrenceId: `${item.id}:${anchor}` }]
+      : [];
+  }
   const exceptions = new Set(item.rruleExceptions.map((date) => new Date(date).getTime()));
   return rule
     .between(rangeStart, rangeEnd, true)

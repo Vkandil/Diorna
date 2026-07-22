@@ -93,6 +93,64 @@ test("creates a deterministic recap and stores it as a note", async ({ page }) =
   await expect(page.getByText("deterministic-template", { exact: false })).toBeVisible();
 });
 
+test("plans, recurs, completes, and reloads a calendar item", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await completeOnboarding(page);
+  await page.getByRole("button", { name: "Calendar Ctrl 3" }).click();
+  await expect(page.locator(".calendar-page")).toBeVisible();
+  await page.getByRole("button", { name: "New item" }).click();
+  const dialog = page.getByRole("dialog", { name: "New calendar item" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "task" }).click();
+  await dialog.getByLabel("Title *").fill("Calendar acceptance review");
+  await dialog.getByLabel("Description").fill("A fully linked recurring study session");
+  await dialog.getByLabel("Priority").selectOption("high");
+  await dialog.getByLabel("Repeats").selectOption("weekly");
+  await dialog.getByPlaceholder("Add a subtask and press Enter").fill("Bring lecture notes");
+  await dialog.getByPlaceholder("Add a subtask and press Enter").press("Enter");
+  await dialog.getByRole("button", { name: "Save item" }).click();
+  await expect(dialog).toBeHidden();
+  await page.getByRole("button", { name: "A", exact: true }).click();
+  const agendaItem = page
+    .locator(".agenda-view article")
+    .filter({
+      hasText: "Calendar acceptance review",
+    })
+    .first();
+  await expect(agendaItem).toBeVisible();
+  await expect(agendaItem).toContainText("week");
+  await agendaItem.getByRole("button", { name: "Details" }).click();
+  const edit = page.getByRole("dialog", { name: "Edit calendar item" });
+  await expect(edit.locator(".subtasks-editor label input").nth(1)).toHaveValue(
+    "Bring lecture notes",
+  );
+  await edit.getByLabel("Completed").check();
+  await edit.getByLabel("Apply edits to").selectOption("all");
+  await edit.getByRole("button", { name: "Save item" }).click();
+  await expect(agendaItem).toHaveClass(/complete/);
+  await page.reload();
+  await expect(
+    page.locator(".agenda-view article").filter({ hasText: "Calendar acceptance review" }).first(),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/calendar-workflow.png", fullPage: true });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.locator(".settings-layout aside").getByRole("button", { name: "Categories" }).click();
+  await page.getByRole("button", { name: "New category" }).click();
+  await page
+    .locator(".category-settings-list > div")
+    .last()
+    .getByLabel("Category name")
+    .fill("Focus");
+  await page.getByRole("button", { name: "Calendar Ctrl 3" }).click();
+  await expect(
+    page.locator(".category-filter").getByRole("button", { name: "Focus" }),
+  ).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("organises, annotates, searches, and revises notes", async ({ page }) => {
   await completeOnboarding(page);
   await page.getByRole("button", { name: "Notes Ctrl 1" }).click();

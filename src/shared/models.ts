@@ -105,6 +105,7 @@ export interface CalendarItem {
   subtasks: Array<{ id: Id; title: string; done: boolean }>;
   noteId?: Id;
   courseId?: Id;
+  sourceNoteLine?: number;
   rrule?: string;
   rruleExceptions: ISODateTime[];
   reminders: number[];
@@ -318,6 +319,7 @@ export interface AppSettings {
   weekStartsOn: 0 | 1;
   calendarVisibleStart: number;
   calendarVisibleEnd: number;
+  defaultEventDurationMinutes: number;
   defaultReminderMinutes: number;
   dailyWindow: "plus-minus-3" | "7" | "14" | "30" | "week" | "month" | "custom";
   allowFutureCheckIn: boolean;

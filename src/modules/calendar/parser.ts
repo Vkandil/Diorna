@@ -24,11 +24,15 @@ const weekdays: Record<string, number> = {
   saturday: 6,
 };
 
-export function parseQuickItem(input: string, now = new Date()): ParsedQuickItem {
+export function parseQuickItem(
+  input: string,
+  now = new Date(),
+  defaultDurationMinutes = 60,
+): ParsedQuickItem {
   let work = input.trim();
   const tokens: ParsedQuickItem["tokens"] = [];
   let date = startOfDay(now);
-  let durationMinutes = 60;
+  let durationMinutes = defaultDurationMinutes;
   let priority: Priority = "none";
   let category: string | undefined;
   let recurrence: string | undefined;

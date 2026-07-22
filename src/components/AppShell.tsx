@@ -28,7 +28,7 @@ import {
   findBacklinks,
   findUnlinkedMentions,
 } from "@/modules/notes/logic";
-import { scheduleNativeReminders } from "@/modules/calendar/reminders";
+import { listenForReminderActions, scheduleNativeReminders } from "@/modules/calendar/reminders";
 
 const NotesView = lazy(() =>
   import("@/modules/notes/NotesView").then((module) => ({
@@ -129,6 +129,25 @@ export function AppShell() {
       ),
     [state.activeWorkspaceId, state.items],
   );
+  useEffect(() => {
+    let dispose: () => void = () => undefined;
+    let cancelled = false;
+    void listenForReminderActions((itemId) => {
+      const current = useDiornaStore.getState();
+      const item = current.items.find((entry) => entry.id === itemId && !entry.trashedAt);
+      if (!item) return;
+      localStorage.setItem("diorna-open-calendar-item", item.id);
+      if (item.workspaceId !== current.activeWorkspaceId) current.setWorkspace(item.workspaceId);
+      useDiornaStore.getState().setModule("calendar");
+    }).then((cleanup) => {
+      if (cancelled) cleanup();
+      else dispose = cleanup;
+    });
+    return () => {
+      cancelled = true;
+      dispose();
+    };
+  }, []);
   useEffect(() => {
     if (["home", "settings", "components"].includes(state.activeModule)) {
       setCoachVisible(false);
@@ -336,6 +355,21 @@ function RightPanel({ module }: { module: ModuleId }) {
   const backlinks = note ? findBacklinks(state.notes, note) : [];
   const mentions = note ? findUnlinkedMentions(state.notes, note) : [];
   const outline = note ? extractOutline(note.body) : [];
+  const linkedItems = note
+    ? state.items.filter(
+        (item) =>
+          item.workspaceId === note.workspaceId && item.noteId === note.id && !item.trashedAt,
+      )
+    : [];
+  const calendarItem =
+    module === "calendar"
+      ? state.items.find(
+          (item) =>
+            item.id === state.selectedCalendarItemId &&
+            item.workspaceId === state.activeWorkspaceId &&
+            !item.trashedAt,
+        )
+      : undefined;
   return (
     <>
       <header className="panel-header">
@@ -356,7 +390,9 @@ function RightPanel({ module }: { module: ModuleId }) {
       </header>
       <div className="panel-body">
         <span className="eyebrow">Current context</span>
-        <p className="muted">Select an item to inspect its details here.</p>
+        {module !== "calendar" && (
+          <p className="muted">Select an item to inspect its details here.</p>
+        )}
         {module === "notes" && (
           <>
             <h3>Outline</h3>
@@ -378,6 +414,39 @@ function RightPanel({ module }: { module: ModuleId }) {
               </button>
             ))}
             {!outline.length && <div className="empty-mini">No headings yet</div>}
+            <h3>Calendar items</h3>
+            {linkedItems.map((item) => (
+              <div
+                className={`linked-item-row ${item.completedAt ? "complete" : ""}`}
+                key={item.id}
+              >
+                {item.kind === "task" && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Complete ${item.title}`}
+                    checked={Boolean(item.completedAt)}
+                    onChange={(event) =>
+                      state.updateItem(item.id, {
+                        completedAt: event.target.checked ? new Date().toISOString() : undefined,
+                      } as Partial<typeof item>)
+                    }
+                  />
+                )}
+                <button onClick={() => state.setModule("calendar")}>
+                  <strong>{item.title}</strong>
+                  <small>
+                    {item.sourceNoteLine ? `Checkbox ${item.sourceNoteLine} · ` : ""}
+                    {item.startAt || item.dueAt
+                      ? new Date(item.startAt ?? item.dueAt!).toLocaleString([], {
+                          dateStyle: "medium",
+                          ...(item.allDay ? {} : { timeStyle: "short" }),
+                        })
+                      : "Unscheduled"}
+                  </small>
+                </button>
+              </div>
+            ))}
+            {!linkedItems.length && <div className="empty-mini">No linked items</div>}
             <h3>Linked mentions</h3>
             {backlinks.map((link) => (
               <button
@@ -431,6 +500,83 @@ function RightPanel({ module }: { module: ModuleId }) {
             })}
             {!mentions.length && <div className="empty-mini">No unlinked mentions</div>}
           </>
+        )}
+        {module === "calendar" && calendarItem && (
+          <section className="calendar-context-details">
+            <i
+              style={{
+                background: state.categories.find(
+                  (category) => category.id === calendarItem.categoryId,
+                )?.color,
+              }}
+            />
+            <h3>{calendarItem.title}</h3>
+            <dl>
+              <dt>Kind</dt>
+              <dd>{calendarItem.kind}</dd>
+              <dt>When</dt>
+              <dd>
+                {calendarItem.startAt || calendarItem.dueAt
+                  ? new Date(calendarItem.startAt ?? calendarItem.dueAt!).toLocaleString()
+                  : "Unscheduled"}
+              </dd>
+              <dt>Priority</dt>
+              <dd>{calendarItem.priority}</dd>
+              <dt>Reminder</dt>
+              <dd>
+                {calendarItem.reminders.length
+                  ? `${calendarItem.reminders.join(", ")} min`
+                  : "None"}
+              </dd>
+            </dl>
+            {calendarItem.description && (
+              <p>
+                {calendarItem.description
+                  .replace(/<[^>]+>/g, " ")
+                  .replace(/\s+/g, " ")
+                  .trim()}
+              </p>
+            )}
+            {calendarItem.kind === "task" && (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={Boolean(calendarItem.completedAt)}
+                  onChange={(event) =>
+                    state.updateItem(calendarItem.id, {
+                      completedAt: event.target.checked ? new Date().toISOString() : undefined,
+                    } as Partial<typeof calendarItem>)
+                  }
+                />
+                Completed
+              </label>
+            )}
+            {calendarItem.noteId && (
+              <button
+                className="button"
+                onClick={() => {
+                  const linked = state.notes.find((entry) => entry.id === calendarItem.noteId);
+                  if (linked) {
+                    if (calendarItem.sourceNoteLine)
+                      localStorage.setItem(
+                        "diorna-open-note-task-line",
+                        JSON.stringify({ noteId: linked.id, line: calendarItem.sourceNoteLine }),
+                      );
+                    state.openTab({
+                      module: "notes",
+                      title: linked.title,
+                      entityId: linked.id,
+                    });
+                  }
+                }}
+              >
+                Open linked note
+              </button>
+            )}
+          </section>
+        )}
+        {module === "calendar" && !calendarItem && (
+          <div className="empty-mini">Select a calendar item to inspect it.</div>
         )}
       </div>
     </>

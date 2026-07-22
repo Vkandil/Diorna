@@ -28,6 +28,11 @@ import { rewriteWikiLinks } from "@/modules/notes/logic";
 import { applyTemplate } from "@/modules/notes/logic";
 import { extractNoteFlashcards } from "@/modules/student/flashcards";
 import { reviewCard } from "@/modules/student/spacedRepetition";
+import {
+  extractDatedNoteTasks,
+  noteTaskDueAt,
+  setDatedNoteTaskChecked,
+} from "@/modules/calendar/noteTasks";
 
 interface TabState {
   id: string;
@@ -43,6 +48,7 @@ interface DiornaState {
   activeModule: ModuleId;
   sidebarOpen: boolean;
   rightPanelOpen: boolean;
+  selectedCalendarItemId: Id | undefined;
   commandPaletteOpen: boolean;
   tabs: TabState[];
   activeTabId: string;
@@ -72,6 +78,7 @@ interface DiornaState {
   setModule: (module: ModuleId) => void;
   toggleSidebar: () => void;
   toggleRightPanel: () => void;
+  selectCalendarItem: (id?: Id) => void;
   setCommandPaletteOpen: (open: boolean) => void;
   openTab: (
     tab: Omit<TabState, "id" | "pinned"> & Partial<Pick<TabState, "id" | "pinned">>,
@@ -82,6 +89,10 @@ interface DiornaState {
   reorderTabs: (sourceId: string, targetId: string) => void;
   addNote: (title?: string) => Note;
   updateNote: (id: Id, changes: Partial<Note>) => void;
+  addCategory: (name?: string) => Category;
+  updateCategory: (id: Id, changes: Partial<Category>) => void;
+  deleteCategory: (id: Id) => void;
+  moveCategory: (id: Id, direction: -1 | 1) => void;
   addCourse: (course: Omit<Course, "id" | "workspaceId" | "sortOrder">) => Course;
   updateCourse: (id: Id, changes: Partial<Course>) => void;
   addTemplate: (name?: string) => StudyTemplate;
@@ -137,6 +148,7 @@ const defaultSettings: AppSettings = {
   weekStartsOn: 1,
   calendarVisibleStart: 7,
   calendarVisibleEnd: 23,
+  defaultEventDurationMinutes: 60,
   defaultReminderMinutes: 10,
   dailyWindow: "plus-minus-3",
   allowFutureCheckIn: false,
@@ -516,6 +528,7 @@ const initial = {
   activeModule: "home" as ModuleId,
   sidebarOpen: true,
   rightPanelOpen: true,
+  selectedCalendarItemId: undefined,
   commandPaletteOpen: false,
   tabs: [{ id: "home", module: "home" as ModuleId, title: "Home", pinned: true }],
   activeTabId: "home",
@@ -587,6 +600,7 @@ export const useDiornaStore = create<DiornaState>()(
       },
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
       toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
+      selectCalendarItem: (id) => set({ selectedCalendarItemId: id }),
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
       openTab: (tab) =>
         set((state) => {
@@ -716,7 +730,10 @@ export const useDiornaStore = create<DiornaState>()(
             ? deadline.value
             : `${deadline.value}T23:59:00`;
           const linked = get().items.find(
-            (item) => item.noteId === note.id && item.workspaceId === note.workspaceId,
+            (item) =>
+              item.noteId === note.id &&
+              item.workspaceId === note.workspaceId &&
+              item.sourceNoteLine === undefined,
           );
           if (linked) get().updateItem(linked.id, { dueAt, title: note.title });
           else {
@@ -740,6 +757,101 @@ export const useDiornaStore = create<DiornaState>()(
               });
           }
         }
+        if (note && changes.body !== undefined) {
+          const datedTasks = extractDatedNoteTasks(note.body);
+          const taskLines = new Set(datedTasks.map((task) => task.line));
+          const now = new Date().toISOString();
+          const category =
+            get().categories.find(
+              (entry) =>
+                entry.workspaceId === note.workspaceId &&
+                /assignment|admin|project/i.test(entry.name),
+            ) ?? get().categories.find((entry) => entry.workspaceId === note.workspaceId);
+          if (category)
+            set((state) => {
+              const existing = state.items.filter(
+                (item) =>
+                  item.workspaceId === note.workspaceId &&
+                  item.noteId === note.id &&
+                  item.sourceNoteLine !== undefined,
+              );
+              const byLine = new Map(existing.map((item) => [item.sourceNoteLine!, item]));
+              const matched = new Set<string>();
+              const additions: CalendarItem[] = [];
+              const updates = new Map<string, CalendarItem>();
+              for (const task of datedTasks) {
+                const linkedByLine = byLine.get(task.line);
+                const linked =
+                  linkedByLine && !matched.has(linkedByLine.id)
+                    ? linkedByLine
+                    : existing.find(
+                        (item) =>
+                          !matched.has(item.id) &&
+                          item.title === task.title &&
+                          item.dueAt &&
+                          formatISO(new Date(item.dueAt), { representation: "date" }) === task.date,
+                      );
+                if (linked) matched.add(linked.id);
+                const values = {
+                  title: task.title,
+                  dueAt: noteTaskDueAt(task.date),
+                  sourceNoteLine: task.line,
+                  allDay: true,
+                  updatedAt: now,
+                };
+                if (linked) {
+                  const { completedAt: previousCompletion, ...withoutCompletion } = linked;
+                  updates.set(
+                    linked.id,
+                    task.checked
+                      ? {
+                          ...withoutCompletion,
+                          ...values,
+                          completedAt: previousCompletion ?? now,
+                        }
+                      : { ...withoutCompletion, ...values },
+                  );
+                } else
+                  additions.push({
+                    id: createId("item"),
+                    workspaceId: note.workspaceId,
+                    kind: "task",
+                    title: values.title,
+                    description: `Linked from “${note.title}”, checkbox ${task.line}`,
+                    categoryId: category.id,
+                    dueAt: values.dueAt,
+                    allDay: true,
+                    ...(task.checked ? { completedAt: now } : {}),
+                    priority: "none",
+                    subtasks: [],
+                    noteId: note.id,
+                    ...(note.courseId ? { courseId: note.courseId } : {}),
+                    sourceNoteLine: task.line,
+                    rruleExceptions: [],
+                    reminders: [state.settings.defaultReminderMinutes],
+                    createdAt: now,
+                    updatedAt: now,
+                  });
+              }
+              return {
+                items: [
+                  ...state.items.map((item) => {
+                    const changed = updates.get(item.id);
+                    if (changed) return changed;
+                    if (
+                      item.noteId === note.id &&
+                      item.sourceNoteLine !== undefined &&
+                      !taskLines.has(item.sourceNoteLine) &&
+                      !item.trashedAt
+                    )
+                      return { ...item, trashedAt: now, updatedAt: now };
+                    return item;
+                  }),
+                  ...additions,
+                ],
+              };
+            });
+        }
         if (note) {
           const cards = extractNoteFlashcards(
             note,
@@ -750,6 +862,82 @@ export const useDiornaStore = create<DiornaState>()(
           }));
         }
       },
+      addCategory: (name = "New category") => {
+        const workspaceId = get().activeWorkspaceId;
+        const category: Category = {
+          id: createId("category"),
+          workspaceId,
+          name,
+          color: "#657287",
+          icon: "●",
+          sortOrder: get().categories.filter((entry) => entry.workspaceId === workspaceId).length,
+        };
+        set((state) => ({ categories: [...state.categories, category] }));
+        return category;
+      },
+      updateCategory: (id, changes) =>
+        set((state) => ({
+          categories: state.categories.map((category) =>
+            category.id === id && category.workspaceId === state.activeWorkspaceId
+              ? { ...category, ...changes }
+              : category,
+          ),
+        })),
+      deleteCategory: (id) =>
+        set((state) => {
+          const workspaceCategories = state.categories
+            .filter(
+              (category) => category.workspaceId === state.activeWorkspaceId && category.id !== id,
+            )
+            .sort((a, b) => a.sortOrder - b.sortOrder);
+          const fallback = workspaceCategories[0];
+          if (!fallback) return state;
+          const order = new Map(workspaceCategories.map((category, index) => [category.id, index]));
+          return {
+            categories: state.categories
+              .filter((category) => category.id !== id)
+              .map((category) =>
+                category.workspaceId === state.activeWorkspaceId
+                  ? { ...category, sortOrder: order.get(category.id) ?? category.sortOrder }
+                  : category,
+              ),
+            items: state.items.map((item) =>
+              item.workspaceId === state.activeWorkspaceId && item.categoryId === id
+                ? { ...item, categoryId: fallback.id, updatedAt: new Date().toISOString() }
+                : item,
+            ),
+            habits: state.habits.map((habit) =>
+              habit.workspaceId === state.activeWorkspaceId && habit.categoryId === id
+                ? { ...habit, categoryId: fallback.id }
+                : habit,
+            ),
+            metrics: state.metrics.map((metric) =>
+              metric.workspaceId === state.activeWorkspaceId && metric.categoryId === id
+                ? { ...metric, categoryId: fallback.id }
+                : metric,
+            ),
+          };
+        }),
+      moveCategory: (id, direction) =>
+        set((state) => {
+          const ordered = state.categories
+            .filter((category) => category.workspaceId === state.activeWorkspaceId)
+            .sort((a, b) => a.sortOrder - b.sortOrder);
+          const index = ordered.findIndex((category) => category.id === id);
+          const target = index + direction;
+          if (index < 0 || target < 0 || target >= ordered.length) return state;
+          const current = ordered[index]!;
+          const other = ordered[target]!;
+          return {
+            categories: state.categories.map((category) =>
+              category.id === current.id
+                ? { ...category, sortOrder: other.sortOrder }
+                : category.id === other.id
+                  ? { ...category, sortOrder: current.sortOrder }
+                  : category,
+            ),
+          };
+        }),
       addCourse: (data) => {
         const course: Course = {
           ...data,
@@ -894,7 +1082,6 @@ export const useDiornaStore = create<DiornaState>()(
               : item,
           ),
         }));
-        if (changes.dueAt === undefined) return;
         const item = get().items.find(
           (entry) => entry.id === id && entry.workspaceId === get().activeWorkspaceId,
         );
@@ -904,6 +1091,26 @@ export const useDiornaStore = create<DiornaState>()(
             )
           : undefined;
         if (!note) return;
+        if (
+          item?.sourceNoteLine !== undefined &&
+          Object.prototype.hasOwnProperty.call(changes, "completedAt")
+        ) {
+          const body = setDatedNoteTaskChecked(
+            note.body,
+            item.sourceNoteLine,
+            Boolean(changes.completedAt),
+          );
+          if (body !== note.body) {
+            const updated = { ...note, body, updatedAt: new Date().toISOString() };
+            set((state) => ({
+              notes: state.notes.map((entry) => (entry.id === note.id ? updated : entry)),
+            }));
+            void persistNativeNote(updated).catch((error: unknown) =>
+              console.error("Native note save failed", error),
+            );
+          }
+        }
+        if (changes.dueAt === undefined || item?.sourceNoteLine !== undefined) return;
         const deadlineEntry = Object.entries(note.properties).find(
           ([, property]) => property.type === "deadline",
         );
@@ -1020,7 +1227,18 @@ export const useDiornaStore = create<DiornaState>()(
         ),
       resetAll: () => set({ ...initial }),
     }),
-    { name: "diorna-state-v1", partialize: (state) => state },
+    {
+      name: "diorna-state-v1",
+      partialize: (state) => state,
+      merge: (persisted, current) => {
+        const saved = persisted as Partial<DiornaState>;
+        return {
+          ...current,
+          ...saved,
+          settings: { ...defaultSettings, ...(saved.settings ?? {}) },
+        };
+      },
+    },
   ),
 );
 

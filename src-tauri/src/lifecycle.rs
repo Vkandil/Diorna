@@ -292,7 +292,7 @@ pub async fn export_vault(vault: &Vault, destination: &Path) -> Result<PathBuf> 
     let queries = [
         (
             "workspaces",
-            "SELECT COALESCE(json_group_array(json_object('id',id,'name',name,'color',color,'folderName',folder_name,'sortOrder',sort_order,'createdAt',created_at)), '[]') FROM workspace",
+            "SELECT COALESCE(json_group_array(json_object('id',id,'name',name,'color',color,'folderName',folder_name,'sortOrder',sort_order,'kind',kind,'createdAt',created_at)), '[]') FROM workspace",
         ),
         (
             "courses",
@@ -304,7 +304,7 @@ pub async fn export_vault(vault: &Vault, destination: &Path) -> Result<PathBuf> 
         ),
         (
             "items",
-            "SELECT COALESCE(json_group_array(json_object('id',id,'workspaceId',workspace_id,'kind',kind,'title',title,'description',description,'categoryId',category_id,'startAt',start_at,'endAt',end_at,'dueAt',due_at,'completedAt',completed_at,'priority',priority,'rrule',rrule,'subtasks',json(subtasks_json),'exceptions',json(rrule_exceptions),'createdAt',created_at,'updatedAt',updated_at)), '[]') FROM item",
+            "SELECT COALESCE(json_group_array(json_object('id',item.id,'workspaceId',workspace_id,'kind',kind,'title',title,'description',description,'categoryId',category_id,'startAt',start_at,'endAt',end_at,'allDay',json(all_day),'dueAt',due_at,'completedAt',completed_at,'priority',priority,'rrule',rrule,'subtasks',json(subtasks_json),'rruleExceptions',json(rrule_exceptions),'noteId',note_id,'courseId',course_id,'sourceNoteLine',source_note_line,'reminders',json((SELECT COALESCE(json_group_array(minutes_before),'[]') FROM item_reminder WHERE item_id=item.id)),'createdAt',created_at,'updatedAt',updated_at,'trashedAt',trashed_at)), '[]') FROM item",
         ),
         (
             "habits",

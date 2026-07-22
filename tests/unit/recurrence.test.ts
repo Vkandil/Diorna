@@ -68,6 +68,14 @@ describe("recurrence expansion", () => {
   it("describes valid recurrence", () => expect(describeRecurrence("FREQ=DAILY")).toContain("day"));
   it("handles invalid recurrence", () =>
     expect(describeRecurrence("NOT A RULE")).toBe("Custom recurrence"));
+  it("keeps an invalid persisted rule visible as one item", () =>
+    expect(
+      occurrencesBetween(
+        item({ rrule: "NOT A RULE" }),
+        new Date("2026-07-19"),
+        new Date("2026-07-22"),
+      ),
+    ).toHaveLength(1));
   it("returns nothing without an anchor", () =>
     expect(
       occurrencesBetween(

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{Row, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
 use crate::error::{DiornaError, Result};
 
@@ -138,6 +138,7 @@ pub struct Item {
     subtasks: Value,
     note_id: Option<String>,
     course_id: Option<String>,
+    source_note_line: Option<i64>,
     rrule: Option<String>,
     rrule_exceptions: Value,
     reminders: Vec<i64>,
@@ -222,6 +223,14 @@ pub struct LoadedStructuredState {
 
 pub async fn persist(pool: &SqlitePool, snapshot: StructuredSnapshot) -> Result<()> {
     let mut tx = pool.begin().await?;
+    // Entry tables are complete snapshots and cheap to rebuild. Clearing them inside the
+    // transaction also removes cells that were deleted in the UI instead of resurrecting them.
+    sqlx::query("DELETE FROM habit_entry")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM metric_entry")
+        .execute(&mut *tx)
+        .await?;
     for value in &snapshot.workspaces {
         sqlx::query("INSERT INTO workspace(id,name,color,folder_name,sort_order,created_at,kind) VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET name=excluded.name,color=excluded.color,folder_name=excluded.folder_name,sort_order=excluded.sort_order,kind=excluded.kind")
             .bind(&value.id).bind(&value.name).bind(&value.color).bind(&value.folder_name)
@@ -300,12 +309,12 @@ pub async fn persist(pool: &SqlitePool, snapshot: StructuredSnapshot) -> Result<
             value.course_id.as_deref(),
         )
         .await?;
-        sqlx::query("INSERT INTO item(id,workspace_id,kind,title,description,category_id,start_at,end_at,all_day,due_at,completed_at,priority,subtasks_json,rrule,rrule_exceptions,note_id,course_id,created_at,updated_at,trashed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,title=excluded.title,description=excluded.description,category_id=excluded.category_id,start_at=excluded.start_at,end_at=excluded.end_at,all_day=excluded.all_day,due_at=excluded.due_at,completed_at=excluded.completed_at,priority=excluded.priority,subtasks_json=excluded.subtasks_json,rrule=excluded.rrule,rrule_exceptions=excluded.rrule_exceptions,note_id=excluded.note_id,course_id=excluded.course_id,updated_at=excluded.updated_at,trashed_at=excluded.trashed_at")
+        sqlx::query("INSERT INTO item(id,workspace_id,kind,title,description,category_id,start_at,end_at,all_day,due_at,completed_at,priority,subtasks_json,rrule,rrule_exceptions,note_id,course_id,source_note_line,created_at,updated_at,trashed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,title=excluded.title,description=excluded.description,category_id=excluded.category_id,start_at=excluded.start_at,end_at=excluded.end_at,all_day=excluded.all_day,due_at=excluded.due_at,completed_at=excluded.completed_at,priority=excluded.priority,subtasks_json=excluded.subtasks_json,rrule=excluded.rrule,rrule_exceptions=excluded.rrule_exceptions,note_id=excluded.note_id,course_id=excluded.course_id,source_note_line=excluded.source_note_line,updated_at=excluded.updated_at,trashed_at=excluded.trashed_at")
             .bind(&value.id).bind(&value.workspace_id).bind(&value.kind).bind(&value.title)
             .bind(&value.description).bind(&value.category_id).bind(&value.start_at).bind(&value.end_at)
             .bind(value.all_day).bind(&value.due_at).bind(&value.completed_at).bind(&value.priority)
             .bind(json_text(&value.subtasks)?).bind(&value.rrule)
-            .bind(json_text(&value.rrule_exceptions)?).bind(note_id).bind(course_id)
+            .bind(json_text(&value.rrule_exceptions)?).bind(note_id).bind(course_id).bind(value.source_note_line)
             .bind(&value.created_at).bind(&value.updated_at).bind(&value.trashed_at).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM item_reminder WHERE workspace_id=? AND item_id=?")
             .bind(&value.workspace_id)
@@ -363,9 +372,82 @@ pub async fn persist(pool: &SqlitePool, snapshot: StructuredSnapshot) -> Result<
             .bind(&value.narrative).bind(&value.model_used).bind(&value.generated_at).bind(value.revision)
             .execute(&mut *tx).await?;
     }
+    delete_missing_ids(
+        &mut tx,
+        "review_log",
+        snapshot.review_logs.iter().map(|value| value.id.as_str()),
+    )
+    .await?;
+    delete_missing_ids(
+        &mut tx,
+        "flashcard",
+        snapshot.flashcards.iter().map(|value| value.id.as_str()),
+    )
+    .await?;
+    delete_missing_ids(
+        &mut tx,
+        "item",
+        snapshot.items.iter().map(|value| value.id.as_str()),
+    )
+    .await?;
+    delete_missing_ids(
+        &mut tx,
+        "recap",
+        snapshot.recaps.iter().map(|value| value.id.as_str()),
+    )
+    .await?;
+    delete_missing_ids(
+        &mut tx,
+        "reference",
+        snapshot.references.iter().map(|value| value.id.as_str()),
+    )
+    .await?;
+    delete_missing_ids(
+        &mut tx,
+        "study_template",
+        snapshot.templates.iter().map(|value| value.id.as_str()),
+    )
+    .await?;
+    delete_missing_ids(
+        &mut tx,
+        "habit",
+        snapshot.habits.iter().map(|value| value.id.as_str()),
+    )
+    .await?;
+    delete_missing_ids(
+        &mut tx,
+        "metric",
+        snapshot.metrics.iter().map(|value| value.id.as_str()),
+    )
+    .await?;
+    delete_missing_ids(
+        &mut tx,
+        "category",
+        snapshot.categories.iter().map(|value| value.id.as_str()),
+    )
+    .await?;
     sqlx::query("INSERT INTO app_meta(key,value) VALUES('structured_initialized','1') ON CONFLICT(key) DO UPDATE SET value='1'")
         .execute(&mut *tx).await?;
     tx.commit().await?;
+    Ok(())
+}
+
+async fn delete_missing_ids<'a>(
+    tx: &mut Transaction<'_, Sqlite>,
+    table: &str,
+    ids: impl Iterator<Item = &'a str>,
+) -> Result<()> {
+    let ids = ids.collect::<Vec<_>>();
+    let mut query = QueryBuilder::<Sqlite>::new(format!("DELETE FROM {table}"));
+    if !ids.is_empty() {
+        query.push(" WHERE id NOT IN (");
+        let mut separated = query.separated(",");
+        for id in ids {
+            separated.push_bind(id);
+        }
+        separated.push_unseparated(")");
+    }
+    query.build().execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -416,7 +498,7 @@ pub async fn load(pool: &SqlitePool) -> Result<LoadedStructuredState> {
             .push(row.get("minutes_before"));
     }
     let mut items = Vec::new();
-    for row in sqlx::query("SELECT id,workspace_id,kind,title,description,category_id,start_at,end_at,all_day,due_at,completed_at,priority,subtasks_json,note_id,course_id,rrule,rrule_exceptions,created_at,updated_at,trashed_at FROM item ORDER BY created_at")
+    for row in sqlx::query("SELECT id,workspace_id,kind,title,description,category_id,start_at,end_at,all_day,due_at,completed_at,priority,subtasks_json,note_id,course_id,source_note_line,rrule,rrule_exceptions,created_at,updated_at,trashed_at FROM item ORDER BY created_at")
         .fetch_all(pool).await? {
         let id: String = row.get("id");
         items.push(Item {
@@ -427,7 +509,7 @@ pub async fn load(pool: &SqlitePool) -> Result<LoadedStructuredState> {
             start_at: row.get("start_at"), end_at: row.get("end_at"), all_day: row.get::<i64,_>("all_day") != 0,
             due_at: row.get("due_at"), completed_at: row.get("completed_at"), priority: row.get("priority"),
             subtasks: parse_json(row.get::<String,_>("subtasks_json"))?, note_id: row.get("note_id"),
-            course_id: row.get("course_id"), rrule: row.get("rrule"),
+            course_id: row.get("course_id"), source_note_line: row.get("source_note_line"), rrule: row.get("rrule"),
             rrule_exceptions: parse_json(row.get::<String,_>("rrule_exceptions"))?,
             created_at: row.get("created_at"), updated_at: row.get("updated_at"), trashed_at: row.get("trashed_at"),
         });
@@ -556,6 +638,7 @@ mod tests {
                 subtasks: serde_json::json!([]),
                 note_id: None,
                 course_id: None,
+                source_note_line: None,
                 rrule: None,
                 rrule_exceptions: serde_json::json!([]),
                 reminders: vec![15],
@@ -619,6 +702,23 @@ mod tests {
         assert_eq!(loaded.snapshot.flashcards[0].id, "card-test");
         assert_eq!(loaded.snapshot.review_logs[0].grade, "good");
         assert_eq!(loaded.snapshot.references[0].citation_key, "smith2026");
+
+        persist(
+            &vault.pool,
+            StructuredSnapshot {
+                workspaces: loaded.snapshot.workspaces.clone(),
+                ..StructuredSnapshot::default()
+            },
+        )
+        .await
+        .unwrap();
+        let reconciled = load(&vault.pool).await.unwrap();
+        assert!(reconciled.snapshot.categories.is_empty());
+        assert!(reconciled.snapshot.items.is_empty());
+        assert!(reconciled.snapshot.templates.is_empty());
+        assert!(reconciled.snapshot.flashcards.is_empty());
+        assert!(reconciled.snapshot.review_logs.is_empty());
+        assert!(reconciled.snapshot.references.is_empty());
     }
 }
 

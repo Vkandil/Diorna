@@ -771,9 +771,33 @@ function Editor({ noteId }: { noteId: string }) {
     };
   }, [editor, noteId, updateNote]);
   useEffect(() => {
+    if (!editor || editor.getHTML() === note.body) return;
+    editor.commands.setContent(note.body, false);
+  }, [editor, note.body]);
+  useEffect(() => {
     document.body.classList.toggle("note-focus-mode", focusMode);
     return () => document.body.classList.remove("note-focus-mode");
   }, [focusMode]);
+  useEffect(() => {
+    if (!editor) return;
+    const raw = localStorage.getItem("diorna-open-note-task-line");
+    if (!raw) return;
+    try {
+      const target = JSON.parse(raw) as { noteId?: string; line?: number };
+      if (target.noteId !== noteId || !target.line) return;
+      window.setTimeout(() => {
+        const task = document.querySelectorAll<HTMLElement>(".prose-editor li[data-checked]")[
+          target.line! - 1
+        ];
+        task?.scrollIntoView({ behavior: "smooth", block: "center" });
+        task?.classList.add("source-task-highlight");
+        window.setTimeout(() => task?.classList.remove("source-task-highlight"), 2_000);
+      }, 50);
+      localStorage.removeItem("diorna-open-note-task-line");
+    } catch {
+      localStorage.removeItem("diorna-open-note-task-line");
+    }
+  }, [editor, noteId]);
   const counts = (() => {
     const text = editor?.getText() ?? "";
     return {
