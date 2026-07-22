@@ -5,7 +5,10 @@ values and user placement is never auto-laid out. Flow state stays transient
 while dragging and is atomically committed with the map history afterward.
 Selection, clipboard operations, alignment, grouping, four-sided connections,
 resizing, styling, hierarchy, presentation order, and export all operate on
-that authored geometry. The Gym fixture is the acceptance scenario and its
+that authored geometry. Explorer drops and clipboard pastes create portable,
+resizable image, video, audio, PDF, or generic-file nodes at the pointer; their
+title bars remain dedicated drag handles around interactive media controls. The
+Gym fixture is the acceptance scenario and its
 exact node transform is checked after a browser restart.
 
 Canvas files use Obsidian's node/edge fields. Diorna extensions live in an

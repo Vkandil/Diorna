@@ -3255,6 +3255,20 @@ select {
   min-height: 0;
   overflow: hidden;
 }
+.canvas-wrap.native-drop-active::after {
+  position: absolute;
+  z-index: 20;
+  inset: 12px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface) 86%, transparent);
+  color: var(--accent-text);
+  content: "Drop images, videos, audio, PDFs, or files onto the map";
+  font-weight: 700;
+  pointer-events: none;
+}
 .react-flow {
   background: var(--surface);
 }
@@ -3298,6 +3312,12 @@ select {
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.react-flow__node.dragging .canvas-card header {
+  cursor: grabbing;
 }
 .canvas-card p {
   margin: 8px 0 0;
@@ -3329,12 +3349,56 @@ select {
   padding: 1px 3px;
   font-family: var(--font-mono);
 }
-.canvas-card > img {
+.canvas-card > .canvas-media {
   display: block;
   width: calc(100% + 24px);
   height: calc(100% - 32px);
   margin: 8px -12px -12px;
   object-fit: contain;
+}
+.canvas-card > video.canvas-media {
+  background: #101114;
+}
+.canvas-audio {
+  display: grid;
+  height: calc(100% - 28px);
+  place-items: center;
+  gap: 5px;
+  padding-top: 8px;
+}
+.canvas-audio > svg {
+  width: 28px;
+  color: #555a63;
+}
+.canvas-audio audio {
+  width: 100%;
+  height: 34px;
+}
+.canvas-pdf {
+  display: block;
+  width: calc(100% + 24px);
+  height: calc(100% - 32px);
+  margin: 8px -12px -12px;
+  border: 0;
+  background: white;
+}
+.canvas-file {
+  display: flex;
+  height: calc(100% - 28px);
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #40444d;
+  font-size: var(--type-sm);
+  text-decoration: none;
+}
+.canvas-file svg {
+  width: 20px;
+}
+.canvas-file span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .canvas-card .canvas-favicon {
   display: block;

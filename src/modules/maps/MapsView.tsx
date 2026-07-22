@@ -24,6 +24,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  FileAudio,
   Frame,
   Image,
   Link2,
@@ -32,6 +33,7 @@ import {
   Minus,
   MousePointer2,
   Plus,
+  Paperclip,
   Presentation,
   Redo2,
   Search,
@@ -41,6 +43,11 @@ import {
   Trash2,
 } from "lucide-react";
 import html2canvas from "html2canvas";
+import {
+  importNativeAttachmentBytes,
+  importNativeAttachmentFile,
+  type ImportedAttachment,
+} from "@/core/native";
 import { selectWorkspace, useDiornaStore } from "@/core/store";
 import { createId } from "@/shared/id";
 import type { CanvasEdge, CanvasMap, CanvasNode, Note as DiornaNote } from "@/shared/models";
@@ -63,6 +70,8 @@ const palette = [
 type MapNodeData = { node: CanvasNode; preview: string } & Record<string, unknown>;
 type MapFlowNode = Node<MapNodeData, "diorna">;
 type MapSnapshot = { nodes: CanvasNode[]; edges: CanvasEdge[] };
+type MapNodeType = NonNullable<NonNullable<CanvasNode["diorna"]>["nodeType"]>;
+type MapMediaType = Extract<MapNodeType, "image" | "video" | "audio" | "pdf" | "file">;
 type Alignment =
   | "left"
   | "center"
@@ -162,6 +171,7 @@ function CanvasEditor({
   const [presenting, setPresenting] = useState(false);
   const [presentationIndex, setPresentationIndex] = useState(0);
   const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
+  const [nativeDropActive, setNativeDropActive] = useState(false);
   const filteredMaps = maps.filter((entry) =>
     `${entry.path} ${entry.name} ${entry.nodes.map((node) => node.text ?? node.label ?? "").join(" ")}`
       .toLowerCase()
@@ -250,7 +260,7 @@ function CanvasEditor({
 
   const addNode = useCallback(
     (
-      nodeType: NonNullable<CanvasNode["diorna"]>["nodeType"] = "text",
+      nodeType: MapNodeType = "text",
       position?: { x: number; y: number },
       changes: Partial<CanvasNode> = {},
     ) => {
@@ -259,20 +269,21 @@ function CanvasEditor({
           x: 180 + nodesRef.current.length * 24,
           y: 120 + nodesRef.current.length * 24,
         };
+      const size = defaultMapNodeSize(nodeType);
       const node: CanvasNode = {
         id: createId("node"),
         type:
           nodeType === "link"
             ? "link"
-            : nodeType === "note" || nodeType === "image" || nodeType === "submap"
+            : nodeType === "note" || isMapMediaType(nodeType) || nodeType === "submap"
               ? "file"
               : nodeType === "group"
                 ? "group"
                 : "text",
         x: point.x,
         y: point.y,
-        width: nodeType === "group" ? 420 : 220,
-        height: nodeType === "group" ? 260 : nodeType === "image" ? 180 : 110,
+        width: size.width,
+        height: size.height,
         text: nodeType === "group" ? "New group" : "New idea",
         color: "3",
         diorna: { nodeType, borderWidth: 1 },
@@ -281,6 +292,37 @@ function CanvasEditor({
       persist([...map.nodes, node], map.edges);
       setSelectedNodes([node.id]);
       return node;
+    },
+    [map.edges, map.nodes, persist],
+  );
+
+  const addAttachments = useCallback(
+    (attachments: ImportedAttachment[], position?: { x: number; y: number }) => {
+      if (!attachments.length) return;
+      const point = position ??
+        flowRef.current?.screenToFlowPosition({ x: 380, y: 260 }) ?? {
+          x: 180 + nodesRef.current.length * 24,
+          y: 120 + nodesRef.current.length * 24,
+        };
+      const created = attachments.map((attachment, index): CanvasNode => {
+        const nodeType = mapMediaType(attachment.name);
+        const size = defaultMapNodeSize(nodeType);
+        return {
+          id: createId("node"),
+          type: "file",
+          x: point.x + (index % 2) * 410,
+          y: point.y + Math.floor(index / 2) * 390,
+          width: size.width,
+          height: size.height,
+          text: attachment.name,
+          file: attachment.relativePath,
+          url: attachment.displayUrl,
+          color: "12",
+          diorna: { nodeType, borderWidth: 1 },
+        };
+      });
+      persist([...map.nodes, ...created], map.edges);
+      setSelectedNodes(created.map((node) => node.id));
     },
     [map.edges, map.nodes, persist],
   );
@@ -493,14 +535,12 @@ function CanvasEditor({
     const paste = (event: ClipboardEvent) => {
       const target = event.target as HTMLElement;
       if (target.matches("input, textarea") || target.isContentEditable) return;
-      const image = [...(event.clipboardData?.files ?? [])].find((file) =>
-        file.type.startsWith("image/"),
-      );
-      if (image) {
-        const reader = new FileReader();
-        reader.onload = () =>
-          addNode("image", undefined, { file: String(reader.result), text: image.name });
-        reader.readAsDataURL(image);
+      const files = [...(event.clipboardData?.files ?? [])];
+      if (files.length) {
+        event.preventDefault();
+        void Promise.all(
+          files.map((file) => importNativeAttachmentBytes(map.workspaceId, file)),
+        ).then((attachments) => addAttachments(attachments));
         return;
       }
       const text = event.clipboardData?.getData("text/plain").trim();
@@ -508,7 +548,43 @@ function CanvasEditor({
     };
     window.addEventListener("paste", paste);
     return () => window.removeEventListener("paste", paste);
-  }, [addNode]);
+  }, [addAttachments, addNode, map.workspaceId]);
+
+  useEffect(() => {
+    if (!("__TAURI_INTERNALS__" in window)) return;
+    let dispose: (() => void) | undefined;
+    let cancelled = false;
+    void Promise.all([import("@tauri-apps/api/webview"), import("@tauri-apps/api/window")]).then(
+      async ([{ getCurrentWebview }, { getCurrentWindow }]) => {
+        const scaleFactor = await getCurrentWindow().scaleFactor();
+        const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+          if (event.payload.type === "leave") {
+            setNativeDropActive(false);
+            return;
+          }
+          const point = {
+            x: event.payload.position.x / scaleFactor,
+            y: event.payload.position.y / scaleFactor,
+          };
+          const target = document.elementFromPoint(point.x, point.y);
+          const inside = Boolean(target && canvasRef.current?.contains(target));
+          setNativeDropActive(inside);
+          if (event.payload.type !== "drop" || !inside) return;
+          setNativeDropActive(false);
+          const position = flowRef.current?.screenToFlowPosition(point);
+          void Promise.all(
+            event.payload.paths.map((path) => importNativeAttachmentFile(map.workspaceId, path)),
+          ).then((attachments) => addAttachments(attachments, position));
+        });
+        if (cancelled) unlisten();
+        else dispose = unlisten;
+      },
+    );
+    return () => {
+      cancelled = true;
+      dispose?.();
+    };
+  }, [addAttachments, map.workspaceId]);
 
   const exportMap = async (format: "png" | "svg") => {
     if (format === "svg") {
@@ -756,7 +832,10 @@ function CanvasEditor({
           />
         </label>
       </nav>
-      <div className="canvas-wrap" ref={canvasRef}>
+      <div
+        className={`canvas-wrap ${nativeDropActive ? "native-drop-active" : ""}`}
+        ref={canvasRef}
+      >
         <ReactFlow<MapFlowNode, Edge>
           nodes={nodes}
           edges={edges}
@@ -905,14 +984,20 @@ function CanvasEditor({
           }}
           onDrop={(event) => {
             event.preventDefault();
+            const position = flowRef.current?.screenToFlowPosition({
+              x: event.clientX,
+              y: event.clientY,
+            });
+            const files = [...event.dataTransfer.files];
+            if (files.length) {
+              void Promise.all(
+                files.map((file) => importNativeAttachmentBytes(map.workspaceId, file)),
+              ).then((attachments) => addAttachments(attachments, position));
+              return;
+            }
             const noteId = event.dataTransfer.getData("text/diorna-note");
             const note = notes.find((entry) => entry.id === noteId);
-            if (note)
-              addNode(
-                "note",
-                flowRef.current?.screenToFlowPosition({ x: event.clientX, y: event.clientY }),
-                { file: note.path, text: note.title },
-              );
+            if (note) addNode("note", position, { file: note.path, text: note.title });
           }}
           fitView
           minZoom={0.1}
@@ -1165,6 +1250,10 @@ function MapInspector({
         <option value="text">Text card</option>
         <option value="note">Note</option>
         <option value="image">Image</option>
+        <option value="video">Video</option>
+        <option value="audio">Audio</option>
+        <option value="pdf">PDF</option>
+        <option value="file">File attachment</option>
         <option value="link">Link</option>
         <option value="group">Group / frame</option>
         <option value="submap">Sub-map</option>
@@ -1189,10 +1278,10 @@ function MapInspector({
             </option>
           ))}
         </select>
-      ) : nodeType === "image" ? (
+      ) : isMapMediaType(nodeType) ? (
         <input
-          aria-label="Image source"
-          placeholder="Image path or data URL"
+          aria-label="Media source"
+          placeholder="Attachment path or URL"
           value={node.url ?? node.file ?? ""}
           onChange={(event) => onUpdateNode(node.id, { url: event.target.value })}
         />
@@ -1329,7 +1418,7 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
       : type === "link"
         ? (node.diorna?.linkDescription ?? "")
         : (node.text ?? "").split("\n").slice(1).join("\n").trim();
-  const imageSource = type === "image" ? (node.url ?? node.file) : undefined;
+  const mediaSource = isMapMediaType(type) ? (node.url ?? node.file) : undefined;
   return (
     <>
       <NodeResizer
@@ -1364,7 +1453,32 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
           </span>
           <strong>{title}</strong>
         </header>
-        {!node.diorna?.collapsed && imageSource && <img src={imageSource} alt={title} />}
+        {!node.diorna?.collapsed && type === "image" && mediaSource && (
+          <img className="canvas-media" src={mediaSource} alt={title} />
+        )}
+        {!node.diorna?.collapsed && type === "video" && mediaSource && (
+          <video
+            className="canvas-media nodrag nowheel"
+            aria-label={title}
+            controls
+            src={mediaSource}
+          />
+        )}
+        {!node.diorna?.collapsed && type === "audio" && mediaSource && (
+          <div className="canvas-audio">
+            <FileAudio />
+            <audio className="nodrag nowheel" aria-label={title} controls src={mediaSource} />
+          </div>
+        )}
+        {!node.diorna?.collapsed && type === "pdf" && mediaSource && (
+          <iframe className="canvas-pdf nodrag nowheel" title={title} src={mediaSource} />
+        )}
+        {!node.diorna?.collapsed && type === "file" && mediaSource && (
+          <a className="canvas-file nodrag" href={mediaSource} target="_blank" rel="noreferrer">
+            <Paperclip />
+            <span>{title}</span>
+          </a>
+        )}
         {!node.diorna?.collapsed &&
           body &&
           (type === "text" ? <MarkdownPreview value={body} /> : <p>{body}</p>)}
@@ -1440,6 +1554,7 @@ function toFlowNode(node: CanvasNode, notes: DiornaNote[]): MapFlowNode {
       zIndex: node.diorna?.nodeType === "group" ? -1 : 0,
     },
     draggable: !node.diorna?.locked,
+    dragHandle: ".canvas-card > header",
   };
 }
 
@@ -1606,18 +1721,35 @@ function useStoredNumber(key: string, fallback: number) {
   };
   return [value, update] as const;
 }
-function nodeIcon(type: NonNullable<CanvasNode["diorna"]>["nodeType"]) {
-  return type === "note"
-    ? "📝"
-    : type === "image"
-      ? "🖼️"
-      : type === "link"
-        ? "🔗"
-        : type === "group"
-          ? "▣"
-          : type === "submap"
-            ? "↳"
-            : "◆";
+function isMapMediaType(type: MapNodeType): type is MapMediaType {
+  return ["image", "video", "audio", "pdf", "file"].includes(type);
+}
+function mapMediaType(name: string): MapMediaType {
+  const extension = name.split(".").pop()?.toLocaleLowerCase();
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(extension ?? "")) return "image";
+  if (["mp4", "webm", "mov", "m4v"].includes(extension ?? "")) return "video";
+  if (["mp3", "wav", "ogg", "m4a"].includes(extension ?? "")) return "audio";
+  return extension === "pdf" ? "pdf" : "file";
+}
+function defaultMapNodeSize(type: MapNodeType): { width: number; height: number } {
+  if (type === "group") return { width: 420, height: 260 };
+  if (type === "image") return { width: 300, height: 220 };
+  if (type === "video") return { width: 360, height: 250 };
+  if (type === "pdf") return { width: 380, height: 360 };
+  if (type === "audio") return { width: 320, height: 120 };
+  if (type === "file") return { width: 260, height: 100 };
+  return { width: 220, height: 110 };
+}
+function nodeIcon(type: MapNodeType) {
+  if (type === "note") return "📝";
+  if (type === "image") return "🖼️";
+  if (type === "video") return "🎬";
+  if (type === "audio") return "🎧";
+  if (type === "pdf") return "PDF";
+  if (type === "file") return "📎";
+  if (type === "link") return "🔗";
+  if (type === "group") return "▣";
+  return type === "submap" ? "↳" : "◆";
 }
 function safeHost(value: string) {
   try {

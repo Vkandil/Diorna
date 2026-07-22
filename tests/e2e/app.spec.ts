@@ -112,6 +112,92 @@ test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page })
   expect(errors).toEqual([]);
 });
 
+test("drops, renders, moves, and restores media on a map", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByLabel("Workspace").selectOption("workspace-personal");
+  await page.getByRole("button", { name: "Maps Ctrl 2" }).click();
+  const canvas = page.locator(".react-flow");
+  await expect(canvas).toBeVisible();
+  await canvas.evaluate((target) => {
+    const image = Uint8Array.from(
+      atob(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+      ),
+      (character) => character.charCodeAt(0),
+    );
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([image], "map-image.png", { type: "image/png" }));
+    transfer.items.add(new File(["video"], "map-lecture.mp4", { type: "video/mp4" }));
+    transfer.items.add(new File(["audio"], "map-audio.mp3", { type: "audio/mpeg" }));
+    transfer.items.add(new File(["%PDF-1.7"], "map-reading.pdf", { type: "application/pdf" }));
+    const bounds = target.getBoundingClientRect();
+    target.dispatchEvent(
+      new DragEvent("drop", {
+        bubbles: true,
+        cancelable: true,
+        clientX: bounds.left + bounds.width * 0.18,
+        clientY: bounds.top + bounds.height * 0.18,
+        dataTransfer: transfer,
+      }),
+    );
+  });
+
+  const imageNode = page.locator(".react-flow__node").filter({ hasText: "map-image.png" });
+  const videoNode = page.locator(".react-flow__node").filter({ hasText: "map-lecture.mp4" });
+  const audioNode = page.locator(".react-flow__node").filter({ hasText: "map-audio.mp3" });
+  const pdfNode = page.locator(".react-flow__node").filter({ hasText: "map-reading.pdf" });
+  await expect(imageNode.getByRole("img", { name: "map-image.png" })).toBeVisible();
+  await expect(videoNode.getByLabel("map-lecture.mp4")).toBeVisible();
+  await expect(audioNode.getByLabel("map-audio.mp3")).toBeVisible();
+  await expect(pdfNode.locator("iframe")).toBeVisible();
+  await page.screenshot({ path: "test-results/map-media-drop.png", fullPage: true });
+
+  const before = await videoNode.evaluate((element) => (element as HTMLElement).style.transform);
+  const handle = videoNode.locator("header");
+  const box = await handle.boundingBox();
+  if (!box) throw new Error("Map media drag handle has no bounding box");
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2 + 96, box.y + box.height / 2 + 64, { steps: 8 });
+  await page.mouse.up();
+  await expect
+    .poll(() => videoNode.evaluate((element) => (element as HTMLElement).style.transform))
+    .not.toBe(before);
+
+  await imageNode.locator("header").click();
+  const resizeHandle = imageNode.locator(".react-flow__resize-control.handle.bottom.right");
+  await expect(resizeHandle).toBeVisible();
+  const sizeBefore = await imageNode.boundingBox();
+  const resizeBox = await resizeHandle.boundingBox();
+  if (!sizeBefore || !resizeBox) throw new Error("Map media resize handle has no bounding box");
+  await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + resizeBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(
+    resizeBox.x + resizeBox.width / 2 + 72,
+    resizeBox.y + resizeBox.height / 2 + 40,
+    {
+      steps: 8,
+    },
+  );
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await imageNode.boundingBox())?.width ?? 0)
+    .toBeGreaterThan(sizeBefore.width + 40);
+
+  await page.reload();
+  const restoredImage = page
+    .locator(".react-flow__node")
+    .filter({ hasText: "map-image.png" })
+    .getByRole("img", { name: "map-image.png" });
+  await expect(restoredImage).toBeVisible();
+  await expect
+    .poll(() => restoredImage.evaluate((element) => (element as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0);
+  await expect(
+    page.locator(".react-flow__node").filter({ hasText: "map-lecture.mp4" }),
+  ).toBeVisible();
+});
+
 test("supports keyboard command palette and daily habit entry", async ({ page }) => {
   await completeOnboarding(page);
   await page.getByLabel("Workspace").selectOption("workspace-personal");

@@ -88,20 +88,15 @@ export async function importNativeAttachmentBytes(
   workspaceId: string,
   file: File,
 ): Promise<ImportedAttachment> {
+  const dataUrl = await fileDataUrl(file);
   if (!isTauri()) {
     return {
       relativePath: `attachments/${file.name}`,
-      displayUrl: URL.createObjectURL(file),
+      displayUrl: dataUrl,
       size: file.size,
       name: file.name,
     };
   }
-  const dataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(reader.error ?? new Error("Unable to read attachment"));
-    reader.onload = () => resolve(String(reader.result));
-    reader.readAsDataURL(file);
-  });
   const saved = await invoke<SavedAttachment>("import_attachment", {
     workspaceId,
     name: file.name || `screenshot-${new Date().toISOString().replace(/[:.]/g, "-")}.png`,
@@ -109,6 +104,15 @@ export async function importNativeAttachmentBytes(
     dataBase64: dataUrl.slice(dataUrl.indexOf(",") + 1),
   });
   return attachmentResult(saved);
+}
+
+function fileDataUrl(file: File): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("Unable to read attachment"));
+    reader.onload = () => resolve(String(reader.result));
+    reader.readAsDataURL(file);
+  });
 }
 
 export async function chooseAndImportNativeAttachment(
@@ -346,7 +350,23 @@ export async function readNativeFileContent(): Promise<
     }),
     maps: content.maps.map(({ hash, ...map }) => {
       nativeFileHashes.set(`map:${map.id}`, hash);
-      return map;
+      const workspace = vault?.workspaces.find((entry) => entry.workspaceId === map.workspaceId);
+      if (!workspace || !vault) return map;
+      return {
+        ...map,
+        nodes: map.nodes.map((node) =>
+          node.type === "file" && node.file?.startsWith("attachments/")
+            ? {
+                ...node,
+                url: convertFileSrc(`${vault.path}/${workspace.folderName}/${node.file}`),
+                diorna: {
+                  ...node.diorna,
+                  nodeType: node.diorna?.nodeType ?? attachmentCanvasNodeType(node.file),
+                },
+              }
+            : node,
+        ),
+      };
     }),
   };
 }
@@ -486,6 +506,16 @@ function portableNoteHtml(html: string): string {
   return document.body.innerHTML;
 }
 
+function attachmentCanvasNodeType(
+  name: string,
+): NonNullable<NonNullable<CanvasMap["nodes"][number]["diorna"]>["nodeType"]> {
+  const extension = name.split(".").pop()?.toLocaleLowerCase();
+  if (["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"].includes(extension ?? "")) return "image";
+  if (["mp4", "webm", "mov", "m4v"].includes(extension ?? "")) return "video";
+  if (["mp3", "wav", "ogg", "m4a"].includes(extension ?? "")) return "audio";
+  return extension === "pdf" ? "pdf" : "file";
+}
+
 function safeFileName(value: string): string {
   return value.replace(/[<>:"/\\|?*]/g, "-").trim() || "Diorna export";
 }
@@ -508,7 +538,12 @@ export async function persistNativeCanvas(map: CanvasMap): Promise<void> {
         workspaceId: map.workspaceId,
         relativePath: map.path.replace(/^maps[\\/]/, ""),
         canvasJson: JSON.stringify({
-          nodes: map.nodes,
+          nodes: map.nodes.map((node) => {
+            if (node.type !== "file" || !node.file?.startsWith("attachments/")) return node;
+            const portable = { ...node };
+            delete portable.url;
+            return portable;
+          }),
           edges: map.edges,
           diorna: { ...(map.parentMapId ? { parentMapId: map.parentMapId } : {}) },
         }),

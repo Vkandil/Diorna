@@ -199,7 +199,17 @@ export interface CanvasNode {
   label?: string;
   color?: string;
   diorna?: {
-    nodeType?: "note" | "text" | "image" | "link" | "group" | "submap";
+    nodeType?:
+      | "note"
+      | "text"
+      | "image"
+      | "video"
+      | "audio"
+      | "pdf"
+      | "file"
+      | "link"
+      | "group"
+      | "submap";
     locked?: boolean;
     collapsed?: boolean;
     icon?: string;

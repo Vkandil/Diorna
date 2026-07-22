@@ -43,6 +43,12 @@ connect border handles. Positions are stored as exact X/Y values. Use the
 minimap and fit controls for navigation. Export the visible authored map to PNG
 or SVG. The file is Obsidian Canvas-compatible in `<workspace>\maps`.
 
+Images, videos, audio, PDFs, and other files can also be dropped directly from
+Explorer onto a map. Diorna copies them into the workspace `attachments` folder
+and creates resizable media nodes at the pointer position. Drag a media card by
+its title bar to move it; use its selection handles to resize it. Multiple files
+dropped together are arranged in a small grid instead of overlapping.
+
 ## Calendar and tasks
 
 Switch Day, Week, Month, and Agenda with the toolbar or D/W/M/A. Quick add
