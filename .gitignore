@@ -13,6 +13,7 @@ coverage/
 *.cer
 *.key
 *.log
+*.tsbuildinfo
 .DS_Store
 Thumbs.db
 *.user
