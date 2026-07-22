@@ -49,6 +49,7 @@ export interface TabState {
   module: ModuleId;
   title: string;
   entityId?: string;
+  previousNoteId?: string;
   pinned: boolean;
 }
 
@@ -908,6 +909,7 @@ export const useDiornaStore = create<DiornaState>()(
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
       openTab: (tab) =>
         set((state) => {
+          const previousNoteId = tab.previousNoteId;
           const pane =
             state.panes.find((entry) => entry.id === state.activePaneId) ?? state.panes[0];
           if (!pane) return state;
@@ -921,6 +923,11 @@ export const useDiornaStore = create<DiornaState>()(
             );
           if (existing)
             return {
+              tabs: previousNoteId
+                ? state.tabs.map((entry) =>
+                    entry.id === existing.id ? { ...entry, previousNoteId } : entry,
+                  )
+                : state.tabs,
               activeTabId: existing.id,
               activeModule: existing.module,
               activePaneId: pane.id,

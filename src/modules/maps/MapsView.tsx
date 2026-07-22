@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   Background,
   BackgroundVariant,
@@ -37,6 +38,7 @@ import {
   Presentation,
   Redo2,
   Search,
+  SlidersHorizontal,
   StickyNote,
   Type,
   Undo2,
@@ -52,6 +54,7 @@ import {
 import { selectWorkspace, useDiornaStore } from "@/core/store";
 import { createId } from "@/shared/id";
 import type { CanvasEdge, CanvasMap, CanvasNode, Note as DiornaNote } from "@/shared/models";
+import { expandLinkedNoteTree } from "./linkedNotes";
 
 const palette = [
   "#b9d6ff",
@@ -131,6 +134,7 @@ export function MapsView({ tabId }: { tabId?: string | undefined } = {}) {
         state.openTab({ module: "maps", title: next.name, entityId: next.id });
       }}
       onCreateMap={createMap}
+      inspectorActive={(tabId ?? state.activeTabId) === state.activeTabId}
     />
   );
 }
@@ -141,12 +145,14 @@ function CanvasEditor({
   notes,
   onSelectMap,
   onCreateMap,
+  inspectorActive,
 }: {
   map: CanvasMap;
   maps: CanvasMap[];
   notes: DiornaNote[];
   onSelectMap: (map: CanvasMap) => void;
   onCreateMap: (parentMapId?: string) => CanvasMap;
+  inspectorActive: boolean;
 }) {
   const state = useDiornaStore();
   const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>(
@@ -174,6 +180,7 @@ function CanvasEditor({
   const [presentationIndex, setPresentationIndex] = useState(0);
   const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
   const [nativeDropActive, setNativeDropActive] = useState(false);
+  const [inspectorHost, setInspectorHost] = useState<HTMLElement | null>(null);
   const filteredMaps = maps.filter((entry) =>
     `${entry.path} ${entry.name} ${entry.nodes.map((node) => node.text ?? node.label ?? "").join(" ")}`
       .toLowerCase()
@@ -202,6 +209,13 @@ function CanvasEditor({
   useEffect(() => {
     selectedEdgesRef.current = selectedEdges;
   }, [selectedEdges]);
+  useEffect(() => {
+    if (!inspectorActive) {
+      setInspectorHost(null);
+      return;
+    }
+    setInspectorHost(document.getElementById("map-inspector-panel"));
+  }, [inspectorActive]);
   useEffect(() => {
     setNodes((current) =>
       current.map((flowNode) => {
@@ -419,6 +433,30 @@ function CanvasEditor({
         map.edges,
       ),
     [map.edges, map.nodes, persist],
+  );
+  const expandLinkedPages = useCallback(
+    (node: CanvasNode) => {
+      const expansion = expandLinkedNoteTree(node, notes, map.nodes, map.edges);
+      persist(expansion.nodes, expansion.edges);
+      setSelectedNodes([node.id, ...expansion.addedNodeIds]);
+      window.dispatchEvent(
+        new CustomEvent("diorna-toast", {
+          detail: expansion.addedNodeIds.length
+            ? `${expansion.addedNodeIds.length} linked page${expansion.addedNodeIds.length === 1 ? "" : "s"} expanded.`
+            : "All linked pages are already expanded.",
+        }),
+      );
+      window.setTimeout(
+        () =>
+          void flowRef.current?.fitView({
+            nodes: [node.id, ...expansion.addedNodeIds].map((id) => ({ id })),
+            padding: 0.3,
+            duration: 220,
+          }),
+        50,
+      );
+    },
+    [map.edges, map.nodes, notes, persist],
   );
   const bringSelectionToFront = useCallback(() => {
     const ids = new Set(selectedNodes);
@@ -1087,49 +1125,66 @@ function CanvasEditor({
             <span>Coordinates persist exactly · Obsidian Canvas compatible</span>
           </div>
         )}
-        {!presenting && (selectedNode || selectedEdge) && (
-          <MapInspector
-            {...(selectedNode ? { node: selectedNode } : {})}
-            {...(selectedEdge ? { edge: selectedEdge } : {})}
-            notes={notes}
-            linkPreviewEnabled={state.settings.linkPreviewEnabled}
-            onUpdateNode={updateNode}
-            onUpdateEdge={(id, changes) =>
-              persist(
-                map.nodes,
-                map.edges.map((edge) =>
-                  edge.id === id
-                    ? {
-                        ...edge,
-                        ...changes,
-                        ...(changes.diorna
-                          ? { diorna: { ...edge.diorna, ...changes.diorna } }
-                          : {}),
-                      }
-                    : edge,
-                ),
-              )
-            }
-            onCreateSubmap={(node) => {
-              const child = onCreateMap(map.id);
-              updateNode(node.id, {
-                type: "file",
-                file: child.path,
-                text: child.name,
-                diorna: { nodeType: "submap" },
-              });
-            }}
-            onCopy={() => copySelection()}
-            onBringToFront={bringSelectionToFront}
-            onFit={() =>
-              void flowRef.current?.fitView({
-                nodes: selectedNodes.map((id) => ({ id })),
-                padding: 0.35,
-                duration: 160,
-              })
-            }
-            onDelete={removeSelection}
-          />
+        {!presenting &&
+          inspectorHost &&
+          inspectorActive &&
+          (selectedNode || selectedEdge) &&
+          createPortal(
+            <MapInspector
+              {...(selectedNode ? { node: selectedNode } : {})}
+              {...(selectedEdge ? { edge: selectedEdge } : {})}
+              notes={notes}
+              linkPreviewEnabled={state.settings.linkPreviewEnabled}
+              onUpdateNode={updateNode}
+              onUpdateEdge={(id, changes) =>
+                persist(
+                  map.nodes,
+                  map.edges.map((edge) =>
+                    edge.id === id
+                      ? {
+                          ...edge,
+                          ...changes,
+                          ...(changes.diorna
+                            ? { diorna: { ...edge.diorna, ...changes.diorna } }
+                            : {}),
+                        }
+                      : edge,
+                  ),
+                )
+              }
+              onCreateSubmap={(node) => {
+                const child = onCreateMap(map.id);
+                updateNode(node.id, {
+                  type: "file",
+                  file: child.path,
+                  text: child.name,
+                  diorna: { nodeType: "submap" },
+                });
+              }}
+              onExpandLinkedNotes={expandLinkedPages}
+              onCopy={() => copySelection()}
+              onBringToFront={bringSelectionToFront}
+              onFit={() =>
+                void flowRef.current?.fitView({
+                  nodes: selectedNodes.map((id) => ({ id })),
+                  padding: 0.35,
+                  duration: 160,
+                })
+              }
+              onDelete={removeSelection}
+            />,
+            inspectorHost,
+          )}
+        {!presenting && (selectedNode || selectedEdge) && !state.rightPanelOpen && (
+          <button
+            className="map-inspector-toggle"
+            aria-label="Open node inspector"
+            title="Open inspector"
+            onClick={state.toggleRightPanel}
+          >
+            <SlidersHorizontal />
+            <span>Inspector</span>
+          </button>
         )}
         {!presenting && (
           <button className="canvas-add" onClick={() => addNode("text")}>
@@ -1167,6 +1222,7 @@ function MapInspector({
   onUpdateNode,
   onUpdateEdge,
   onCreateSubmap,
+  onExpandLinkedNotes,
   onCopy,
   onBringToFront,
   onFit,
@@ -1179,6 +1235,7 @@ function MapInspector({
   onUpdateNode: (id: string, changes: Partial<CanvasNode>) => void;
   onUpdateEdge: (id: string, changes: Partial<CanvasEdge>) => void;
   onCreateSubmap: (node: CanvasNode) => void;
+  onExpandLinkedNotes: (node: CanvasNode) => void;
   onCopy: () => void;
   onBringToFront: () => void;
   onFit: () => void;
@@ -1308,25 +1365,35 @@ function MapInspector({
         <option value="submap">Sub-map</option>
       </select>
       {nodeType === "note" ? (
-        <select
-          aria-label="Linked note"
-          value={node.file ?? ""}
-          onChange={(event) => {
-            const note = notes.find((entry) => entry.path === event.target.value);
-            onUpdateNode(node.id, {
-              type: "file",
-              file: event.target.value,
-              ...(note ? { text: note.title } : {}),
-            });
-          }}
-        >
-          <option value="">Choose note</option>
-          {notes.map((note) => (
-            <option key={note.id} value={note.path}>
-              {note.title}
-            </option>
-          ))}
-        </select>
+        <>
+          <select
+            aria-label="Linked note"
+            value={node.file ?? ""}
+            onChange={(event) => {
+              const note = notes.find((entry) => entry.path === event.target.value);
+              onUpdateNode(node.id, {
+                type: "file",
+                file: event.target.value,
+                ...(note ? { text: note.title } : {}),
+              });
+            }}
+          >
+            <option value="">Choose note</option>
+            {notes.map((note) => (
+              <option key={note.id} value={note.path}>
+                {note.title}
+              </option>
+            ))}
+          </select>
+          {node.file && (
+            <button
+              className="button expand-linked-notes"
+              onClick={() => onExpandLinkedNotes(node)}
+            >
+              <ChevronRight /> Expand all linked pages
+            </button>
+          )}
+        </>
       ) : isMapMediaType(nodeType) ? (
         <input
           aria-label="Media source"

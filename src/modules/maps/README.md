@@ -15,6 +15,9 @@ Linked-note nodes subscribe to the live note record rather than copying its body
 Their scrollable preview renders the complete current rich-text document, including
 portable image, video, audio, PDF, and file attachment blocks. Editing or renaming a
 note therefore updates every open map reference without changing canvas geometry.
+The right-panel inspector can explicitly expand a selected note into a cycle-safe,
+deduplicated tree of all recursively linked pages with directed edges. Existing note
+nodes and edges are reused, and newly created cards avoid occupied canvas regions.
 
 Canvas files use Obsidian's node/edge fields. Diorna extensions live in an
 additive `diorna` object, including sub-map ancestry and cached link previews.

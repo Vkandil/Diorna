@@ -11,6 +11,8 @@ The sidebar opens Home, Notes, Maps, Calendar, Daily, and Recap. `Ctrl+K` opens
 the command palette, `Ctrl+B` toggles the sidebar, and `Ctrl+Alt+Space` opens
 quick capture from any Windows application. Plain capture appends to Inbox,
 `[]` creates a task, and `#tag` creates a tagged note.
+Recent Notes and Maps shown below their module are direct links; selecting one
+opens that item immediately.
 
 ## Notes and study
 
@@ -18,7 +20,8 @@ Create or select a note in Notes. Formatting saves automatically within one
 second and on close. Type `/` for blocks and choose **Page** to create and open
 a linked child page. Typing `[[` still links existing notes. Both forms render as
 accent-coloured, underlined page links while remaining portable `[[...]]` syntax
-in Markdown. Use Markdown shortcuts for structure, `$…$`/`$$…$$` for mathematics,
+in Markdown. A back arrow above a child page names and returns to its parent page,
+including through several nesting levels. Use Markdown shortcuts for structure, `$…$`/`$$…$$` for mathematics,
 and cloze text as `{{c1::answer}}`. Properties, tags, course, counts, backlinks,
 outline, and unlinked mentions surround the editor. Search accepts filters such as
 `tag:exam`, `course:CS301`, `created:>2026-01-01`, phrases, and Boolean terms.
@@ -39,7 +42,9 @@ a directly saved PDF; printing remains available separately.
 
 ## Maps
 
-Maps are manually arranged spatial canvases, never automatic note graphs.
+Maps are manually arranged spatial canvases; linked-page expansion only runs when
+explicitly requested. Select a note node and choose **Expand all linked pages** to
+lay out every recursively linked child note and connect the hierarchy with arrows.
 Create text, note, image, link, group, or sub-map nodes; drag them freely and
 connect border handles. Positions are stored as exact X/Y values. Use the
 minimap and fit controls for navigation. Export the visible authored map to PNG
@@ -55,6 +60,8 @@ are arranged in a small grid instead of overlapping.
 Linked note cards always render the current rich note, including headings, lists,
 images, video, audio, PDFs, and file blocks. Their content is scrollable inside the
 card and refreshes when the note is edited, renamed, or moved to another folder.
+Node and edge settings live in the right Inspector panel. On narrower windows it
+becomes an overlay that can be closed and reopened from the compact Inspector button.
 
 ## Calendar and tasks
 

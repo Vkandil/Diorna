@@ -83,6 +83,11 @@ test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page })
   await page.getByLabel("Redo").click();
   await expect(page.locator(".react-flow__node")).toHaveCount(5);
   await page.getByText("New idea", { exact: true }).click();
+  await expect(page.locator(".right-panel").getByLabel("Node text")).toBeVisible();
+  await expect(page.locator(".canvas-wrap .map-inspector")).toHaveCount(0);
+  await page.getByRole("button", { name: "Close inspector" }).click();
+  await expect(page.getByRole("button", { name: "Open node inspector" })).toBeVisible();
+  await page.getByRole("button", { name: "Open node inspector" }).click();
   await page.getByLabel("Node text").fill("Map acceptance node\nPosition must survive restart");
   const added = page.locator(".react-flow__node").filter({ hasText: "Map acceptance node" });
   const box = await added.boundingBox();
@@ -108,6 +113,11 @@ test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page })
   await page.getByRole("button", { name: /Present/ }).click();
   await expect(page.locator(".map-module.presenting")).toBeVisible();
   await page.getByRole("button", { name: "Exit" }).click();
+  const mapSidebar = page.locator(".context-sidebar");
+  await mapSidebar.getByRole("button", { name: "Add map" }).click();
+  await expect(page.getByLabel("Current map")).not.toHaveValue("map-gym");
+  await mapSidebar.getByRole("button", { name: "Gym", exact: true }).click();
+  await expect(page.getByLabel("Current map")).toHaveValue("map-gym");
   await page.screenshot({ path: "test-results/gym-map.png", fullPage: true });
   expect(errors).toEqual([]);
 });
@@ -553,8 +563,10 @@ test("creates and follows a visual child page with the slash command", async ({ 
   await slashMenu.getByRole("button", { name: /Page/ }).click();
 
   await expect(liveEditor.getByLabel("Note title")).toHaveValue("Untitled page");
-  const tabbar = page.locator(".pane-tabbar");
-  await tabbar.getByRole("button", { name: "Parent page", exact: true }).click();
+  const backToParent = liveEditor.getByRole("button", { name: "Back to Parent page" });
+  await expect(backToParent).toBeVisible();
+  await page.screenshot({ path: "test-results/nested-page-back.png", fullPage: true });
+  await backToParent.click();
   const pageLink = liveEditor.getByRole("link", { name: "Untitled page" });
   await expect(pageLink).toBeVisible();
   await expect(pageLink).toHaveCSS("text-decoration-line", "underline");
@@ -565,12 +577,76 @@ test("creates and follows a visual child page with the slash command", async ({ 
   await childTitle.fill("Child page");
   await childTitle.blur();
 
-  await tabbar.getByRole("button", { name: "Parent page", exact: true }).click();
+  await editor.click();
+  await editor.press("Control+End");
+  await editor.pressSequentially("/");
+  await expect(slashMenu).toBeVisible();
+  await slashMenu.getByPlaceholder("Search blocks…").fill("page");
+  await slashMenu.getByRole("button", { name: /Page/ }).click();
+  await expect(liveEditor.getByLabel("Note title")).toHaveValue("Untitled page");
+  await liveEditor.getByRole("button", { name: "Back to Child page" }).click();
+  await expect(liveEditor.getByLabel("Note title")).toHaveValue("Child page");
+  await liveEditor.getByRole("button", { name: "Back to Parent page" }).click();
   const renamedLink = liveEditor.getByRole("link", { name: "Child page" });
   await expect(renamedLink).toBeVisible();
   await page.screenshot({ path: "test-results/nested-page-link.png", fullPage: true });
   await renamedLink.click();
   await expect(liveEditor.getByLabel("Note title")).toHaveValue("Child page");
+  await page
+    .locator(".context-sidebar")
+    .getByRole("button", { name: "Parent page", exact: true })
+    .click();
+  await expect(liveEditor.getByLabel("Note title")).toHaveValue("Parent page");
+});
+
+test("expands a complete nested note tree into connected map nodes", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByLabel("Workspace").selectOption("workspace-personal");
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  const liveEditor = page.locator(".note-editor-live:not([hidden])");
+  const title = liveEditor.getByLabel("Note title");
+  const editor = liveEditor.locator('.prose-editor[contenteditable="true"]');
+
+  await page.getByRole("button", { name: "New note" }).click();
+  await title.fill("Map grandchild");
+  await title.blur();
+
+  await page.getByRole("button", { name: "New note" }).click();
+  await title.fill("Map child");
+  await title.blur();
+  await editor.click();
+  await editor.pressSequentially("[[Map grand");
+  await page.getByRole("option", { name: /Map grandchild/ }).click();
+
+  await page.getByRole("button", { name: "New note" }).click();
+  await title.fill("Map root");
+  await title.blur();
+  await editor.click();
+  await editor.pressSequentially("[[Map chi");
+  await page.getByRole("option", { name: /Map child/ }).click();
+  await page.waitForTimeout(800);
+
+  await page.getByRole("button", { name: "Maps Ctrl 2" }).click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(4);
+  const existingEdgeCount = await page.locator(".react-flow__edge").count();
+  await page.getByRole("button", { name: "Add node" }).click();
+  await page.getByText("New idea", { exact: true }).click();
+  const inspector = page.locator(".right-panel");
+  await inspector.getByLabel("Node type").selectOption("note");
+  await inspector.getByLabel("Linked note").selectOption({ label: "Map root" });
+  await inspector.getByRole("button", { name: "Expand all linked pages" }).click();
+
+  await expect(page.locator(".canvas-card.type-note")).toHaveCount(3);
+  await expect(page.getByText("2 linked pages expanded.")).toBeVisible();
+  await expect(page.locator(".react-flow__edge")).toHaveCount(existingEdgeCount + 2);
+  await page.waitForTimeout(350);
+  await page.screenshot({ path: "test-results/map-linked-page-tree.png", fullPage: true });
+  await page.setViewportSize({ width: 1000, height: 720 });
+  await expect(inspector).toBeVisible();
+  await inspector.getByRole("button", { name: "Close inspector" }).click();
+  await expect(page.getByRole("button", { name: "Open node inspector" })).toBeVisible();
+  await page.getByRole("button", { name: "Open node inspector" }).click();
+  await expect(inspector.getByLabel("Linked note")).toBeVisible();
 });
 
 test("creates a course lecture and reviews an authored flashcard", async ({ page }) => {

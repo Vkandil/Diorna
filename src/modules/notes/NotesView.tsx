@@ -15,6 +15,7 @@ import TextAlign from "@tiptap/extension-text-align";
 import UnderlineExtension from "@tiptap/extension-underline";
 import { TextSelection } from "@tiptap/pm/state";
 import {
+  ArrowLeft,
   Bold,
   BookOpen,
   Braces,
@@ -792,11 +793,21 @@ function Editor({ noteId }: { noteId: string }) {
       (entry) => entry.title.toLocaleLowerCase() === targetTitle.toLocaleLowerCase(),
     );
     if (target) {
-      state.openTab({ module: "notes", title: target.title, entityId: target.id });
+      state.openTab({
+        module: "notes",
+        title: target.title,
+        entityId: target.id,
+        previousNoteId: noteRef.current.id,
+      });
       return;
     }
     const created = createLinkedNote(targetTitle);
-    state.openTab({ module: "notes", title: created.title, entityId: created.id });
+    state.openTab({
+      module: "notes",
+      title: created.title,
+      entityId: created.id,
+      previousNoteId: noteRef.current.id,
+    });
   };
   const editor = useEditor({
     extensions: [
@@ -1206,7 +1217,12 @@ function Editor({ noteId }: { noteId: string }) {
           body: editor.getHTML(),
           wordCount: editor.getText().trim().split(/\s+/).filter(Boolean).length,
         });
-        state.openTab({ module: "notes", title: created.title, entityId: created.id });
+        state.openTab({
+          module: "notes",
+          title: created.title,
+          entityId: created.id,
+          previousNoteId: note.id,
+        });
       },
     ],
     ["Paragraph", "Text", () => editor.chain().focus().setParagraph().run()],
@@ -1335,11 +1351,36 @@ function Editor({ noteId }: { noteId: string }) {
     run();
     setSlashOpen(false);
   };
+  const currentTab = state.tabs.find((tab) => tab.module === "notes" && tab.entityId === note.id);
+  const previousNote = workspaceNotes.find((entry) => entry.id === currentTab?.previousNoteId);
   return (
     <article
       className={`note-editor line-${lineWidth} ${typewriter ? "typewriter-mode" : ""} ${nativeDropActive ? "native-drop-active" : ""}`}
     >
       <header className="editor-toolbar">
+        {previousNote && (
+          <button
+            className="note-back-link"
+            title={`Back to ${previousNote.title}`}
+            aria-label={`Back to ${previousNote.title}`}
+            onClick={() => {
+              const previousTab = state.tabs.find(
+                (tab) => tab.module === "notes" && tab.entityId === previousNote.id,
+              );
+              if (previousTab) state.setActiveTab(previousTab.id);
+              else
+                state.openTab({
+                  module: "notes",
+                  title: previousNote.title,
+                  entityId: previousNote.id,
+                });
+            }}
+          >
+            <ArrowLeft size={15} />
+            <span>{previousNote.title}</span>
+          </button>
+        )}
+        {previousNote && <span className="toolbar-divider" />}
         {buttons.map(({ label, icon: Icon, run, active }, index) => (
           <button
             key={`${label}-${index}`}

@@ -53,6 +53,31 @@ describe("shell layout store", () => {
     expect(useDiornaStore.getState().recentTabIds.slice(0, 2)).toEqual([notesId, mapsId]);
   });
 
+  it("keeps the parent page on linked note tabs", () => {
+    const parent = useDiornaStore.getState().addNote("Parent");
+    const child = useDiornaStore.getState().addNote("Child");
+    useDiornaStore.getState().openTab({
+      module: "notes",
+      title: child.title,
+      entityId: child.id,
+      previousNoteId: parent.id,
+    });
+    expect(
+      useDiornaStore.getState().tabs.find((tab) => tab.entityId === child.id)?.previousNoteId,
+    ).toBe(parent.id);
+
+    const otherParent = useDiornaStore.getState().addNote("Other parent");
+    useDiornaStore.getState().openTab({
+      module: "notes",
+      title: child.title,
+      entityId: child.id,
+      previousNoteId: otherParent.id,
+    });
+    expect(
+      useDiornaStore.getState().tabs.find((tab) => tab.entityId === child.id)?.previousNoteId,
+    ).toBe(otherParent.id);
+  });
+
   it("accepts a fully customized onboarding workspace list", async () => {
     const createdAt = new Date().toISOString();
     await useDiornaStore.getState().finishOnboarding(

@@ -287,7 +287,7 @@ export function AppShell() {
   }, []);
   return (
     <div
-      className={`app-shell ${state.sidebarOpen ? "" : "sidebar-collapsed"} ${state.rightPanelOpen ? "" : "right-collapsed"}`}
+      className={`app-shell ${state.sidebarOpen ? "" : "sidebar-collapsed"} ${state.rightPanelOpen ? "" : "right-collapsed"} ${state.activeModule === "maps" ? "map-module-active" : ""}`}
       style={{ "--sidebar": `${state.sidebarWidth}px` } as React.CSSProperties}
     >
       <aside className="sidebar">
@@ -629,25 +629,58 @@ function renderModule(module: ModuleId, tabId?: string) {
 function ContextSidebar({ module }: { module: ModuleId }) {
   const state = useDiornaStore();
   const id = state.activeWorkspaceId;
+  const active = state.tabs.find((tab) => tab.id === state.activeTabId);
   const entries =
     module === "notes"
-      ? state.notes.filter((item) => item.workspaceId === id).map((item) => item.title)
+      ? state.notes
+          .filter((item) => item.workspaceId === id && !item.trashedAt)
+          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+          .map((item) => ({ id: item.id, label: item.title, module: "notes" as const }))
       : module === "maps"
-        ? state.maps.filter((item) => item.workspaceId === id).map((item) => item.name)
+        ? state.maps
+            .filter((item) => item.workspaceId === id && !item.trashedAt)
+            .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+            .map((item) => ({ id: item.id, label: item.name, module: "maps" as const }))
         : module === "daily"
-          ? state.habits.filter((item) => item.workspaceId === id).map((item) => item.name)
-          : state.categories.filter((item) => item.workspaceId === id).map((item) => item.name);
+          ? state.habits
+              .filter((item) => item.workspaceId === id)
+              .map((item) => ({ id: item.id, label: item.name }))
+          : state.categories
+              .filter((item) => item.workspaceId === id)
+              .map((item) => ({ id: item.id, label: item.name }));
+  const addEntry = () => {
+    if (module === "notes") {
+      const note = state.addNote();
+      state.openTab({ module: "notes", title: note.title, entityId: note.id });
+    } else if (module === "maps") {
+      const map = state.addMap();
+      state.openTab({ module: "maps", title: map.name, entityId: map.id });
+    }
+  };
   return (
     <section className="context-sidebar">
       <header>
         <span>{module === "home" ? "Workspace" : module}</span>
-        <button aria-label="Add">
+        <button
+          aria-label={module === "notes" ? "Add note" : module === "maps" ? "Add map" : "Add"}
+          disabled={module !== "notes" && module !== "maps"}
+          onClick={addEntry}
+        >
           <Plus size={14} />
         </button>
       </header>
       <div className="context-list">
         {entries.slice(0, 12).map((entry) => (
-          <button key={entry}>{entry}</button>
+          <button
+            key={entry.id}
+            aria-current={active?.entityId === entry.id ? "page" : undefined}
+            onClick={() => {
+              if ("module" in entry && (entry.module === "notes" || entry.module === "maps"))
+                state.openTab({ module: entry.module, title: entry.label, entityId: entry.id });
+            }}
+          >
+            {entry.label}
+          </button>
         ))}
         {!entries.length && <div className="empty-mini">Nothing here yet.</div>}
       </div>
@@ -711,14 +744,23 @@ function RightPanel({ module }: { module: ModuleId }) {
                   ? "Statistics"
                   : "Context"}
         </span>
-        <button className="icon-button" aria-label="Refresh context">
-          <RotateCcw size={14} />
+        <button
+          className="icon-button"
+          aria-label={module === "maps" ? "Close inspector" : "Refresh context"}
+          onClick={module === "maps" ? state.toggleRightPanel : undefined}
+        >
+          {module === "maps" ? <X size={14} /> : <RotateCcw size={14} />}
         </button>
       </header>
       <div className="panel-body">
         <span className="eyebrow">Current context</span>
-        {module !== "calendar" && module !== "daily" && (
+        {module !== "calendar" && module !== "daily" && module !== "maps" && (
           <p className="muted">Select an item to inspect its details here.</p>
+        )}
+        {module === "maps" && (
+          <div className="map-inspector-panel" id="map-inspector-panel">
+            <p className="muted map-inspector-empty">Select a node or an edge to edit it here.</p>
+          </div>
         )}
         {module === "notes" && (
           <>
