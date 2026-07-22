@@ -2624,6 +2624,36 @@ select {
   color: var(--danger);
   font: 0.88em var(--font-mono);
 }
+.prose-editor .wiki-link {
+  border-radius: 3px;
+  color: var(--accent-text);
+  cursor: pointer;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent) 72%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  transition:
+    color var(--motion),
+    background var(--motion),
+    box-shadow var(--motion);
+}
+.prose-editor .wiki-link::before {
+  margin-right: 3px;
+  color: var(--accent);
+  content: "▱";
+  font-size: 0.9em;
+  text-decoration: none;
+}
+.prose-editor .wiki-link:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.prose-editor .wiki-link.ProseMirror-selectednode {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent);
+}
 .prose-editor pre code {
   background: transparent;
   padding: 0;

@@ -11,6 +11,7 @@ import {
   renameTag,
   rewriteWikiLinks,
   searchNotes,
+  wikiLinksToEditorHtml,
 } from "@/modules/notes/logic";
 import type { Note } from "@/shared/models";
 
@@ -38,6 +39,24 @@ describe("note linking and organisation", () => {
     expect(rewriteWikiLinks("[[Old]] [[old|alias]] [[Other]]", "Old", "New")).toBe(
       "[[New]] [[New|alias]] [[Other]]",
     ));
+  it("hydrates wiki syntax into visual editor links and keeps it parseable", () => {
+    const html = wikiLinksToEditorHtml("<p>Open [[Target]] and [[Other|a label]].</p>");
+    expect(html).toContain('data-type="wiki-link"');
+    expect(html).toContain('data-target="Target"');
+    expect(html).not.toContain("[[Target]]");
+    expect(parseWikiLinks(html)).toEqual([
+      expect.objectContaining({ target: "Target" }),
+      expect.objectContaining({ target: "Other", alias: "a label" }),
+    ]);
+  });
+  it("rewrites visual wiki links when their target note is renamed", () => {
+    const html = wikiLinksToEditorHtml("<p>Open [[Old]] and [[Old|alias]].</p>");
+    const renamed = rewriteWikiLinks(html, "Old", "New");
+    expect(renamed).toContain('data-target="New"');
+    expect(renamed).toContain(">New</span>");
+    expect(renamed).toContain(">alias</span>");
+    expect(parseWikiLinks(renamed).map((link) => link.target)).toEqual(["New", "New"]);
+  });
   it("finds backlinks with sentence context", () => {
     const target = note("n1", "Target", "");
     expect(

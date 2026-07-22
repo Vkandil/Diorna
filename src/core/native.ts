@@ -25,6 +25,16 @@ const turndown = new TurndownService({
   bulletListMarker: "-",
 });
 turndown.keep(["figure"]);
+turndown.addRule("wiki-link", {
+  filter: (node) =>
+    node.nodeType === Node.ELEMENT_NODE && (node as Element).matches('span[data-type="wiki-link"]'),
+  replacement: (_content, node) => {
+    const link = node as HTMLElement;
+    const target = link.dataset.target ?? link.textContent ?? "Untitled";
+    const label = link.dataset.label;
+    return `[[${target}${label ? `|${label}` : ""}]]`;
+  },
+});
 
 export const isTauri = (): boolean => "__TAURI_INTERNALS__" in window;
 

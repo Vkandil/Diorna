@@ -54,7 +54,7 @@ import {
 } from "lucide-react";
 import { selectWorkspace, useDiornaStore } from "@/core/store";
 import type { Note } from "@/shared/models";
-import { parseWikiLinks, previewReplace, searchNotes } from "./logic";
+import { parseWikiLinks, previewReplace, searchNotes, wikiLinksToEditorHtml } from "./logic";
 import {
   AttachmentBlock,
   CalloutBlock,
@@ -63,6 +63,7 @@ import {
   MathBlock,
   MathInline,
   MermaidBlock,
+  WikiLink,
 } from "./extensions";
 import { NotePropertiesPanel } from "./NoteProperties";
 import { RevisionPanel } from "./RevisionPanel";
@@ -561,7 +562,7 @@ function NoteGraph({
   const [depth, setDepth] = useState<"1" | "2" | "3" | "all">("all");
   const allByTitle = new Map(allNotes.map((note) => [note.title.toLocaleLowerCase(), note]));
   const allEdges = allNotes.flatMap((source) =>
-    parseWikiLinks(stripHtml(source.body)).flatMap((link) => {
+    parseWikiLinks(source.body).flatMap((link) => {
       const target = allByTitle.get(link.target.toLocaleLowerCase());
       return target ? [{ source, target }] : [];
     }),
@@ -776,6 +777,16 @@ function Editor({ noteId }: { noteId: string }) {
     titleNoteId.current = note.id;
     setTitle(note.title);
   }, [note.id, note.title]);
+  const createLinkedNote = (requestedTitle: string) => {
+    const created = state.addNote(requestedTitle);
+    const folder = noteFolder(noteRef.current.path);
+    if (folder) {
+      const path = `notes/${folder}/${fileName(created.path)}`;
+      state.updateNote(created.id, { path });
+      return { ...created, path };
+    }
+    return created;
+  };
   const openWikiTarget = (targetTitle: string) => {
     const target = notesRef.current.find(
       (entry) => entry.title.toLocaleLowerCase() === targetTitle.toLocaleLowerCase(),
@@ -784,9 +795,7 @@ function Editor({ noteId }: { noteId: string }) {
       state.openTab({ module: "notes", title: target.title, entityId: target.id });
       return;
     }
-    const created = state.addNote(targetTitle);
-    const folder = noteFolder(noteRef.current.path);
-    if (folder) state.updateNote(created.id, { path: `notes/${folder}/${fileName(created.path)}` });
+    const created = createLinkedNote(targetTitle);
     state.openTab({ module: "notes", title: created.title, entityId: created.id });
   };
   const editor = useEditor({
@@ -809,6 +818,7 @@ function Editor({ noteId }: { noteId: string }) {
       TaskItem.configure({ nested: true }),
       TextAlign.configure({ types: ["heading", "paragraph", "image"] }),
       UnderlineExtension,
+      WikiLink,
       MathBlock,
       MathInline,
       CodeBlock,
@@ -818,7 +828,7 @@ function Editor({ noteId }: { noteId: string }) {
       MermaidBlock,
       AttachmentBlock,
     ],
-    content: note.body,
+    content: wikiLinksToEditorHtml(note.body),
     onUpdate: ({ editor: current }) => {
       const text = current.getText();
       const { $from } = current.state.selection;
@@ -943,7 +953,15 @@ function Editor({ noteId }: { noteId: string }) {
         }
         return false;
       },
-      handleClick: (view, position) => {
+      handleClick: (view, position, event) => {
+        const wikiLink =
+          event.target instanceof Element
+            ? event.target.closest<HTMLElement>('[data-type="wiki-link"]')
+            : null;
+        if (wikiLink?.dataset.target) {
+          openWikiTarget(wikiLink.dataset.target);
+          return true;
+        }
         const resolved = view.state.doc.resolve(position);
         if (!resolved.parent.isTextblock) return false;
         const text = resolved.parent.textContent;
@@ -986,8 +1004,9 @@ function Editor({ noteId }: { noteId: string }) {
     };
   }, [editor, noteId, updateNote]);
   useEffect(() => {
-    if (!editor || editor.getHTML() === note.body) return;
-    editor.commands.setContent(note.body, false);
+    const content = wikiLinksToEditorHtml(note.body);
+    if (!editor || editor.getHTML() === content) return;
+    editor.commands.setContent(content, false);
   }, [editor, note.body]);
   useEffect(() => {
     if (!editor || !("__TAURI_INTERNALS__" in window)) return;
@@ -1174,6 +1193,22 @@ function Editor({ noteId }: { noteId: string }) {
     },
   ];
   const slashCommands = [
+    [
+      "Page",
+      "Structure",
+      () => {
+        const created = createLinkedNote("Untitled page");
+        editor.commands.insertContent({
+          type: "wikiLink",
+          attrs: { target: created.title, label: "" },
+        });
+        updateNote(noteId, {
+          body: editor.getHTML(),
+          wordCount: editor.getText().trim().split(/\s+/).filter(Boolean).length,
+        });
+        state.openTab({ module: "notes", title: created.title, entityId: created.id });
+      },
+    ],
     ["Paragraph", "Text", () => editor.chain().focus().setParagraph().run()],
     ["Heading 1", "Text", () => editor.chain().focus().setHeading({ level: 1 }).run()],
     ["Heading 2", "Text", () => editor.chain().focus().setHeading({ level: 2 }).run()],
@@ -1478,7 +1513,10 @@ function Editor({ noteId }: { noteId: string }) {
                         .chain()
                         .focus()
                         .deleteRange({ from, to: editor.state.selection.from })
-                        .insertContent(`[[${entry.title}]]`)
+                        .insertContent({
+                          type: "wikiLink",
+                          attrs: { target: entry.title, label: "" },
+                        })
                         .run();
                       setWikiQuery(undefined);
                     }}
@@ -1498,13 +1536,16 @@ function Editor({ noteId }: { noteId: string }) {
                 role="option"
                 aria-selected="false"
                 onClick={() => {
-                  const title = wikiQuery.trim() || "Untitled";
+                  const created = createLinkedNote(wikiQuery.trim() || "Untitled");
                   const from = Math.max(1, editor.state.selection.from - wikiQuery.length - 2);
                   editor
                     .chain()
                     .focus()
                     .deleteRange({ from, to: editor.state.selection.from })
-                    .insertContent(`[[${title}]]`)
+                    .insertContent({
+                      type: "wikiLink",
+                      attrs: { target: created.title, label: "" },
+                    })
                     .run();
                   setWikiQuery(undefined);
                 }}

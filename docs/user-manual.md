@@ -15,10 +15,12 @@ quick capture from any Windows application. Plain capture appends to Inbox,
 ## Notes and study
 
 Create or select a note in Notes. Formatting saves automatically within one
-second and on close. Type `/` for blocks, `[[` for links, Markdown shortcuts
-for structure, `$…$`/`$$…$$` for mathematics, and cloze text as
-`{{c1::answer}}`. Properties, tags, course, counts, backlinks, outline, and
-unlinked mentions surround the editor. Search accepts filters such as
+second and on close. Type `/` for blocks and choose **Page** to create and open
+a linked child page. Typing `[[` still links existing notes. Both forms render as
+accent-coloured, underlined page links while remaining portable `[[...]]` syntax
+in Markdown. Use Markdown shortcuts for structure, `$…$`/`$$…$$` for mathematics,
+and cloze text as `{{c1::answer}}`. Properties, tags, course, counts, backlinks,
+outline, and unlinked mentions surround the editor. Search accepts filters such as
 `tag:exam`, `course:CS301`, `created:>2026-01-01`, phrases, and Boolean terms.
 
 Templates substitute date, time, title, course, week, semester, and cursor.

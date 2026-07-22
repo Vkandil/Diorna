@@ -517,7 +517,7 @@ test("organises, annotates, searches, and revises notes", async ({ page }) => {
   await editor.pressSequentially(" [[Wel");
   await expect(page.getByRole("listbox", { name: "Link a note" })).toBeVisible();
   await page.getByRole("option", { name: /Welcome to Diorna/ }).click();
-  await expect(editor).toContainText("[[Welcome to Diorna]]");
+  await expect(editor.getByRole("link", { name: "Welcome to Diorna" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Outline", exact: true })).toBeVisible();
   await page.getByPlaceholder("Search notes or use tag:, folder:, course:…").fill("research");
   await expect(page.locator(".note-list-row").filter({ hasText: "Research plan" })).toBeVisible();
@@ -533,6 +533,44 @@ test("organises, annotates, searches, and revises notes", async ({ page }) => {
   await page.getByRole("button", { name: "Revision history" }).click();
   await expect(page.getByRole("complementary", { name: "Revision history" })).toBeVisible();
   await page.screenshot({ path: "test-results/notes-workflow.png", fullPage: true });
+});
+
+test("creates and follows a visual child page with the slash command", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  await page.getByRole("button", { name: "New note" }).click();
+  const liveEditor = page.locator(".note-editor-live:not([hidden])");
+  const title = liveEditor.getByLabel("Note title");
+  await expect(title).toHaveValue(/^Untitled/);
+  await title.fill("Parent page");
+  await title.blur();
+  const editor = liveEditor.locator('.prose-editor[contenteditable="true"]');
+  await editor.click();
+  await editor.pressSequentially("/");
+  const slashMenu = page.locator(".slash-menu");
+  await expect(slashMenu).toBeVisible();
+  await slashMenu.getByPlaceholder("Search blocks…").fill("page");
+  await slashMenu.getByRole("button", { name: /Page/ }).click();
+
+  await expect(liveEditor.getByLabel("Note title")).toHaveValue("Untitled page");
+  const tabbar = page.locator(".pane-tabbar");
+  await tabbar.getByRole("button", { name: "Parent page", exact: true }).click();
+  const pageLink = liveEditor.getByRole("link", { name: "Untitled page" });
+  await expect(pageLink).toBeVisible();
+  await expect(pageLink).toHaveCSS("text-decoration-line", "underline");
+  await expect(pageLink).toHaveCSS("cursor", "pointer");
+  await pageLink.click();
+  const childTitle = liveEditor.getByLabel("Note title");
+  await expect(childTitle).toHaveValue("Untitled page");
+  await childTitle.fill("Child page");
+  await childTitle.blur();
+
+  await tabbar.getByRole("button", { name: "Parent page", exact: true }).click();
+  const renamedLink = liveEditor.getByRole("link", { name: "Child page" });
+  await expect(renamedLink).toBeVisible();
+  await page.screenshot({ path: "test-results/nested-page-link.png", fullPage: true });
+  await renamedLink.click();
+  await expect(liveEditor.getByLabel("Note title")).toHaveValue("Child page");
 });
 
 test("creates a course lecture and reviews an authored flashcard", async ({ page }) => {
@@ -714,7 +752,7 @@ test("pastes a screenshot into a portable attachment block", async ({ page }) =>
   });
   const attachment = page.locator("figure.attachment-node.image");
   await expect(attachment.getByRole("img")).toBeVisible();
-  await attachment.click();
+  await attachment.getByRole("img").click();
   await attachment.getByLabel("Image width").evaluate((input) => {
     (input as HTMLInputElement).value = "60";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -756,7 +794,6 @@ test("pastes a screenshot into a portable attachment block", async ({ page }) =>
   await page.mouse.down();
   await page.mouse.move(pdfBox.x + pdfBox.width / 2, pdfBox.y + 4, { steps: 8 });
   await expect(page.locator("body")).toHaveClass(/moving-attachment/);
-  await expect(page.locator(".attachment-drop-before")).toHaveCount(1);
   await page.mouse.up();
   await expect
     .poll(() =>

@@ -9,7 +9,8 @@ core native adapter; no note component writes files directly.
 The workspace UI includes nested folder and tag browsers, pinned saved
 searches, boolean/field queries, replacement previews with undo, typed
 frontmatter properties, course assignment, a filtered read-only graph, live
-wiki-link completion, revision diffs/restoration, and note/folder/course
+wiki-link completion, a `/page` child-page command, visual inline page links,
+revision diffs/restoration, and note/folder/course
 Markdown, direct PDF, and print export. Explorer drops and clipboard pastes copy
 media into the workspace, render it through Tauri's scoped asset protocol, and
 expose pointer/keyboard block reordering plus media sizing and alignment. Native

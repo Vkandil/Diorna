@@ -27,7 +27,8 @@ export interface OutlineEntry {
 }
 
 export function parseWikiLinks(text: string): WikiLink[] {
-  return [...text.matchAll(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g)].map((match) => ({
+  const normalized = wikiLinkText(text);
+  return [...normalized.matchAll(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g)].map((match) => ({
     target: match[1]!.trim(),
     ...(match[2] ? { alias: match[2].trim() } : {}),
     index: match.index,
@@ -36,23 +37,84 @@ export function parseWikiLinks(text: string): WikiLink[] {
 }
 
 export function rewriteWikiLinks(text: string, oldTitle: string, newTitle: string): string {
-  return text.replace(/\[\[([^\]|]+)(\|[^\]]+)?\]\]/g, (whole, target: string, alias?: string) =>
-    target.trim().toLocaleLowerCase() === oldTitle.toLocaleLowerCase()
-      ? `[[${newTitle}${alias ?? ""}]]`
-      : whole,
+  const replaced = text.replace(
+    /\[\[([^\]|]+)(\|[^\]]+)?\]\]/g,
+    (whole, target: string, alias?: string) =>
+      target.trim().toLocaleLowerCase() === oldTitle.toLocaleLowerCase()
+        ? `[[${newTitle}${alias ?? ""}]]`
+        : whole,
   );
+  if (!replaced.includes('data-type="wiki-link"')) return replaced;
+  const document = new DOMParser().parseFromString(replaced, "text/html");
+  for (const link of document.querySelectorAll<HTMLElement>('[data-type="wiki-link"]')) {
+    const target = link.dataset.target ?? link.textContent ?? "";
+    if (target.trim().toLocaleLowerCase() !== oldTitle.toLocaleLowerCase()) continue;
+    link.dataset.target = newTitle;
+    if (!link.dataset.label) link.textContent = newTitle;
+    link.title = `Open ${newTitle}`;
+  }
+  return document.body.innerHTML;
+}
+
+export function wikiLinksToEditorHtml(value: string): string {
+  const document = new DOMParser().parseFromString(value, "text/html");
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) {
+    const text = walker.currentNode as Text;
+    if (
+      !text.parentElement?.closest('code, pre, [data-type="wiki-link"]') &&
+      /\[\[/.test(text.data)
+    )
+      textNodes.push(text);
+  }
+  for (const text of textNodes) {
+    const matches = [...text.data.matchAll(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g)];
+    if (!matches.length) continue;
+    const fragment = document.createDocumentFragment();
+    let cursor = 0;
+    for (const match of matches) {
+      fragment.append(text.data.slice(cursor, match.index));
+      const target = match[1]!.trim();
+      const label = match[2]?.trim() ?? "";
+      const link = document.createElement("span");
+      link.dataset.type = "wiki-link";
+      link.dataset.target = target;
+      link.dataset.label = label;
+      link.className = "wiki-link";
+      link.setAttribute("role", "link");
+      link.title = `Open ${target}`;
+      link.textContent = label || target;
+      fragment.append(link);
+      cursor = match.index! + match[0].length;
+    }
+    fragment.append(text.data.slice(cursor));
+    text.replaceWith(fragment);
+  }
+  return document.body.innerHTML;
+}
+
+export function wikiLinkText(value: string): string {
+  if (!/<[a-z][\s\S]*>/i.test(value)) return value;
+  const document = new DOMParser().parseFromString(value, "text/html");
+  for (const link of document.querySelectorAll<HTMLElement>('[data-type="wiki-link"]')) {
+    const target = link.dataset.target ?? link.textContent ?? "";
+    const label = link.dataset.label;
+    link.replaceWith(document.createTextNode(`[[${target}${label ? `|${label}` : ""}]]`));
+  }
+  return document.body.textContent ?? "";
 }
 
 export function findBacklinks(notes: Note[], target: Note): Backlink[] {
   return notes
     .filter((note) => note.workspaceId === target.workspaceId && note.id !== target.id)
     .flatMap((note) =>
-      parseWikiLinks(stripHtml(note.body))
+      parseWikiLinks(note.body)
         .filter((link) => link.target.toLocaleLowerCase() === target.title.toLocaleLowerCase())
         .map((link) => ({
           sourceNoteId: note.id,
           sourceTitle: note.title,
-          context: sentenceAt(stripHtml(note.body), link.index),
+          context: sentenceAt(wikiLinkText(note.body), link.index),
           index: link.index,
         })),
     );
@@ -64,7 +126,7 @@ export function findUnlinkedMentions(notes: Note[], target: Note): Backlink[] {
   return notes
     .filter((note) => note.workspaceId === target.workspaceId && note.id !== target.id)
     .flatMap((note) => {
-      const plain = stripHtml(note.body);
+      const plain = wikiLinkText(note.body);
       const linkRanges = parseWikiLinks(plain).map((link) => [
         link.index,
         link.index + link.length,

@@ -42,6 +42,57 @@ mermaid.initialize({
 const codeLowlight = createLowlight(common);
 codeLowlight.register({ python, r, sql, javascript, typescript, bash, json, yaml, latex });
 
+export const WikiLink = Node.create({
+  name: "wikiLink",
+  inline: true,
+  group: "inline",
+  atom: true,
+  selectable: true,
+  addAttributes() {
+    return {
+      target: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("data-target") ?? element.textContent ?? "",
+        renderHTML: (attributes) => ({ "data-target": attributes.target }),
+      },
+      label: {
+        default: "",
+        parseHTML: (element) => element.getAttribute("data-label") ?? "",
+        renderHTML: (attributes) => ({ "data-label": attributes.label }),
+      },
+    };
+  },
+  parseHTML() {
+    return [{ tag: 'span[data-type="wiki-link"]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    const target = String(HTMLAttributes["data-target"] ?? "Untitled");
+    const label = String(HTMLAttributes["data-label"] ?? "");
+    return [
+      "span",
+      mergeAttributes(HTMLAttributes, {
+        "data-type": "wiki-link",
+        class: "wiki-link",
+        role: "link",
+        title: `Open ${target}`,
+      }),
+      label || target,
+    ];
+  },
+  renderText({ node }) {
+    return String(node.attrs.label || node.attrs.target);
+  },
+  addInputRules() {
+    return [
+      nodeInputRule({
+        find: /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]$/,
+        type: this.type,
+        getAttributes: (match) => ({ target: match[1]?.trim(), label: match[2]?.trim() ?? "" }),
+      }),
+    ];
+  },
+});
+
 export const CodeBlock = CodeBlockLowlight.extend({
   addAttributes() {
     return {
@@ -663,98 +714,8 @@ function useAttachmentPointerDrag({
   getPos,
   title,
 }: Pick<NodeViewProps, "editor" | "getPos"> & { title: string }) {
-  const drag = useRef<{
-    pointerId: number;
-    startX: number;
-    startY: number;
-    source: HTMLElement;
-    moved: boolean;
-  }>();
-  const target = useRef<{ element: HTMLElement; pos: number }>();
-
-  useEffect(() => {
-    const clearTarget = () => {
-      target.current?.element.classList.remove("attachment-drop-before", "attachment-drop-after");
-      target.current = undefined;
-    };
-    const clear = () => {
-      clearTarget();
-      drag.current?.source.classList.remove("attachment-dragging");
-      drag.current = undefined;
-      document.body.classList.remove("moving-attachment");
-    };
-    const blockAt = (y: number) => {
-      const blocks: Array<{ element: HTMLElement; pos: number; size: number; distance: number }> =
-        [];
-      let index = 0;
-      editor.state.doc.forEach((node, pos) => {
-        const element = editor.view.dom.children.item(index);
-        index += 1;
-        if (!(element instanceof HTMLElement) || element === drag.current?.source) return;
-        const bounds = element.getBoundingClientRect();
-        const distance =
-          y < bounds.top ? bounds.top - y : y > bounds.bottom ? y - bounds.bottom : 0;
-        blocks.push({ element, pos, size: node.nodeSize, distance });
-      });
-      const closest = blocks.sort((left, right) => left.distance - right.distance)[0];
-      if (!closest) return undefined;
-      const bounds = closest.element.getBoundingClientRect();
-      const after = y > bounds.top + bounds.height / 2;
-      return {
-        element: closest.element,
-        pos: closest.pos + (after ? closest.size : 0),
-        after,
-      };
-    };
-    const move = (event: PointerEvent) => {
-      const current = drag.current;
-      if (!current || current.pointerId !== event.pointerId) return;
-      if (
-        !current.moved &&
-        Math.hypot(event.clientX - current.startX, event.clientY - current.startY) >= 4
-      ) {
-        current.moved = true;
-        current.source.classList.add("attachment-dragging");
-        document.body.classList.add("moving-attachment");
-      }
-      if (!current.moved) return;
-      event.preventDefault();
-      const scroller = editor.view.dom.closest<HTMLElement>(".editor-scroll");
-      if (scroller) {
-        const bounds = scroller.getBoundingClientRect();
-        const edge = 48;
-        if (event.clientY < bounds.top + edge) scroller.scrollBy({ top: -18 });
-        else if (event.clientY > bounds.bottom - edge) scroller.scrollBy({ top: 18 });
-      }
-      const next = blockAt(event.clientY);
-      clearTarget();
-      if (!next) return;
-      next.element.classList.add(next.after ? "attachment-drop-after" : "attachment-drop-before");
-      target.current = { element: next.element, pos: next.pos };
-    };
-    const up = (event: PointerEvent) => {
-      const current = drag.current;
-      if (!current || current.pointerId !== event.pointerId) return;
-      const destination = target.current?.pos;
-      const source = typeof getPos === "function" ? getPos() : undefined;
-      const moved = current.moved;
-      clear();
-      if (!moved || destination === undefined || typeof source !== "number") return;
-      moveAttachment(editor, source, destination);
-    };
-    const cancel = (event: PointerEvent) => {
-      if (drag.current?.pointerId === event.pointerId) clear();
-    };
-    window.addEventListener("pointermove", move, { passive: false });
-    window.addEventListener("pointerup", up);
-    window.addEventListener("pointercancel", cancel);
-    return () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-      window.removeEventListener("pointercancel", cancel);
-      clear();
-    };
-  }, [editor, getPos]);
+  const getPosRef = useRef(getPos);
+  getPosRef.current = getPos;
 
   return {
     title,
@@ -764,18 +725,108 @@ function useAttachmentPointerDrag({
       if (!source) return;
       event.preventDefault();
       event.stopPropagation();
-      drag.current = {
+      const drag = {
         pointerId: event.pointerId,
         startX: event.clientX,
         startY: event.clientY,
         source,
         moved: false,
       };
+      let target: { element: HTMLElement; pos: number } | undefined;
+      const clearTarget = () => {
+        target?.element.classList.remove("attachment-drop-before", "attachment-drop-after");
+        target = undefined;
+      };
+      const clear = () => {
+        clearTarget();
+        drag.source.classList.remove("attachment-dragging");
+        document.body.classList.remove("moving-attachment");
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        window.removeEventListener("pointercancel", cancel);
+      };
+      const blockAt = (y: number) => {
+        const candidates = new Set<HTMLElement>([
+          ...Array.from(editor.view.dom.children).filter(
+            (element): element is HTMLElement => element instanceof HTMLElement,
+          ),
+          ...editor.view.dom.querySelectorAll<HTMLElement>(".attachment-node"),
+        ]);
+        const blocks = [...candidates]
+          .filter((element) => element !== drag.source && !element.contains(drag.source))
+          .map((element) => {
+            const bounds = element.getBoundingClientRect();
+            const distance =
+              y < bounds.top ? bounds.top - y : y > bounds.bottom ? y - bounds.bottom : 0;
+            return { element, bounds, distance };
+          });
+        const closest = blocks.sort((left, right) => left.distance - right.distance)[0];
+        if (!closest) return undefined;
+        const bounds = closest.bounds;
+        const after = y > bounds.top + bounds.height / 2;
+        let position: number | undefined;
+        try {
+          const start = editor.view.posAtDOM(closest.element, 0);
+          const node = editor.state.doc.nodeAt(start);
+          position = start + (after ? (node?.nodeSize ?? 0) : 0);
+        } catch {
+          position = editor.view.posAtCoords({
+            left: bounds.left + Math.min(12, bounds.width / 2),
+            top: after ? bounds.bottom - 2 : bounds.top + 2,
+          })?.pos;
+        }
+        if (position === undefined) return undefined;
+        return {
+          element: closest.element,
+          pos: position,
+          after,
+        };
+      };
+      const move = (pointerEvent: PointerEvent) => {
+        if (drag.pointerId !== pointerEvent.pointerId) return;
+        if (
+          !drag.moved &&
+          Math.hypot(pointerEvent.clientX - drag.startX, pointerEvent.clientY - drag.startY) >= 4
+        ) {
+          drag.moved = true;
+          drag.source.classList.add("attachment-dragging");
+          document.body.classList.add("moving-attachment");
+        }
+        if (!drag.moved) return;
+        pointerEvent.preventDefault();
+        const scroller = editor.view.dom.closest<HTMLElement>(".editor-scroll");
+        if (scroller) {
+          const bounds = scroller.getBoundingClientRect();
+          const edge = 48;
+          if (pointerEvent.clientY < bounds.top + edge) scroller.scrollBy({ top: -18 });
+          else if (pointerEvent.clientY > bounds.bottom - edge) scroller.scrollBy({ top: 18 });
+        }
+        const next = blockAt(pointerEvent.clientY);
+        if (!next) return;
+        clearTarget();
+        next.element.classList.add(next.after ? "attachment-drop-after" : "attachment-drop-before");
+        target = { element: next.element, pos: next.pos };
+      };
+      const up = (pointerEvent: PointerEvent) => {
+        if (drag.pointerId !== pointerEvent.pointerId) return;
+        const destination = target?.pos;
+        const position = typeof getPosRef.current === "function" ? getPosRef.current() : undefined;
+        const moved = drag.moved;
+        clear();
+        if (!moved || destination === undefined || typeof position !== "number") return;
+        moveAttachment(editor, position, destination);
+      };
+      const cancel = (pointerEvent: PointerEvent) => {
+        if (drag.pointerId === pointerEvent.pointerId) clear();
+      };
+      window.addEventListener("pointermove", move, { passive: false });
+      window.addEventListener("pointerup", up);
+      window.addEventListener("pointercancel", cancel);
       event.currentTarget.setPointerCapture(event.pointerId);
     },
     onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => {
       if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
-      const source = typeof getPos === "function" ? getPos() : undefined;
+      const source = typeof getPosRef.current === "function" ? getPosRef.current() : undefined;
       if (typeof source !== "number") return;
       event.preventDefault();
       moveAttachmentByKeyboard(editor, source, event.key === "ArrowUp" ? -1 : 1);
