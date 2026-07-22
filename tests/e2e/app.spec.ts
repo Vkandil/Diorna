@@ -266,7 +266,15 @@ test("moves a calendar event to another day in month view", async ({ page }) => 
     String(target.getMonth() + 1).padStart(2, "0"),
     String(target.getDate()).padStart(2, "0"),
   ].join("-");
-  await event.dragTo(page.locator(`[data-date="${targetDate}"]`));
+  const sourceBox = await event.boundingBox();
+  const targetBox = await page.locator(`[data-date="${targetDate}"]`).boundingBox();
+  if (!sourceBox || !targetBox) throw new Error("Calendar drag source or target is not visible");
+  await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+    steps: 8,
+  });
+  await page.mouse.up();
   await expect
     .poll(() =>
       event.evaluate((element) => element.closest<HTMLElement>("[data-date]")!.dataset.date),

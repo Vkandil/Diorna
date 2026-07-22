@@ -706,6 +706,15 @@ function MonthView({
   items: CalendarItem[];
 }) {
   const [dropDate, setDropDate] = useState<string>();
+  const [draggingId, setDraggingId] = useState<string>();
+  const pointerDrag = useRef<{
+    item: ItemOccurrence;
+    pointerId: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  }>();
+  const suppressOpen = useRef(false);
   const start = startOfWeek(startOfMonth(date), { weekStartsOn });
   const end = endOfWeek(endOfMonth(date), { weekStartsOn });
   const days = eachDayOfInterval({ start, end });
@@ -713,6 +722,66 @@ function MonthView({
     weekStartsOn === 1
       ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
       : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+  useEffect(() => {
+    const dateAt = (x: number, y: number) =>
+      document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-date]")?.dataset.date;
+
+    const clearDrag = () => {
+      pointerDrag.current = undefined;
+      setDraggingId(undefined);
+      setDropDate(undefined);
+    };
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = pointerDrag.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      if (
+        !drag.moved &&
+        Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= 4
+      ) {
+        drag.moved = true;
+        setDraggingId(drag.item.recurrenceId);
+      }
+      if (!drag.moved) return;
+      event.preventDefault();
+      setDropDate(dateAt(event.clientX, event.clientY));
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const drag = pointerDrag.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const targetDate = drag.moved ? dateAt(event.clientX, event.clientY) : undefined;
+      clearDrag();
+      if (!drag.moved || !targetDate) return;
+
+      suppressOpen.current = true;
+      requestAnimationFrame(() => {
+        suppressOpen.current = false;
+      });
+      const base = items.find((entry) => entry.id === drag.item.id);
+      if (!base) return;
+      const original = occurrenceDate(drag.item);
+      const moved = localDate(targetDate);
+      moved.setHours(original.getHours(), original.getMinutes(), 0, 0);
+      if (event.ctrlKey) onDuplicate(base, moved);
+      else onMove(drag.item, moved);
+    };
+
+    const handlePointerCancel = (event: PointerEvent) => {
+      if (pointerDrag.current?.pointerId === event.pointerId) clearDrag();
+    };
+
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", handlePointerUp);
+      window.removeEventListener("pointercancel", handlePointerCancel);
+    };
+  }, [items, onDuplicate, onMove]);
+
   return (
     <div
       className="month-grid"
@@ -732,59 +801,30 @@ function MonthView({
               key={day.toISOString()}
               data-date={dayKey}
               className={`${day.getMonth() !== date.getMonth() ? "outside" : ""} ${isSameDay(day, new Date()) ? "today" : ""} ${dropDate === dayKey ? "drop-target" : ""}`}
-              onDragEnter={(event) => {
-                event.preventDefault();
-                setDropDate(dayKey);
-              }}
-              onDragOver={(event) => {
-                event.preventDefault();
-                event.dataTransfer.dropEffect = event.ctrlKey ? "copy" : "move";
-                if (dropDate !== dayKey) setDropDate(dayKey);
-              }}
-              onDragLeave={(event) => {
-                if (!event.currentTarget.contains(event.relatedTarget as Node | null))
-                  setDropDate(undefined);
-              }}
-              onDrop={(event) => {
-                setDropDate(undefined);
-                const id = event.dataTransfer.getData("text/diorna-item");
-                const recurrenceId = event.dataTransfer.getData("text/diorna-occurrence");
-                const occurrence =
-                  occurrences.find((entry) => entry.recurrenceId === recurrenceId) ??
-                  occurrences.find((entry) => entry.id === id);
-                const base = items.find((entry) => entry.id === id);
-                if (!base) return;
-                const original = occurrence
-                  ? occurrenceDate(occurrence)
-                  : new Date(base.startAt ?? base.dueAt ?? day);
-                const moved = new Date(day);
-                moved.setHours(original.getHours(), original.getMinutes(), 0, 0);
-                if (event.ctrlKey) onDuplicate(base, moved);
-                else if (occurrence) onMove(occurrence, moved);
-                else
-                  onMove(
-                    {
-                      ...base,
-                      occurrenceStart: original.toISOString(),
-                      recurrenceId: `${base.id}:${original.toISOString()}`,
-                    },
-                    moved,
-                  );
-              }}
             >
               <span>{format(day, "d")}</span>
               {dayItems.slice(0, 4).map((item) => (
                 <button
-                  draggable
                   title={`Drag ${item.title} to another day`}
-                  onDragStart={(event) => {
-                    event.dataTransfer.setData("text/diorna-item", item.id);
-                    event.dataTransfer.setData("text/diorna-occurrence", item.recurrenceId);
-                    event.dataTransfer.effectAllowed = "copyMove";
+                  onPointerDown={(event) => {
+                    if (event.button !== 0 || !event.isPrimary) return;
+                    pointerDrag.current = {
+                      item,
+                      pointerId: event.pointerId,
+                      startX: event.clientX,
+                      startY: event.clientY,
+                      moved: false,
+                    };
+                    event.currentTarget.setPointerCapture(event.pointerId);
                   }}
-                  onDragEnd={() => setDropDate(undefined)}
-                  onClick={() => onOpen(item)}
-                  className={item.completedAt ? "complete" : ""}
+                  onClick={(event) => {
+                    if (suppressOpen.current) {
+                      event.preventDefault();
+                      return;
+                    }
+                    onOpen(item);
+                  }}
+                  className={`${item.completedAt ? "complete" : ""} ${draggingId === item.recurrenceId ? "dragging" : ""}`}
                   key={item.recurrenceId}
                   style={{ "--item": colorOf(categories, item.categoryId) } as React.CSSProperties}
                 >

@@ -3712,9 +3712,15 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: grab;
+  touch-action: none;
+  user-select: none;
 }
 .month-days button:active {
   cursor: grabbing;
+}
+.month-days button.dragging {
+  cursor: grabbing;
+  opacity: 0.55;
 }
 .month-days button svg {
   width: 10px;
