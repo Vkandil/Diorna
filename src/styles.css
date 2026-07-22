@@ -2511,11 +2511,89 @@ select {
 .map-module {
   display: grid;
   height: 100%;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.map-toolbar {
+  overflow-x: auto;
+  gap: 5px;
+  scrollbar-width: thin;
+}
+.map-toolbar > * {
+  flex: none;
+}
+.map-toolbar .map-search {
+  display: flex;
+  width: 150px;
+  align-items: center;
+  gap: 4px;
+}
+.map-toolbar .map-search input {
+  width: 126px;
+}
+.map-toolbar .grid-size {
+  width: 48px;
+}
+.map-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: var(--type-xs);
+  white-space: nowrap;
+}
+.map-breadcrumb {
+  display: flex;
+  min-width: 0;
+  height: 33px;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+.map-breadcrumb span {
+  display: flex;
+  align-items: center;
+}
+.map-breadcrumb svg {
+  width: 12px;
+  color: var(--text-muted);
+}
+.map-breadcrumb button {
+  padding: 3px 5px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+}
+.map-breadcrumb button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.map-breadcrumb input {
+  width: min(240px, 30vw);
+  height: 24px;
+  margin-left: 5px;
+  border-color: transparent;
+  background: transparent;
+  font-weight: 650;
+}
+.map-breadcrumb > label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: var(--type-xs);
+}
+.map-breadcrumb > label input {
+  width: 130px;
+  margin: 0;
+  font-weight: 400;
 }
 .canvas-wrap {
   position: relative;
   min-height: 0;
+  overflow: hidden;
 }
 .react-flow {
   background: var(--surface);
@@ -2525,6 +2603,25 @@ select {
   box-shadow: var(--shadow-sm);
   font-family: var(--font-ui);
 }
+.react-flow__node-diorna {
+  transition: box-shadow var(--motion);
+}
+.react-flow__node-diorna .react-flow__resize-control.handle {
+  width: 8px;
+  height: 8px;
+  border-color: var(--accent);
+  background: var(--surface-raised);
+}
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  opacity: 0;
+  transition: opacity var(--motion);
+}
+.react-flow__node:hover .react-flow__handle,
+.react-flow__node.selected .react-flow__handle {
+  opacity: 1;
+}
 .react-flow__node.selected {
   box-shadow:
     0 0 0 2px var(--accent),
@@ -2532,6 +2629,8 @@ select {
 }
 .canvas-card {
   height: 100%;
+  overflow: hidden;
+  border-radius: inherit;
   padding: 12px;
   text-align: left;
 }
@@ -2545,6 +2644,57 @@ select {
   color: #555a63;
   font-size: var(--type-sm);
   white-space: pre-wrap;
+}
+.canvas-markdown {
+  display: grid;
+  gap: 3px;
+  margin-top: 8px;
+  color: #555a63;
+  font-size: var(--type-sm);
+  white-space: pre-wrap;
+}
+.canvas-markdown > strong {
+  color: #30333a;
+}
+.canvas-markdown > strong.level-1 {
+  font-size: var(--type-md);
+}
+.canvas-markdown > span.bullet::before {
+  content: "• ";
+  color: var(--accent);
+}
+.canvas-markdown code {
+  border-radius: 3px;
+  background: rgb(0 0 0 / 7%);
+  padding: 1px 3px;
+  font-family: var(--font-mono);
+}
+.canvas-card > img {
+  display: block;
+  width: calc(100% + 24px);
+  height: calc(100% - 32px);
+  margin: 8px -12px -12px;
+  object-fit: contain;
+}
+.canvas-card .canvas-favicon {
+  display: block;
+  width: 16px;
+  height: 16px;
+  object-fit: contain;
+}
+.canvas-card small {
+  display: block;
+  overflow: hidden;
+  margin-top: 8px;
+  color: #555a63;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.canvas-card.type-group {
+  background: color-mix(in srgb, white 35%, transparent);
+}
+.canvas-card.collapsed {
+  padding-block: 10px;
 }
 .react-flow__controls,
 .react-flow__minimap {
@@ -2616,6 +2766,122 @@ select {
 }
 .floating-inspector svg {
   width: 14px;
+}
+.map-inspector {
+  position: absolute;
+  z-index: 8;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  width: 270px;
+  max-height: calc(100% - 70px);
+  gap: 8px;
+  overflow: auto;
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.map-inspector > header,
+.map-inspector > header > div,
+.map-inspector > label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.map-inspector > header {
+  justify-content: space-between;
+}
+.map-inspector > header button {
+  display: grid;
+  width: 27px;
+  height: 27px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+}
+.map-inspector > header button:hover {
+  background: var(--surface-hover);
+}
+.map-inspector svg {
+  width: 14px;
+}
+.map-inspector textarea {
+  min-height: 90px;
+  resize: vertical;
+}
+.map-inspector label {
+  color: var(--text-muted);
+  font-size: var(--type-xs);
+}
+.map-inspector label input:not([type="checkbox"]):not([type="range"]) {
+  min-width: 0;
+  flex: 1;
+}
+.map-inspector label input[type="range"] {
+  min-width: 70px;
+  flex: 1;
+}
+.node-palette {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 5px;
+}
+.node-palette button {
+  width: 27px;
+  height: 24px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+}
+.node-palette button.active {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.alignment-guide {
+  position: absolute;
+  z-index: 6;
+  background: var(--accent);
+  pointer-events: none;
+}
+.alignment-guide.vertical {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+.alignment-guide.horizontal {
+  right: 0;
+  left: 0;
+  height: 1px;
+}
+.map-module.presenting {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  grid-template-rows: minmax(0, 1fr);
+  background: var(--surface);
+}
+.map-module.presenting > .module-toolbar,
+.map-module.presenting > .map-breadcrumb {
+  display: none;
+}
+.presentation-controls {
+  position: absolute;
+  z-index: 12;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-md);
+}
+.presentation-controls button {
+  padding: 5px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
 }
 
 /* Calendar */

@@ -388,27 +388,59 @@ impl Vault {
         validate_canvas(&value)?;
         let pretty = serde_json::to_vec_pretty(&value)
             .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+        let parent_map_id = value
+            .get("diorna")
+            .and_then(|metadata| metadata.get("parentMapId"))
+            .and_then(serde_json::Value::as_str);
         let path = self
             .root
             .join(&workspace.folder_name)
             .join("maps")
             .join(&relative);
+        let existing = if let Some(map_id) = map_id {
+            sqlx::query("SELECT id, path FROM map WHERE id = ? AND workspace_id = ?")
+                .bind(map_id)
+                .bind(workspace_id)
+                .fetch_optional(&self.pool)
+                .await?
+        } else {
+            None
+        };
+        let old_path = existing.as_ref().and_then(|row| {
+            let old_relative =
+                safe_relative_path(Path::new(row.get::<String, _>("path").as_str())).ok()?;
+            Some(
+                self.root
+                    .join(&workspace.folder_name)
+                    .join("maps")
+                    .join(old_relative),
+            )
+        });
         atomic_write(&path, &pretty)?;
         let now = Utc::now().to_rfc3339();
-        let id = sqlx::query("SELECT id FROM map WHERE workspace_id = ? AND path = ?")
-            .bind(workspace_id)
-            .bind(relative.to_string_lossy().as_ref())
-            .fetch_optional(&self.pool)
-            .await?
-            .map(|row| row.get::<String, _>(0))
+        let id = existing
+            .map(|row| row.get::<String, _>("id"))
             .or_else(|| map_id.map(ToOwned::to_owned))
+            .or(
+                sqlx::query("SELECT id FROM map WHERE workspace_id = ? AND path = ?")
+                    .bind(workspace_id)
+                    .bind(relative.to_string_lossy().as_ref())
+                    .fetch_optional(&self.pool)
+                    .await?
+                    .map(|row| row.get::<String, _>(0)),
+            )
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let name = relative
             .file_stem()
             .and_then(|value| value.to_str())
             .unwrap_or("Untitled");
-        sqlx::query("INSERT INTO map(id, workspace_id, path, name, updated_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(workspace_id, path) DO UPDATE SET name=excluded.name, updated_at=excluded.updated_at")
-            .bind(&id).bind(workspace_id).bind(relative.to_string_lossy().as_ref()).bind(name).bind(&now).execute(&self.pool).await?;
+        sqlx::query("INSERT INTO map(id, workspace_id, path, name, parent_map_id, updated_at) VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET path=excluded.path, name=excluded.name, parent_map_id=excluded.parent_map_id, updated_at=excluded.updated_at")
+            .bind(&id).bind(workspace_id).bind(relative.to_string_lossy().as_ref()).bind(name).bind(parent_map_id).bind(&now).execute(&self.pool).await?;
+        if old_path.as_ref().is_some_and(|old| old != &path) {
+            if let Some(old) = old_path {
+                let _ = fs::remove_file(old);
+            }
+        }
         Ok(SavedFile {
             id,
             path: relative.to_string_lossy().into_owned(),
@@ -619,7 +651,16 @@ impl Vault {
                         .as_ref()
                         .map(|row| row.get("name"))
                         .unwrap_or(fallback_name),
-                    parent_map_id: database.as_ref().and_then(|row| row.get("parent_map_id")),
+                    parent_map_id: database
+                        .as_ref()
+                        .and_then(|row| row.get("parent_map_id"))
+                        .or_else(|| {
+                            content
+                                .get("diorna")
+                                .and_then(|metadata| metadata.get("parentMapId"))
+                                .and_then(serde_json::Value::as_str)
+                                .map(str::to_owned)
+                        }),
                     nodes: content
                         .get("nodes")
                         .cloned()
@@ -1018,6 +1059,54 @@ mod tests {
         assert!(content.notes[0].starred);
         assert_eq!(content.notes[0].properties["status"]["value"], "Active");
         assert_eq!(content.maps[0].id, "map-stable");
+    }
+
+    #[tokio::test]
+    async fn renames_canvas_files_while_preserving_the_map_id() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = Vault::open(directory.path().to_path_buf()).await.unwrap();
+        vault
+            .save_canvas(
+                Some("map-parent"),
+                "workspace-personal",
+                "Parent.canvas",
+                r#"{"nodes":[],"edges":[]}"#,
+            )
+            .await
+            .unwrap();
+        vault
+            .save_canvas(
+                Some("map-rename"),
+                "workspace-personal",
+                "Old.canvas",
+                r#"{"nodes":[],"edges":[]}"#,
+            )
+            .await
+            .unwrap();
+        let saved = vault
+            .save_canvas(
+                Some("map-rename"),
+                "workspace-personal",
+                "Folder/New.canvas",
+                r#"{"nodes":[],"edges":[],"diorna":{"parentMapId":"map-parent"}}"#,
+            )
+            .await
+            .unwrap();
+        assert_eq!(saved.id, "map-rename");
+        assert!(!directory.path().join("Personal/maps/Old.canvas").exists());
+        assert!(
+            directory
+                .path()
+                .join("Personal/maps/Folder/New.canvas")
+                .exists()
+        );
+        let content = vault.load_file_content().await.unwrap();
+        let renamed = content
+            .maps
+            .iter()
+            .find(|map| map.id == "map-rename")
+            .unwrap();
+        assert_eq!(renamed.parent_map_id.as_deref(), Some("map-parent"));
     }
 
     #[tokio::test]

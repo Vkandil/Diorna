@@ -227,7 +227,11 @@ export async function persistNativeCanvas(map: CanvasMap): Promise<void> {
     mapId: map.id,
     workspaceId: map.workspaceId,
     relativePath: map.path.replace(/^maps[\\/]/, ""),
-    canvasJson: JSON.stringify({ nodes: map.nodes, edges: map.edges }),
+    canvasJson: JSON.stringify({
+      nodes: map.nodes,
+      edges: map.edges,
+      diorna: { ...(map.parentMapId ? { parentMapId: map.parentMapId } : {}) },
+    }),
   });
 }
 

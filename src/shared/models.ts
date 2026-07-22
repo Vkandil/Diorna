@@ -205,6 +205,10 @@ export interface CanvasNode {
     borderColor?: string;
     borderWidth?: number;
     presentationOrder?: number;
+    linkTitle?: string;
+    linkDescription?: string;
+    favicon?: string;
+    linkFetchedAt?: ISODateTime;
   };
 }
 
