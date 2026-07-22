@@ -3308,6 +3308,12 @@ select {
   padding: 12px;
   text-align: left;
 }
+.react-flow__node-diorna {
+  cursor: grab;
+}
+.react-flow__node-diorna.dragging {
+  cursor: grabbing;
+}
 .canvas-card header {
   display: flex;
   align-items: center;
@@ -3318,6 +3324,9 @@ select {
 }
 .react-flow__node.dragging .canvas-card header {
   cursor: grabbing;
+}
+.canvas-card .nodrag {
+  cursor: auto;
 }
 .canvas-card p {
   margin: 8px 0 0;
@@ -3355,6 +3364,17 @@ select {
   height: calc(100% - 32px);
   margin: 8px -12px -12px;
   object-fit: contain;
+}
+.canvas-card.type-image {
+  padding: 0;
+}
+.canvas-card.type-image > .canvas-media {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-drag: none;
 }
 .canvas-card > video.canvas-media {
   background: #101114;

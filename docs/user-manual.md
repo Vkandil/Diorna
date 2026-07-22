@@ -45,9 +45,10 @@ or SVG. The file is Obsidian Canvas-compatible in `<workspace>\maps`.
 
 Images, videos, audio, PDFs, and other files can also be dropped directly from
 Explorer onto a map. Diorna copies them into the workspace `attachments` folder
-and creates resizable media nodes at the pointer position. Drag a media card by
-its title bar to move it; use its selection handles to resize it. Multiple files
-dropped together are arranged in a small grid instead of overlapping.
+and creates resizable media nodes at the pointer position. Drag an image directly
+from its surface; drag interactive video, audio, PDF, and file cards by their title
+bar. Use the selection handles to resize any media. Multiple files dropped together
+are arranged in a small grid instead of overlapping.
 
 ## Calendar and tasks
 

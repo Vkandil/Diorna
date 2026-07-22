@@ -142,29 +142,63 @@ test("drops, renders, moves, and restores media on a map", async ({ page }) => {
     );
   });
 
-  const imageNode = page.locator(".react-flow__node").filter({ hasText: "map-image.png" });
-  const videoNode = page.locator(".react-flow__node").filter({ hasText: "map-lecture.mp4" });
-  const audioNode = page.locator(".react-flow__node").filter({ hasText: "map-audio.mp3" });
-  const pdfNode = page.locator(".react-flow__node").filter({ hasText: "map-reading.pdf" });
-  await expect(imageNode.getByRole("img", { name: "map-image.png" })).toBeVisible();
+  const imageNode = page.locator(
+    '.react-flow__node:has(.canvas-card[data-media-name="map-image.png"])',
+  );
+  const videoNode = page.locator(
+    '.react-flow__node:has(.canvas-card[data-media-name="map-lecture.mp4"])',
+  );
+  const audioNode = page.locator(
+    '.react-flow__node:has(.canvas-card[data-media-name="map-audio.mp3"])',
+  );
+  const pdfNode = page.locator(
+    '.react-flow__node:has(.canvas-card[data-media-name="map-reading.pdf"])',
+  );
+  const image = imageNode.getByRole("img", { name: "map-image.png" });
+  await expect(image).toBeVisible();
+  await expect(image).toHaveAttribute("draggable", "false");
+  await expect(imageNode.getByText("map-image.png", { exact: true })).toHaveCount(0);
   await expect(videoNode.getByLabel("map-lecture.mp4")).toBeVisible();
   await expect(audioNode.getByLabel("map-audio.mp3")).toBeVisible();
   await expect(pdfNode.locator("iframe")).toBeVisible();
   await page.screenshot({ path: "test-results/map-media-drop.png", fullPage: true });
 
-  const before = await videoNode.evaluate((element) => (element as HTMLElement).style.transform);
-  const handle = videoNode.locator("header");
-  const box = await handle.boundingBox();
-  if (!box) throw new Error("Map media drag handle has no bounding box");
+  const before = await imageNode.evaluate((element) => (element as HTMLElement).style.transform);
+  const box = await image.boundingBox();
+  if (!box) throw new Error("Map image has no bounding box");
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
   await page.mouse.down();
   await page.mouse.move(box.x + box.width / 2 + 96, box.y + box.height / 2 + 64, { steps: 8 });
   await page.mouse.up();
   await expect
-    .poll(() => videoNode.evaluate((element) => (element as HTMLElement).style.transform))
+    .poll(() => imageNode.evaluate((element) => (element as HTMLElement).style.transform))
     .not.toBe(before);
+  await expect(page.locator(".canvas-wrap")).not.toHaveClass(/native-drop-active/);
 
-  await imageNode.locator("header").click();
+  const existingNode = page.locator(".react-flow__node").filter({ hasText: "Stretching" });
+  const existingBefore = await existingNode.evaluate(
+    (element) => (element as HTMLElement).style.transform,
+  );
+  const existingHandle = existingNode.locator("header");
+  const existingBox = await existingHandle.boundingBox();
+  if (!existingBox) throw new Error("Existing map node has no drag handle");
+  await page.mouse.move(
+    existingBox.x + existingBox.width / 2,
+    existingBox.y + existingBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    existingBox.x + existingBox.width / 2 + 64,
+    existingBox.y + existingBox.height / 2 - 48,
+    { steps: 8 },
+  );
+  await page.mouse.up();
+  await expect
+    .poll(() => existingNode.evaluate((element) => (element as HTMLElement).style.transform))
+    .not.toBe(existingBefore);
+  await expect(page.locator(".canvas-wrap")).not.toHaveClass(/native-drop-active/);
+
+  await imageNode.locator(".canvas-card").click();
   const resizeHandle = imageNode.locator(".react-flow__resize-control.handle.bottom.right");
   await expect(resizeHandle).toBeVisible();
   const sizeBefore = await imageNode.boundingBox();
@@ -186,15 +220,14 @@ test("drops, renders, moves, and restores media on a map", async ({ page }) => {
 
   await page.reload();
   const restoredImage = page
-    .locator(".react-flow__node")
-    .filter({ hasText: "map-image.png" })
+    .locator('.react-flow__node:has(.canvas-card[data-media-name="map-image.png"])')
     .getByRole("img", { name: "map-image.png" });
   await expect(restoredImage).toBeVisible();
   await expect
     .poll(() => restoredImage.evaluate((element) => (element as HTMLImageElement).naturalWidth))
     .toBeGreaterThan(0);
   await expect(
-    page.locator(".react-flow__node").filter({ hasText: "map-lecture.mp4" }),
+    page.locator('.react-flow__node:has(.canvas-card[data-media-name="map-lecture.mp4"])'),
   ).toBeVisible();
 });
 

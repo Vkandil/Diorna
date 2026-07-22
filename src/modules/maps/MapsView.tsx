@@ -532,6 +532,18 @@ function CanvasEditor({
   }, [presentationIndex, presentationNodes, presenting]);
 
   useEffect(() => {
+    const clearNativeDropState = () => setNativeDropActive(false);
+    window.addEventListener("dragend", clearNativeDropState);
+    window.addEventListener("drop", clearNativeDropState);
+    window.addEventListener("blur", clearNativeDropState);
+    return () => {
+      window.removeEventListener("dragend", clearNativeDropState);
+      window.removeEventListener("drop", clearNativeDropState);
+      window.removeEventListener("blur", clearNativeDropState);
+    };
+  }, []);
+
+  useEffect(() => {
     const paste = (event: ClipboardEvent) => {
       const target = event.target as HTMLElement;
       if (target.matches("input, textarea") || target.isContentEditable) return;
@@ -568,9 +580,12 @@ function CanvasEditor({
           };
           const target = document.elementFromPoint(point.x, point.y);
           const inside = Boolean(target && canvasRef.current?.contains(target));
-          setNativeDropActive(inside);
-          if (event.payload.type !== "drop" || !inside) return;
+          if (event.payload.type === "over") {
+            setNativeDropActive(inside);
+            return;
+          }
           setNativeDropActive(false);
+          if (event.payload.type !== "drop" || !inside) return;
           const position = flowRef.current?.screenToFlowPosition(point);
           void Promise.all(
             event.payload.paths.map((path) => importNativeAttachmentFile(map.workspaceId, path)),
@@ -835,6 +850,7 @@ function CanvasEditor({
       <div
         className={`canvas-wrap ${nativeDropActive ? "native-drop-active" : ""}`}
         ref={canvasRef}
+        onPointerDownCapture={() => setNativeDropActive(false)}
       >
         <ReactFlow<MapFlowNode, Edge>
           nodes={nodes}
@@ -1442,19 +1458,30 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
           id={`target-${position}`}
         />
       ))}
-      <div className={`canvas-card type-${type} ${node.diorna?.collapsed ? "collapsed" : ""}`}>
-        <header>
-          <span>
-            {type === "link" && node.diorna?.favicon ? (
-              <img className="canvas-favicon" src={node.diorna.favicon} alt="" />
-            ) : (
-              (node.diorna?.icon ?? nodeIcon(type))
-            )}
-          </span>
-          <strong>{title}</strong>
-        </header>
+      <div
+        className={`canvas-card type-${type} ${node.diorna?.collapsed ? "collapsed" : ""}`}
+        data-media-name={isMapMediaType(type) ? title : undefined}
+      >
+        {type !== "image" && (
+          <header>
+            <span>
+              {type === "link" && node.diorna?.favicon ? (
+                <img className="canvas-favicon" src={node.diorna.favicon} alt="" />
+              ) : (
+                (node.diorna?.icon ?? nodeIcon(type))
+              )}
+            </span>
+            <strong>{title}</strong>
+          </header>
+        )}
         {!node.diorna?.collapsed && type === "image" && mediaSource && (
-          <img className="canvas-media" src={mediaSource} alt={title} />
+          <img
+            className="canvas-media"
+            src={mediaSource}
+            alt={title}
+            draggable={false}
+            onDragStart={(event) => event.preventDefault()}
+          />
         )}
         {!node.diorna?.collapsed && type === "video" && mediaSource && (
           <video
@@ -1554,7 +1581,6 @@ function toFlowNode(node: CanvasNode, notes: DiornaNote[]): MapFlowNode {
       zIndex: node.diorna?.nodeType === "group" ? -1 : 0,
     },
     draggable: !node.diorna?.locked,
-    dragHandle: ".canvas-card > header",
   };
 }
 
