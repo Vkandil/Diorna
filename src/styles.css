@@ -2049,6 +2049,100 @@ select {
 .print-export {
   display: none;
 }
+.pdf-render-document {
+  position: fixed;
+  z-index: -1;
+  top: 0;
+  left: -100000px;
+  display: block;
+  width: 794px;
+  min-height: 1123px;
+  padding: 64px 60px;
+  background: #fff;
+  color: #171717;
+  font:
+    15px/1.55 Georgia,
+    serif;
+}
+.pdf-render-document .print-title-page {
+  display: flex;
+  min-height: 980px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.pdf-render-document .print-title-page > span {
+  color: #5b5bd6;
+  font:
+    700 14px/1 Inter,
+    sans-serif;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.pdf-render-document .print-title-page h1 {
+  margin: 36px 0 12px;
+  font-size: 42px;
+}
+.pdf-render-document .print-title-page time {
+  margin-top: 72px;
+  color: #666;
+}
+.pdf-render-document .print-toc,
+.pdf-render-document .print-note {
+  padding: 32px 0;
+}
+.pdf-render-document .print-toc > div {
+  display: grid;
+  gap: 2px;
+  margin: 12px 0;
+}
+.pdf-render-document .print-note h1 {
+  font:
+    700 32px/1.2 Inter,
+    sans-serif;
+}
+.pdf-render-document table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.pdf-render-document td,
+.pdf-render-document th {
+  border: 1px solid #aaa;
+  padding: 6px;
+}
+.print-attachment {
+  margin: 16px auto;
+  text-align: center;
+}
+.print-attachment.align-left {
+  margin-right: auto;
+  margin-left: 0;
+}
+.print-attachment.align-right {
+  margin-right: 0;
+  margin-left: auto;
+}
+.print-attachment img {
+  max-width: 100%;
+  max-height: 760px;
+}
+.print-attachment-card {
+  border: 1px solid #bbb;
+  border-radius: 6px;
+  background: #f5f5f5;
+  padding: 18px;
+  color: #444;
+  font:
+    600 12px/1.4 Inter,
+    sans-serif;
+  text-align: left;
+}
+.print-attachment figcaption {
+  margin-top: 6px;
+  color: #666;
+  font-size: 12px;
+}
 .mention-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -2895,7 +2989,7 @@ select {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 13px;
+  padding: 13px 13px 13px 28px;
 }
 .attachment-node.placeholder > svg {
   color: var(--text-muted);
@@ -2913,28 +3007,97 @@ select {
   border-radius: var(--radius-sm);
   background: var(--surface);
 }
-.attachment-node.image {
+.attachment-node.media {
+  position: relative;
   padding: 8px;
   text-align: center;
 }
-.attachment-node.image img {
+.attachment-node.media img {
   max-width: 100%;
   max-height: 620px;
 }
 
-.attachment-node.image.align-left {
+.attachment-node.align-left {
   margin-right: auto;
   margin-left: 0;
 }
 
-.attachment-node.image.align-center {
+.attachment-node.align-center {
   margin-right: auto;
   margin-left: auto;
 }
 
-.attachment-node.image.align-right {
+.attachment-node.align-right {
   margin-right: 0;
   margin-left: auto;
+}
+
+.attachment-drag-handle {
+  position: absolute;
+  z-index: 3;
+  top: 8px;
+  left: -30px;
+  display: grid;
+  width: 26px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+  transition:
+    opacity var(--motion),
+    background var(--motion);
+}
+.attachment-node.placeholder .attachment-drag-handle {
+  top: 50%;
+  left: 2px;
+  transform: translateY(-50%);
+}
+.attachment-node:hover > .attachment-drag-handle,
+.attachment-node.selected > .attachment-drag-handle,
+.attachment-drag-handle:focus-visible {
+  opacity: 1;
+}
+.attachment-drag-handle:hover {
+  border-color: var(--border);
+  background: var(--surface-raised);
+}
+.attachment-drag-handle svg {
+  width: 16px;
+}
+.moving-attachment,
+.moving-attachment * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}
+.attachment-node.attachment-dragging {
+  opacity: 0.42;
+}
+.prose-editor > .attachment-drop-before::before,
+.prose-editor > .attachment-drop-after::after {
+  position: absolute;
+  z-index: 5;
+  right: 0;
+  left: 0;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--accent);
+  content: "";
+  pointer-events: none;
+}
+.prose-editor > .attachment-drop-before::before {
+  top: -7px;
+}
+.prose-editor > .attachment-drop-after::after {
+  bottom: -7px;
+}
+.prose-editor > .attachment-drop-before,
+.prose-editor > .attachment-drop-after {
+  position: relative;
 }
 
 .attachment-controls {
@@ -2960,7 +3123,7 @@ select {
   border-color: var(--accent);
   color: var(--accent);
 }
-.attachment-node.image input {
+.attachment-node.media > input {
   display: block;
   width: 100%;
   border: 0;

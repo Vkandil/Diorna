@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Node, mergeAttributes, nodeInputRule } from "@tiptap/core";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import {
@@ -28,6 +28,7 @@ import {
   FileImage,
   FileText,
   FileVideo,
+  GripVertical,
   Layers3,
 } from "lucide-react";
 import "katex/dist/katex.min.css";
@@ -430,7 +431,7 @@ export const AttachmentBlock = Node.create({
   name: "attachmentBlock",
   group: "block",
   atom: true,
-  draggable: true,
+  draggable: false,
   addAttributes() {
     return {
       kind: { default: "file" },
@@ -459,8 +460,9 @@ export const AttachmentBlock = Node.create({
   },
 });
 
-function AttachmentView({ node, updateAttributes, selected }: NodeViewProps) {
+function AttachmentView({ node, updateAttributes, selected, editor, getPos }: NodeViewProps) {
   const kind = String(node.attrs.kind);
+  const dragHandle = useAttachmentPointerDrag({ editor, getPos, title: String(node.attrs.title) });
   const Icon =
     kind === "image"
       ? FileImage
@@ -477,62 +479,78 @@ function AttachmentView({ node, updateAttributes, selected }: NodeViewProps) {
     return (
       <NodeViewWrapper
         as="figure"
-        className={`attachment-node image align-${node.attrs.align} ${selected ? "selected" : ""}`}
+        className={`attachment-node media image align-${node.attrs.align} ${selected ? "selected" : ""}`}
         style={{ width: `${node.attrs.width}%` }}
       >
+        <AttachmentDragHandle {...dragHandle} />
         <img src={node.attrs.src} alt={node.attrs.caption || node.attrs.title} />
         {selected && (
-          <div className="attachment-controls" contentEditable={false}>
-            <input
-              aria-label="Image width"
-              type="range"
-              min="20"
-              max="100"
-              value={node.attrs.width}
-              onInput={(event) =>
-                updateAttributes({ width: Number((event.target as HTMLInputElement).value) })
-              }
-            />
-            {(["left", "center", "right"] as const).map((align) => (
-              <button
-                key={align}
-                aria-label={`Align image ${align}`}
-                className={node.attrs.align === align ? "active" : ""}
-                onClick={() => updateAttributes({ align })}
-              >
-                {align[0]!.toUpperCase()}
-              </button>
-            ))}
-          </div>
+          <AttachmentControls
+            kind="Image"
+            width={Number(node.attrs.width)}
+            align={String(node.attrs.align)}
+            updateAttributes={updateAttributes}
+          />
         )}
-        <input
-          value={node.attrs.caption}
-          onChange={(event) => updateAttributes({ caption: event.target.value })}
-          placeholder="Add a caption…"
-        />
+        <AttachmentCaption value={String(node.attrs.caption)} updateAttributes={updateAttributes} />
       </NodeViewWrapper>
     );
   if (kind === "video" && node.attrs.src)
     return (
-      <NodeViewWrapper className="attachment-node">
+      <NodeViewWrapper
+        as="figure"
+        className={`attachment-node media video align-${node.attrs.align} ${selected ? "selected" : ""}`}
+        style={{ width: `${node.attrs.width}%` }}
+      >
+        <AttachmentDragHandle {...dragHandle} />
         <video controls src={node.attrs.src} />
+        {selected && (
+          <AttachmentControls
+            kind="Video"
+            width={Number(node.attrs.width)}
+            align={String(node.attrs.align)}
+            updateAttributes={updateAttributes}
+          />
+        )}
+        <AttachmentCaption value={String(node.attrs.caption)} updateAttributes={updateAttributes} />
       </NodeViewWrapper>
     );
   if (kind === "audio" && node.attrs.src)
     return (
-      <NodeViewWrapper className="attachment-node">
+      <NodeViewWrapper
+        as="figure"
+        className={`attachment-node media audio align-${node.attrs.align} ${selected ? "selected" : ""}`}
+        style={{ width: `${node.attrs.width}%` }}
+      >
+        <AttachmentDragHandle {...dragHandle} />
         <audio controls src={node.attrs.src} />
+        <AttachmentCaption value={String(node.attrs.caption)} updateAttributes={updateAttributes} />
       </NodeViewWrapper>
     );
   if (kind === "pdf" && node.attrs.src)
     return (
-      <NodeViewWrapper className="attachment-node pdf">
+      <NodeViewWrapper
+        as="figure"
+        className={`attachment-node media pdf align-${node.attrs.align} ${selected ? "selected" : ""}`}
+        style={{ width: `${node.attrs.width}%` }}
+      >
+        <AttachmentDragHandle {...dragHandle} />
         <iframe title={node.attrs.title} src={node.attrs.src} />
         <span>PDF · Select text in the viewer to quote it into this note.</span>
+        {selected && (
+          <AttachmentControls
+            kind="PDF"
+            width={Number(node.attrs.width)}
+            align={String(node.attrs.align)}
+            updateAttributes={updateAttributes}
+          />
+        )}
+        <AttachmentCaption value={String(node.attrs.caption)} updateAttributes={updateAttributes} />
       </NodeViewWrapper>
     );
   return (
     <NodeViewWrapper className={`attachment-node placeholder ${selected ? "selected" : ""}`}>
+      <AttachmentDragHandle {...dragHandle} />
       <Icon />
       <span>
         <strong>{node.attrs.title}</strong>
@@ -561,6 +579,233 @@ function AttachmentView({ node, updateAttributes, selected }: NodeViewProps) {
       </button>
     </NodeViewWrapper>
   );
+}
+
+function AttachmentCaption({
+  value,
+  updateAttributes,
+}: {
+  value: string;
+  updateAttributes: NodeViewProps["updateAttributes"];
+}) {
+  return (
+    <input
+      value={value}
+      onChange={(event) => updateAttributes({ caption: event.target.value })}
+      placeholder="Add a caption…"
+    />
+  );
+}
+
+function AttachmentControls({
+  kind,
+  width,
+  align,
+  updateAttributes,
+}: {
+  kind: string;
+  width: number;
+  align: string;
+  updateAttributes: NodeViewProps["updateAttributes"];
+}) {
+  return (
+    <div className="attachment-controls" contentEditable={false}>
+      <input
+        aria-label={`${kind} width`}
+        type="range"
+        min="20"
+        max="100"
+        value={width}
+        onInput={(event) =>
+          updateAttributes({ width: Number((event.target as HTMLInputElement).value) })
+        }
+      />
+      {(["left", "center", "right"] as const).map((value) => (
+        <button
+          key={value}
+          aria-label={`Align ${kind.toLocaleLowerCase()} ${value}`}
+          className={align === value ? "active" : ""}
+          onClick={() => updateAttributes({ align: value })}
+        >
+          {value[0]!.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AttachmentDragHandle({
+  title,
+  onPointerDown,
+  onKeyDown,
+}: {
+  title: string;
+  onPointerDown: React.PointerEventHandler<HTMLButtonElement>;
+  onKeyDown: React.KeyboardEventHandler<HTMLButtonElement>;
+}) {
+  return (
+    <button
+      type="button"
+      className="attachment-drag-handle"
+      aria-label={`Move ${title} block`}
+      title="Drag to move · Alt+↑/↓ to move with the keyboard"
+      contentEditable={false}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+    >
+      <GripVertical />
+    </button>
+  );
+}
+
+function useAttachmentPointerDrag({
+  editor,
+  getPos,
+  title,
+}: Pick<NodeViewProps, "editor" | "getPos"> & { title: string }) {
+  const drag = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    source: HTMLElement;
+    moved: boolean;
+  }>();
+  const target = useRef<{ element: HTMLElement; pos: number }>();
+
+  useEffect(() => {
+    const clearTarget = () => {
+      target.current?.element.classList.remove("attachment-drop-before", "attachment-drop-after");
+      target.current = undefined;
+    };
+    const clear = () => {
+      clearTarget();
+      drag.current?.source.classList.remove("attachment-dragging");
+      drag.current = undefined;
+      document.body.classList.remove("moving-attachment");
+    };
+    const blockAt = (y: number) => {
+      const blocks: Array<{ element: HTMLElement; pos: number; size: number; distance: number }> =
+        [];
+      let index = 0;
+      editor.state.doc.forEach((node, pos) => {
+        const element = editor.view.dom.children.item(index);
+        index += 1;
+        if (!(element instanceof HTMLElement) || element === drag.current?.source) return;
+        const bounds = element.getBoundingClientRect();
+        const distance =
+          y < bounds.top ? bounds.top - y : y > bounds.bottom ? y - bounds.bottom : 0;
+        blocks.push({ element, pos, size: node.nodeSize, distance });
+      });
+      const closest = blocks.sort((left, right) => left.distance - right.distance)[0];
+      if (!closest) return undefined;
+      const bounds = closest.element.getBoundingClientRect();
+      const after = y > bounds.top + bounds.height / 2;
+      return {
+        element: closest.element,
+        pos: closest.pos + (after ? closest.size : 0),
+        after,
+      };
+    };
+    const move = (event: PointerEvent) => {
+      const current = drag.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      if (
+        !current.moved &&
+        Math.hypot(event.clientX - current.startX, event.clientY - current.startY) >= 4
+      ) {
+        current.moved = true;
+        current.source.classList.add("attachment-dragging");
+        document.body.classList.add("moving-attachment");
+      }
+      if (!current.moved) return;
+      event.preventDefault();
+      const scroller = editor.view.dom.closest<HTMLElement>(".editor-scroll");
+      if (scroller) {
+        const bounds = scroller.getBoundingClientRect();
+        const edge = 48;
+        if (event.clientY < bounds.top + edge) scroller.scrollBy({ top: -18 });
+        else if (event.clientY > bounds.bottom - edge) scroller.scrollBy({ top: 18 });
+      }
+      const next = blockAt(event.clientY);
+      clearTarget();
+      if (!next) return;
+      next.element.classList.add(next.after ? "attachment-drop-after" : "attachment-drop-before");
+      target.current = { element: next.element, pos: next.pos };
+    };
+    const up = (event: PointerEvent) => {
+      const current = drag.current;
+      if (!current || current.pointerId !== event.pointerId) return;
+      const destination = target.current?.pos;
+      const source = typeof getPos === "function" ? getPos() : undefined;
+      const moved = current.moved;
+      clear();
+      if (!moved || destination === undefined || typeof source !== "number") return;
+      moveAttachment(editor, source, destination);
+    };
+    const cancel = (event: PointerEvent) => {
+      if (drag.current?.pointerId === event.pointerId) clear();
+    };
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", cancel);
+    return () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", cancel);
+      clear();
+    };
+  }, [editor, getPos]);
+
+  return {
+    title,
+    onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (event.button !== 0 || !event.isPrimary) return;
+      const source = event.currentTarget.closest<HTMLElement>(".attachment-node");
+      if (!source) return;
+      event.preventDefault();
+      event.stopPropagation();
+      drag.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        source,
+        moved: false,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (!event.altKey || (event.key !== "ArrowUp" && event.key !== "ArrowDown")) return;
+      const source = typeof getPos === "function" ? getPos() : undefined;
+      if (typeof source !== "number") return;
+      event.preventDefault();
+      moveAttachmentByKeyboard(editor, source, event.key === "ArrowUp" ? -1 : 1);
+    },
+  };
+}
+
+function moveAttachment(editor: NodeViewProps["editor"], source: number, destination: number) {
+  const node = editor.state.doc.nodeAt(source);
+  if (!node) return;
+  let insertAt = destination;
+  if (insertAt > source) insertAt -= node.nodeSize;
+  if (insertAt === source) return;
+  const transaction = editor.state.tr.delete(source, source + node.nodeSize);
+  insertAt = Math.max(0, Math.min(insertAt, transaction.doc.content.size));
+  editor.view.dispatch(transaction.insert(insertAt, node).scrollIntoView());
+}
+
+function moveAttachmentByKeyboard(
+  editor: NodeViewProps["editor"],
+  source: number,
+  direction: -1 | 1,
+) {
+  const blocks: Array<{ pos: number; size: number }> = [];
+  editor.state.doc.forEach((node, offset) => blocks.push({ pos: offset, size: node.nodeSize }));
+  const index = blocks.findIndex((block) => block.pos === source);
+  if (index < 0) return;
+  const neighbour = blocks[index + direction];
+  if (!neighbour) return;
+  moveAttachment(editor, source, direction < 0 ? neighbour.pos : neighbour.pos + neighbour.size);
 }
 
 function attachmentKind(name: string): "image" | "video" | "audio" | "pdf" | "file" {

@@ -27,6 +27,14 @@ Again, Hard, Good, and Easy to schedule SM-2 intervals. Import BibTeX or CSL
 JSON and format references as APA, IEEE, or Harvard. A deadline property creates
 and synchronises a Calendar task.
 
+Drop images, videos, audio files, or PDFs from Explorer directly at the desired
+editor position; Diorna copies them into the workspace `attachments` folder and
+keeps the note link portable. Hover a media block and drag its six-dot handle to
+move it like a Notion block (or focus the handle and press `Alt+↑` / `Alt+↓`).
+Selecting an image, video, or PDF exposes width and alignment controls. Use the
+download action to export the current note, folder, or course as Markdown or as
+a directly saved PDF; printing remains available separately.
+
 ## Maps
 
 Maps are manually arranged spatial canvases, never automatic note graphs.

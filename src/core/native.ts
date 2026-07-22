@@ -354,13 +354,7 @@ export async function readNativeFileContent(): Promise<
 export async function persistNativeNote(note: Note): Promise<void> {
   if (!isTauri()) return;
   await enqueueNativeSave(`note:${note.id}`, async () => {
-    const document = new DOMParser().parseFromString(note.body, "text/html");
-    for (const media of document.querySelectorAll<HTMLElement>(
-      "figure[data-type='attachment'], figure[data-type='attachment'] img, figure[data-type='attachment'] video, figure[data-type='attachment'] audio, figure[data-type='attachment'] iframe",
-    )) {
-      if (media.dataset.relativePath) media.setAttribute("src", media.dataset.relativePath);
-    }
-    const markdown = turndown.turndown(document.body.innerHTML);
+    const markdown = turndown.turndown(portableNoteHtml(note.body));
     try {
       const saved = await invoke<{ hash: string }>("save_note", {
         input: {
@@ -442,6 +436,32 @@ export async function exportMarkdownNotes(notes: Note[], exportName: string): Pr
   if (typeof destination === "string") await invoke("export_text_bundle", { destination, files });
 }
 
+export async function exportBinaryFile(
+  defaultName: string,
+  bytes: Uint8Array,
+  filter: { name: string; extensions: string[] },
+): Promise<boolean> {
+  if (!isTauri()) {
+    const buffer = new Uint8Array(bytes).buffer;
+    const url = URL.createObjectURL(new Blob([buffer], { type: "application/pdf" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = safeFileName(defaultName);
+    anchor.click();
+    URL.revokeObjectURL(url);
+    return true;
+  }
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const path = await save({ defaultPath: safeFileName(defaultName), filters: [filter] });
+  if (!path) return false;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  await invoke("export_binary_file", { path, dataBase64: btoa(binary) });
+  return true;
+}
+
 async function noteToMarkdown(note: Note): Promise<string> {
   const { stringify } = await import("yaml");
   const metadata = stringify({
@@ -453,7 +473,17 @@ async function noteToMarkdown(note: Note): Promise<string> {
     created: note.createdAt,
     updated: note.updatedAt,
   }).trim();
-  return `---\n${metadata}\n---\n\n${turndown.turndown(note.body)}\n`;
+  return `---\n${metadata}\n---\n\n${turndown.turndown(portableNoteHtml(note.body))}\n`;
+}
+
+function portableNoteHtml(html: string): string {
+  const document = new DOMParser().parseFromString(html, "text/html");
+  for (const media of document.querySelectorAll<HTMLElement>(
+    "figure[data-type='attachment'], figure[data-type='attachment'] img, figure[data-type='attachment'] video, figure[data-type='attachment'] audio, figure[data-type='attachment'] iframe",
+  )) {
+    if (media.dataset.relativePath) media.setAttribute("src", media.dataset.relativePath);
+  }
+  return document.body.innerHTML;
 }
 
 function safeFileName(value: string): string {

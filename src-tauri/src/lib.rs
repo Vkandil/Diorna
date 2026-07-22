@@ -302,6 +302,7 @@ async fn import_attachment(
     name: String,
     source_path: Option<String>,
     data_base64: Option<String>,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<SavedAttachment> {
     let vault = state.get_vault()?;
@@ -326,6 +327,9 @@ async fn import_attachment(
         ));
     };
     storage::atomic_write(&destination, &bytes)?;
+    app.asset_protocol_scope()
+        .allow_file(&destination)
+        .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
     Ok(SavedAttachment {
         relative_path: format!(
             "attachments/{}",
@@ -337,6 +341,23 @@ async fn import_attachment(
         absolute_path: destination.to_string_lossy().into_owned(),
         size: bytes.len() as u64,
     })
+}
+
+fn allow_existing_attachments(
+    app: &AppHandle,
+    root: &std::path::Path,
+    workspaces: &[WorkspaceRecord],
+) -> Result<()> {
+    let scope = app.asset_protocol_scope();
+    for workspace in workspaces {
+        let attachments = root.join(&workspace.folder_name).join("attachments");
+        if attachments.is_dir() {
+            scope
+                .allow_directory(attachments, true)
+                .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+        }
+    }
+    Ok(())
 }
 
 fn directory_size(path: &std::path::Path) -> u64 {
@@ -370,7 +391,11 @@ fn copy_directory(source: &std::path::Path, destination: &std::path::Path) -> Re
 }
 
 #[tauri::command]
-async fn initialise_vault(path: String, state: State<'_, AppState>) -> Result<VaultStatus> {
+async fn initialise_vault(
+    path: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<VaultStatus> {
     let root = PathBuf::from(path);
     remember_vault_path(&root)?;
     let database_existed = root.join(".app").join("index.db").exists();
@@ -381,6 +406,7 @@ async fn initialise_vault(path: String, state: State<'_, AppState>) -> Result<Va
         vault.rebuild_file_index().await?
     };
     let workspaces = vault.workspaces().await?;
+    allow_existing_attachments(&app, &root, &workspaces)?;
     lifecycle::purge_expired_trash(&vault).await?;
     *state.vault.write() = Some(vault);
     Ok(VaultStatus {
@@ -391,7 +417,10 @@ async fn initialise_vault(path: String, state: State<'_, AppState>) -> Result<Va
 }
 
 #[tauri::command]
-async fn initialise_default_vault(state: State<'_, AppState>) -> Result<VaultStatus> {
+async fn initialise_default_vault(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<VaultStatus> {
     let root = preferred_vault_path()?;
     let database_existed = root.join(".app").join("index.db").exists();
     let vault = Vault::open(root.clone()).await?;
@@ -401,6 +430,7 @@ async fn initialise_default_vault(state: State<'_, AppState>) -> Result<VaultSta
         vault.rebuild_file_index().await?
     };
     let workspaces = vault.workspaces().await?;
+    allow_existing_attachments(&app, &root, &workspaces)?;
     lifecycle::purge_expired_trash(&vault).await?;
     *state.vault.write() = Some(vault);
     Ok(VaultStatus {
@@ -848,6 +878,16 @@ fn export_text_file(path: String, content: String) -> Result<String> {
 }
 
 #[tauri::command]
+fn export_binary_file(path: String, data_base64: String) -> Result<String> {
+    let path = PathBuf::from(path);
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(data_base64)
+        .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+    storage::atomic_write(&path, &bytes)?;
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
 fn export_text_bundle(destination: String, files: Vec<TextExportFile>) -> Result<String> {
     let destination = PathBuf::from(destination);
     std::fs::create_dir_all(&destination)?;
@@ -931,6 +971,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_persisted_scope::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::Builder::new().build())
@@ -998,6 +1039,7 @@ pub fn run() {
             load_file_content,
             list_note_revisions,
             export_text_file,
+            export_binary_file,
             export_text_bundle,
             set_close_to_tray,
             set_start_with_windows,

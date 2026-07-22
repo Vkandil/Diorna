@@ -10,7 +10,10 @@ The workspace UI includes nested folder and tag browsers, pinned saved
 searches, boolean/field queries, replacement previews with undo, typed
 frontmatter properties, course assignment, a filtered read-only graph, live
 wiki-link completion, revision diffs/restoration, and note/folder/course
-Markdown and print-to-PDF export. Native saves preserve stable IDs and metadata,
+Markdown, direct PDF, and print export. Explorer drops and clipboard pastes copy
+media into the workspace, render it through Tauri's scoped asset protocol, and
+expose pointer/keyboard block reordering plus media sizing and alignment. Native
+saves preserve stable IDs and metadata,
 move renamed files, index tags/properties, and retain the newest 50 revisions
 plus every revision from the last 30 days.
 

@@ -343,6 +343,9 @@ test("organises, annotates, searches, and revises notes", async ({ page }) => {
   await page.getByRole("button", { name: "Export note" }).click();
   await expect(page.getByRole("dialog", { name: "Export notes" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Export Markdown" })).toBeVisible();
+  const pdfDownload = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export PDF" }).click();
+  await expect((await pdfDownload).suggestedFilename()).toMatch(/Research plan\.pdf$/);
   await page.getByRole("button", { name: "Close export" }).click();
   await page.getByRole("button", { name: "Revision history" }).click();
   await expect(page.getByRole("complementary", { name: "Revision history" })).toBeVisible();
@@ -554,6 +557,32 @@ test("pastes a screenshot into a portable attachment block", async ({ page }) =>
       }),
     );
   });
-  await expect(page.locator(".attachment-node.pdf iframe")).toBeVisible();
-  await expect(page.locator(".attachment-node video")).toBeVisible();
+  const pdf = page.locator(".attachment-node.pdf");
+  const video = page.locator(".attachment-node.video");
+  await expect(pdf.locator("iframe")).toBeVisible();
+  await expect(video.locator("video")).toBeVisible();
+  await pdf.locator("iframe").evaluate((element) => {
+    element.style.height = "120px";
+  });
+  const handle = video.getByLabel("Move lecture.mp4 block");
+  await handle.scrollIntoViewIfNeeded();
+  const handleBox = await handle.boundingBox();
+  const pdfBox = await pdf.boundingBox();
+  if (!handleBox || !pdfBox) throw new Error("Attachment drag source or target is not visible");
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(pdfBox.x + pdfBox.width / 2, pdfBox.y + 4, { steps: 8 });
+  await expect(page.locator("body")).toHaveClass(/moving-attachment/);
+  await expect(page.locator(".attachment-drop-before")).toHaveCount(1);
+  await page.mouse.up();
+  await expect
+    .poll(() =>
+      video.evaluate((node) => {
+        const target = document.querySelector(".attachment-node.pdf");
+        return Boolean(
+          target && node.compareDocumentPosition(target) & Node.DOCUMENT_POSITION_FOLLOWING,
+        );
+      }),
+    )
+    .toBe(true);
 });

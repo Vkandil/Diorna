@@ -1,8 +1,8 @@
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import katex from "katex";
-import { Download, FileText, Printer, X } from "lucide-react";
-import { exportMarkdownNotes } from "@/core/native";
+import { Download, FileText, LoaderCircle, Printer, X } from "lucide-react";
+import { exportBinaryFile, exportMarkdownNotes } from "@/core/native";
 import type { Course, Note, ReferenceRecord } from "@/shared/models";
 import { citationKeys, formatReference, type CitationStyle } from "@/modules/student/bibliography";
 import { extractOutline } from "./logic";
@@ -26,6 +26,8 @@ export function NoteExportDialog({
   const [titlePage, setTitlePage] = useState(true);
   const [tableOfContents, setTableOfContents] = useState(true);
   const [pageNumbers, setPageNumbers] = useState(true);
+  const [exportingPdf, setExportingPdf] = useState(false);
+  const exportRootId = useId();
   const course = courses.find((entry) => entry.id === note.courseId);
   const folder = noteFolder(note.path);
   const selected = useMemo(() => {
@@ -44,6 +46,61 @@ export function NoteExportDialog({
     document.body.classList.add("printing-notes");
     window.addEventListener("afterprint", clear);
     window.setTimeout(() => window.print(), 50);
+  };
+  const exportPdf = async () => {
+    const source = document.getElementById(exportRootId);
+    if (!source || exportingPdf) return;
+    setExportingPdf(true);
+    const clone = source.cloneNode(true) as HTMLElement;
+    clone.removeAttribute("id");
+    clone.classList.add("pdf-render-document");
+    document.body.append(clone);
+    try {
+      const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+        import("html2canvas"),
+        import("jspdf"),
+      ]);
+      await Promise.all(
+        [...clone.querySelectorAll("img")].map(
+          (image) =>
+            new Promise<void>((resolve) => {
+              if (image.complete) resolve();
+              else {
+                image.addEventListener("load", () => resolve(), { once: true });
+                image.addEventListener("error", () => resolve(), { once: true });
+              }
+            }),
+        ),
+      );
+      const canvas = await html2canvas(clone, {
+        backgroundColor: "#ffffff",
+        scale: 1.5,
+        useCORS: true,
+        logging: false,
+      });
+      const pdf = new jsPDF({ unit: "pt", format: "a4", orientation: "portrait" });
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const renderedHeight = (canvas.height * pageWidth) / canvas.width;
+      const image = canvas.toDataURL("image/jpeg", 0.92);
+      let offset = 0;
+      pdf.addImage(image, "JPEG", 0, offset, pageWidth, renderedHeight, undefined, "FAST");
+      for (let remaining = renderedHeight - pageHeight; remaining > 0; remaining -= pageHeight) {
+        offset -= pageHeight;
+        pdf.addPage();
+        pdf.addImage(image, "JPEG", 0, offset, pageWidth, renderedHeight, undefined, "FAST");
+      }
+      await exportBinaryFile(
+        `${exportName ?? "Diorna export"}.pdf`,
+        new Uint8Array(pdf.output("arraybuffer")),
+        { name: "PDF document", extensions: ["pdf"] },
+      );
+    } catch (error) {
+      window.alert(`Unable to export PDF: ${String(error)}`);
+    } finally {
+      clone.remove();
+      setExportingPdf(false);
+    }
   };
   return (
     <>
@@ -117,14 +174,23 @@ export function NoteExportDialog({
             >
               <FileText size={14} /> Export Markdown
             </button>
-            <button className="button primary" onClick={print}>
-              <Printer size={14} /> Print / save PDF
+            <button className="button" onClick={print}>
+              <Printer size={14} /> Print
+            </button>
+            <button
+              className="button primary"
+              disabled={exportingPdf}
+              onClick={() => void exportPdf()}
+            >
+              {exportingPdf ? <LoaderCircle className="spin" size={14} /> : <Download size={14} />}
+              {exportingPdf ? "Creating PDF…" : "Export PDF"}
             </button>
           </footer>
         </section>
       </div>
       {createPortal(
         <PrintDocument
+          id={exportRootId}
           title={exportName ?? "Diorna export"}
           notes={selected}
           titlePage={titlePage}
@@ -140,6 +206,7 @@ export function NoteExportDialog({
 }
 
 function PrintDocument({
+  id,
   title,
   notes,
   titlePage,
@@ -148,6 +215,7 @@ function PrintDocument({
   references,
   course,
 }: {
+  id: string;
   title: string;
   notes: Note[];
   titlePage: boolean;
@@ -157,7 +225,7 @@ function PrintDocument({
   course?: Course;
 }) {
   return (
-    <section className={`print-export ${pageNumbers ? "with-page-numbers" : ""}`}>
+    <section id={id} className={`print-export ${pageNumbers ? "with-page-numbers" : ""}`}>
       {titlePage && (
         <header className="print-title-page">
           <span>Diorna</span>
@@ -204,6 +272,33 @@ function PrintDocument({
 
 function renderExportHtml(html: string, references: ReferenceRecord[]): string {
   const document = new DOMParser().parseFromString(html, "text/html");
+  document.querySelectorAll<HTMLElement>('figure[data-type="attachment"]').forEach((element) => {
+    const kind = element.getAttribute("kind") ?? "file";
+    const source = element.getAttribute("src") ?? "";
+    const title = element.getAttribute("title") ?? "Attachment";
+    const caption = element.getAttribute("caption") ?? "";
+    const width = Math.max(20, Math.min(100, Number(element.getAttribute("width")) || 100));
+    const align = element.getAttribute("align") ?? "center";
+    element.replaceChildren();
+    element.className = `print-attachment ${kind} align-${align}`;
+    element.style.width = `${width}%`;
+    if (kind === "image" && source) {
+      const image = document.createElement("img");
+      image.src = source;
+      image.alt = caption || title;
+      element.append(image);
+    } else {
+      const card = document.createElement("div");
+      card.className = "print-attachment-card";
+      card.textContent = `${kind.toLocaleUpperCase()} · ${title}`;
+      element.append(card);
+    }
+    if (caption) {
+      const legend = document.createElement("figcaption");
+      legend.textContent = caption;
+      element.append(legend);
+    }
+  });
   const keys = citationKeys(document.body.textContent ?? "");
   const cited = references.filter((reference) => keys.has(reference.citationKey.toLowerCase()));
   document.querySelectorAll<HTMLElement>('[data-type="reference-list"]').forEach((element) => {
