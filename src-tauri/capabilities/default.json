@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Diorna desktop window permissions",
+  "windows": ["main", "quick-capture"],
+  "permissions": [
+    "core:default",
+    "dialog:default",
+    "fs:default",
+    "global-shortcut:default",
+    "notification:default",
+    "opener:default",
+    "updater:default",
+    "autostart:default"
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Diorna",
+  "version": "0.1.0",
+  "identifier": "io.diorna.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Diorna",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "resizable": true,
+        "center": true,
+        "decorations": true,
+        "transparent": false,
+        "dragDropEnabled": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost data: blob: https:; media-src 'self' asset: http://asset.localhost blob: https:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; script-src 'self'; connect-src 'self' ipc: http://ipc.localhost http://localhost:11434 https:"
+    },
+    "withGlobalTauri": false
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["msi", "nsis"],
+    "category": "Productivity",
+    "copyright": "Copyright © 2026 Diorna Contributors",
+    "shortDescription": "Local-first knowledge and productivity suite",
+    "longDescription": "Notes, authored maps, calendar, habits, metrics, and factual recaps in one private Windows application.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "fileAssociations": [
+      {
+        "ext": ["md"],
+        "name": "Markdown document",
+        "description": "Markdown note",
+        "role": "Editor"
+      },
+      {
+        "ext": ["canvas"],
+        "name": "Canvas document",
+        "description": "Obsidian Canvas map",
+        "role": "Editor"
+      }
+    ],
+    "windows": {
+      "webviewInstallMode": { "type": "embedBootstrapper", "silent": true },
+      "allowDowngrades": false,
+      "nsis": {
+        "installMode": "both",
+        "displayLanguageSelector": true,
+        "languages": ["English", "French"]
+      },
+      "wix": { "language": ["en-US", "fr-FR"] }
+    },
+    "licenseFile": "../LICENSE"
+  }
+}
