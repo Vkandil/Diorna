@@ -14,6 +14,7 @@ import {
 } from "@/core/native";
 import { QuickCapture } from "@/components/QuickCapture";
 import i18n from "@/i18n";
+import { generateDueAutomaticRecaps } from "@/modules/recap/automatic";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }> {
   state: { error?: Error } = {};
@@ -88,6 +89,7 @@ export default function App() {
             await persistNativeStructuredState(structuredSnapshot(state));
           }
         }
+        if (useDiornaStore.getState().onboardingComplete) await generateDueAutomaticRecaps();
       })
       .catch((error: unknown) => console.error("Unable to initialise the native vault", error));
   }, []);

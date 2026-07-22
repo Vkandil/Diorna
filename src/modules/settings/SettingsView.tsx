@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   ArchiveRestore,
   ArrowDown,
@@ -32,6 +32,7 @@ import {
 } from "@/core/native";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md?raw";
 import projectLicense from "../../../LICENSE?raw";
+import { listOllamaModels } from "@/modules/recap/summarizer";
 
 const sections = [
   ["general", "General", UserRound],
@@ -53,6 +54,20 @@ export function SettingsView() {
   const state = useDiornaStore();
   const [active, setActive] = useState("general");
   const [query, setQuery] = useState("");
+  const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [ollamaStatus, setOllamaStatus] = useState<"idle" | "checking" | "ready" | "offline">(
+    "idle",
+  );
+  useEffect(() => {
+    if (state.settings.recapProvider !== "local") return;
+    setOllamaStatus("checking");
+    void listOllamaModels()
+      .then((models) => {
+        setOllamaModels(models);
+        setOllamaStatus(models.length ? "ready" : "offline");
+      })
+      .catch(() => setOllamaStatus("offline"));
+  }, [state.settings.recapProvider]);
   const visible = useMemo(
     () => sections.filter(([, label]) => label.toLowerCase().includes(query.toLowerCase())),
     [query],
@@ -80,13 +95,18 @@ export function SettingsView() {
           <span className="eyebrow">Preferences</span>
           <h1>{sections.find(([id]) => id === active)?.[1]}</h1>
         </header>
-        {renderSection(active, state)}
+        {renderSection(active, state, ollamaModels, ollamaStatus)}
       </div>
     </div>
   );
 }
 
-function renderSection(active: string, state: ReturnType<typeof useDiornaStore.getState>) {
+function renderSection(
+  active: string,
+  state: ReturnType<typeof useDiornaStore.getState>,
+  ollamaModels: string[],
+  ollamaStatus: "idle" | "checking" | "ready" | "offline",
+) {
   if (active === "appearance")
     return (
       <SettingsGroup
@@ -351,9 +371,48 @@ function renderSection(active: string, state: ReturnType<typeof useDiornaStore.g
           </Field>
           <Field label="Model">
             <input
+              list="ollama-models"
               value={state.settings.recapModel}
               onChange={(event) => state.updateSettings({ recapModel: event.target.value })}
               placeholder="Provider model identifier"
+            />
+            <datalist id="ollama-models">
+              {ollamaModels.map((model) => (
+                <option key={model} value={model} />
+              ))}
+            </datalist>
+            {state.settings.recapProvider === "local" && (
+              <small>
+                {ollamaStatus === "checking"
+                  ? "Checking localhost:11434…"
+                  : ollamaStatus === "ready"
+                    ? `${ollamaModels.length} installed model${ollamaModels.length === 1 ? "" : "s"} detected`
+                    : "Ollama is not running or has no installed models."}
+              </small>
+            )}
+          </Field>
+          <Field label="Temperature">
+            <input
+              type="number"
+              min="0"
+              max="2"
+              step="0.1"
+              value={state.settings.recapTemperature}
+              onChange={(event) =>
+                state.updateSettings({ recapTemperature: Number(event.target.value) })
+              }
+            />
+          </Field>
+          <Field label="Maximum tokens">
+            <input
+              type="number"
+              min="256"
+              max="16000"
+              step="128"
+              value={state.settings.recapMaxTokens}
+              onChange={(event) =>
+                state.updateSettings({ recapMaxTokens: Number(event.target.value) })
+              }
             />
           </Field>
           <Field label="API key">
@@ -361,7 +420,13 @@ function renderSection(active: string, state: ReturnType<typeof useDiornaStore.g
               type="password"
               placeholder="Stored with Windows DPAPI"
               onBlur={(event) => {
-                void storeNativeApiKey("openrouter", event.currentTarget.value);
+                let provider = "openrouter";
+                try {
+                  provider = new URL(state.settings.recapEndpoint).host || provider;
+                } catch {
+                  // Keep the default identifier until the endpoint is valid.
+                }
+                void storeNativeApiKey(provider, event.currentTarget.value);
                 event.currentTarget.value = "";
               }}
             />

@@ -110,13 +110,14 @@ export function averageScoreByWeekday(
   entries: HabitEntry[],
   start: ISODate,
   end: ISODate,
+  includeArchived = false,
 ): Array<number | null> {
   const buckets = Array.from({ length: 7 }, () => [] as number[]);
   for (const day of eachDayOfInterval({
     start: parseISO(start),
     end: parseISO(end),
   })) {
-    const score = completionScore(habits, entries, dateKey(day));
+    const score = completionScore(habits, entries, dateKey(day), includeArchived);
     if (score !== null) buckets[day.getDay()]?.push(score);
   }
   return buckets.map((scores) =>

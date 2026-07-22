@@ -4722,6 +4722,61 @@ select {
   color: var(--accent);
   font-weight: 600;
 }
+.recap-generator {
+  display: flex;
+  max-width: 900px;
+  min-height: 58px;
+  align-items: end;
+  gap: 12px;
+  margin: 0 auto 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  padding: 10px 12px;
+}
+.recap-generator > label,
+.recap-custom-range label {
+  display: grid;
+  gap: 3px;
+}
+.recap-generator label > span {
+  color: var(--text-muted);
+  font-size: 9px;
+  font-weight: 650;
+  text-transform: uppercase;
+}
+.recap-custom-range {
+  display: flex;
+  gap: 6px;
+}
+.recap-generator .combined-recap-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto;
+  padding-bottom: 7px;
+}
+.recap-generation-progress {
+  display: grid;
+  max-width: 900px;
+  gap: 5px;
+  margin: 0 auto 14px;
+  color: var(--text-muted);
+  font-size: var(--type-xs);
+}
+.recap-generation-progress > i {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--surface-sunken);
+}
+.recap-generation-progress b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
 .recap-timeline {
   position: relative;
   max-width: 900px;
@@ -4872,6 +4927,9 @@ article.ready .timeline-dot {
 .negative {
   color: var(--danger);
 }
+.neutral {
+  color: var(--text-muted);
+}
 .recap-document section {
   margin: 42px 0;
 }
@@ -4900,6 +4958,25 @@ article.ready .timeline-dot {
 }
 .chart-card h3 {
   font-size: var(--type-sm);
+}
+.metric-progress-chart {
+  grid-column: 1 / -1;
+}
+.recap-score-heatmap {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 5px;
+  padding: 10px 2px;
+}
+.recap-score-heatmap i {
+  display: grid;
+  aspect-ratio: 1;
+  place-items: center;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--accent) var(--score), var(--surface-sunken));
+  color: var(--text-secondary);
+  font-style: normal;
+  font-size: 9px;
 }
 .empty-chart {
   display: grid;
@@ -4950,11 +5027,29 @@ article.ready .timeline-dot {
   margin: 4px 0 0;
   color: var(--text-secondary);
 }
+.trend-columns ul {
+  margin: 5px 0 0;
+  padding-left: 18px;
+  color: var(--text-secondary);
+}
 .recap-document > footer {
   padding-top: 14px;
   border-top: 1px solid var(--border);
   color: var(--text-muted);
   font-size: var(--type-xs);
+}
+.app-toast {
+  position: fixed;
+  z-index: 100;
+  right: 22px;
+  bottom: 22px;
+  max-width: 360px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-raised);
+  padding: 11px 14px;
+  box-shadow: var(--shadow-md);
+  color: var(--text);
 }
 
 /* Settings */

@@ -1,5 +1,5 @@
 import { eachDayOfInterval, formatISO, parseISO } from "date-fns";
-import { completionScore, habitStatistics } from "@/modules/daily/logic";
+import { averageScoreByWeekday, completionScore, habitStatistics } from "@/modules/daily/logic";
 import { longestReviewStreak } from "@/modules/student/flashcards";
 import type {
   CalendarItem,
@@ -31,6 +31,81 @@ export interface RecapInput {
   reviewLogs: ReviewLog[];
   courses: Course[];
   categoryNames: Record<string, string>;
+}
+
+export function recapTransmissionPayload(
+  stats: RecapStatistics,
+  aggregatesOnly: boolean,
+): RecapStatistics {
+  if (!aggregatesOnly) return structuredClone(stats);
+  const habitNames = new Map(
+    (stats.habits.rates ?? []).map((habit, index) => [habit.name, `Habit ${index + 1}`]),
+  );
+  const redactCategories = (values: Record<string, number>) =>
+    Object.fromEntries(
+      Object.values(values).map((value, index) => [`Category ${index + 1}`, value]),
+    );
+  return {
+    ...structuredClone(stats),
+    workspaceId: "redacted",
+    habits: {
+      ...stats.habits,
+      ...(stats.habits.best
+        ? {
+            best: {
+              ...stats.habits.best,
+              name: habitNames.get(stats.habits.best.name) ?? "Habit",
+            },
+          }
+        : {}),
+      ...(stats.habits.worst
+        ? {
+            worst: {
+              ...stats.habits.worst,
+              name: habitNames.get(stats.habits.worst.name) ?? "Habit",
+            },
+          }
+        : {}),
+      rates: (stats.habits.rates ?? []).map((habit, index) => ({
+        ...habit,
+        name: `Habit ${index + 1}`,
+      })),
+    },
+    metrics: stats.metrics.map((metric, index) => ({
+      ...metric,
+      name: `Metric ${index + 1}`,
+      unit: "units",
+    })),
+    tasks: {
+      ...stats.tasks,
+      byCategory: redactCategories(stats.tasks.byCategory),
+    },
+    ...(stats.events
+      ? {
+          events: {
+            ...stats.events,
+            byCategory: redactCategories(stats.events.byCategory),
+          },
+        }
+      : {}),
+    notes: {
+      ...stats.notes,
+      titles: [],
+      tags: {},
+      courses: {},
+    },
+    flashcards: { ...stats.flashcards, courses: [] },
+    ...(stats.monthlyRecaps
+      ? {
+          monthlyRecaps: stats.monthlyRecaps.map((month) => ({
+            ...month,
+            metrics: Object.fromEntries(
+              Object.values(month.metrics).map((value, index) => [`Metric ${index + 1}`, value]),
+            ),
+          })),
+        }
+      : {}),
+  };
 }
 
 const inRange = (value: string | undefined, start: string, end: string) =>
@@ -91,6 +166,7 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
         absoluteChange: round(last - first),
         percentChange: first === 0 ? null : round(((last - first) / Math.abs(first)) * 100),
         personalRecord: last === Math.max(...allBeforeEnd.map((entry) => entry.value)),
+        values: current.map((entry) => ({ date: entry.date, value: entry.value })),
       },
     ];
   });
@@ -109,6 +185,17 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
   const onTime = completedItems.filter(
     (item) => !item.dueAt || (item.completedAt && item.completedAt <= item.dueAt),
   ).length;
+  const attendedEvents = input.items.filter(
+    (item) =>
+      item.kind === "event" &&
+      !item.trashedAt &&
+      inRange(item.startAt, input.periodStart, input.periodEnd),
+  );
+  const eventsByCategory: Record<string, number> = {};
+  attendedEvents.forEach((item) => {
+    const category = input.categoryNames[item.categoryId] ?? "Other";
+    eventsByCategory[category] = (eventsByCategory[category] ?? 0) + 1;
+  });
 
   const createdNotes = input.notes.filter((note) =>
     inRange(note.createdAt, input.periodStart, input.periodEnd),
@@ -129,6 +216,13 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
   const cardsById = new Map(input.flashcards.map((card) => [card.id, card]));
   const notesById = new Map(input.notes.map((note) => [note.id, note]));
   const courseNamesById = new Map(input.courses.map((course) => [course.id, course.name]));
+  const noteTags: Record<string, number> = {};
+  const noteCourses: Record<string, number> = {};
+  createdNotes.forEach((note) => {
+    note.tags.forEach((tag) => (noteTags[tag] = (noteTags[tag] ?? 0) + 1));
+    const course = note.courseId ? courseNamesById.get(note.courseId) : undefined;
+    if (course) noteCourses[course] = (noteCourses[course] ?? 0) + 1;
+  });
   const reviewedCourses = [
     ...new Set(
       reviewed.flatMap((log) => {
@@ -167,6 +261,19 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
             },
           }
         : {}),
+      rates: habitStats.map((stat) => ({
+        name: habitById.get(stat.habitId)?.name ?? "Habit",
+        rate: stat.rate,
+        currentStreak: stat.currentStreak,
+        longestStreak: stat.longestStreak,
+      })),
+      weekdayAverages: averageScoreByWeekday(
+        input.habits,
+        input.habitEntries,
+        input.periodStart,
+        input.periodEnd,
+        true,
+      ),
     },
     metrics,
     tasks: {
@@ -176,11 +283,17 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
       overdue: completedItems.length - onTime,
       byCategory,
     },
+    events: {
+      attended: attendedEvents.length,
+      byCategory: eventsByCategory,
+    },
     notes: {
       created: createdNotes.length,
       edited: editedNotes.length,
       wordsWritten: createdNotes.reduce((sum, note) => sum + note.wordCount, 0),
       titles: createdNotes.map((note) => note.title),
+      tags: noteTags,
+      courses: noteCourses,
     },
     maps: {
       created: input.maps.filter((map) =>
@@ -216,13 +329,23 @@ export function buildTemplateNarrative(stats: RecapStatistics, workspaceName: st
       `**${metric.name}: ${metric.absoluteChange >= 0 ? "progress" : "decline"}.** ${metric.first} → ${metric.last} ${metric.unit}${metric.percentChange === null ? "" : ` (${signed(metric.percentChange)}%)`}.${metric.personalRecord ? " This is a new personal record." : ""}`,
   );
   const taskDelta = stats.tasks.completed - stats.tasks.previousCompleted;
+  const categoryLines = Object.entries(stats.tasks.byCategory).map(
+    ([category, count]) =>
+      `**${category}.** ${count} completed task${count === 1 ? "" : "s"} in this category.`,
+  );
+  const eventLines = Object.entries(stats.events?.byCategory ?? {}).map(
+    ([category, count]) =>
+      `**${category} events.** ${count} attended event${count === 1 ? "" : "s"} in this category.`,
+  );
   const habitLine =
     stats.habits.overallRate === null
       ? "**Habits.** No applicable habits were tracked in this period."
-      : `**Habits.** Overall completion was ${stats.habits.overallRate}%${habitDelta === null ? "" : `, ${habitDelta >= 0 ? "up" : "down"} ${Math.abs(habitDelta)} points`}. ${stats.habits.best ? `Strongest: ${stats.habits.best.name} at ${stats.habits.best.rate}%.` : ""}${stats.habits.worst ? ` Weakest: ${stats.habits.worst.name} at ${stats.habits.worst.rate}%.` : ""}`;
+      : `**Habits.** Overall completion was ${stats.habits.overallRate}%${habitDelta === null ? "" : habitDelta === 0 ? ", unchanged from the previous period" : `, ${habitDelta > 0 ? "up" : "down"} ${Math.abs(habitDelta)} points`}. ${stats.habits.best ? `Strongest: ${stats.habits.best.name} at ${stats.habits.best.rate}%.` : ""}${stats.habits.worst ? ` Weakest: ${stats.habits.worst.name} at ${stats.habits.worst.rate}%.` : ""}`;
   return [
     `# ${stats.periodStart} to ${stats.periodEnd} — ${workspaceName}`,
     `**Tasks.** You completed ${stats.tasks.completed} task${stats.tasks.completed === 1 ? "" : "s"}, ${Math.abs(taskDelta)} ${taskDelta >= 0 ? "more" : "fewer"} than the previous period. ${stats.tasks.onTime} were completed on time.`,
+    ...categoryLines,
+    ...eventLines,
     ...metricLines,
     habitLine,
     `**Knowledge work.** You created ${stats.notes.created} notes, edited ${stats.notes.edited}, and added ${stats.notes.wordsWritten} words. You created ${stats.maps.created} maps containing ${stats.maps.nodesCreated} nodes.`,

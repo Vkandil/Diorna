@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   aggregateRecap,
   buildTemplateNarrative,
+  recapTransmissionPayload,
   validateNarrativeNumbers,
   type RecapInput,
 } from "@/modules/recap/logic";
@@ -122,6 +123,10 @@ describe("recap aggregation and factual validation", () => {
       percentChange: 11.1,
       personalRecord: true,
     });
+    expect(stats.metrics[0]?.values).toEqual([
+      { date: "2026-09-01", value: 72 },
+      { date: "2026-09-30", value: 80 },
+    ]);
   });
   it("computes task distribution and timeliness", () => {
     const stats = aggregateRecap(base);
@@ -147,6 +152,54 @@ describe("recap aggregation and factual validation", () => {
     const stats = aggregateRecap(base);
     expect(stats.habits.overallRate).toBe(7);
     expect(stats.habits.best).toEqual({ name: "Training", rate: 7 });
+    expect(stats.habits.rates?.[0]).toMatchObject({ name: "Training", rate: 7 });
+    expect(stats.habits.weekdayAverages).toHaveLength(7);
+  });
+  it("aggregates attended events and note classification signals", () => {
+    const stats = aggregateRecap({
+      ...base,
+      items: [
+        ...base.items,
+        {
+          ...base.items[0]!,
+          id: "event-1",
+          kind: "event",
+          startAt: "2026-09-12T09:00:00Z",
+          completedAt: undefined,
+          categoryId: "sport",
+        } as (typeof base.items)[number],
+      ],
+      notes: [{ ...base.notes[0]!, tags: ["project", "launch"], courseId: "course-1" }],
+      courses: [
+        {
+          id: "course-1",
+          workspaceId: "personal",
+          name: "Systems",
+          code: "SYS",
+          color: "#4455aa",
+          semester: "Autumn",
+          instructor: "Ada",
+          credits: 5,
+          schedule: "Tuesday",
+          sortOrder: 0,
+        },
+      ],
+    });
+    expect(stats.events).toEqual({ attended: 1, byCategory: { Sport: 1 } });
+    expect(stats.notes.tags).toEqual({ project: 1, launch: 1 });
+    expect(stats.notes.courses).toEqual({ Systems: 1 });
+  });
+  it("redacts note titles from aggregate-only transmission payloads", () => {
+    const stats = aggregateRecap(base);
+    const redacted = recapTransmissionPayload(stats, true);
+    expect(redacted.notes.titles).toEqual([]);
+    expect(redacted.workspaceId).toBe("redacted");
+    expect(redacted.habits.rates?.[0]?.name).toBe("Habit 1");
+    expect(redacted.metrics[0]).toMatchObject({ name: "Metric 1", unit: "units" });
+    expect(redacted.tasks.byCategory).toEqual({ "Category 1": 1 });
+    expect(redacted.notes.tags).toEqual({});
+    expect(stats.notes.titles).toEqual(["Project"]);
+    expect(recapTransmissionPayload(stats, false)).toEqual(stats);
   });
   it("produces one daily score per day", () =>
     expect(aggregateRecap(base).dailyScores).toHaveLength(30));

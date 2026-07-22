@@ -151,6 +151,24 @@ test("creates a deterministic recap and stores it as a note", async ({ page }) =
     page.getByText("Every figure below is traceable to local statistics."),
   ).toBeVisible();
   await expect(page.getByText("deterministic-template", { exact: false })).toBeVisible();
+  await expect(page.getByText(/revision 1/)).toBeVisible();
+  await page.getByRole("button", { name: "Regenerate" }).click();
+  await expect(page.getByText(/revision 2/)).toBeVisible();
+  await page.getByRole("button", { name: "← Timeline" }).click();
+  await page.getByRole("button", { name: "Year", exact: true }).click();
+  await page.getByText("Combine all workspaces").click();
+  await page.getByRole("button", { name: "Generate now" }).click();
+  await expect(
+    page.getByText("Every figure below is traceable to local statistics."),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/yearly-recap.png", fullPage: true });
+  await page.getByRole("button", { name: "← Timeline" }).click();
+  await expect(page.getByText("All workspaces", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Custom", exact: true }).click();
+  await page.getByLabel("Start").fill("2026-07-01");
+  await page.getByLabel("End").fill("2026-07-03");
+  await page.getByRole("button", { name: "Generate now" }).click();
+  await expect(page.getByText(/Jul 1, 2026/)).toBeVisible();
 });
 
 test("plans, recurs, completes, and reloads a calendar item", async ({ page }) => {

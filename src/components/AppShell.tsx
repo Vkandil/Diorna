@@ -87,6 +87,7 @@ export function AppShell() {
   const [captureOpen, setCaptureOpen] = useState(false);
   const [draggedTab, setDraggedTab] = useState<string>();
   const [coachVisible, setCoachVisible] = useState(false);
+  const [toast, setToast] = useState<string>();
   const workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId)!;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -157,6 +158,19 @@ export function AppShell() {
     }
     setCoachVisible(localStorage.getItem(`diorna-coach-${state.activeModule}`) !== "seen");
   }, [state.activeModule]);
+  useEffect(() => {
+    let timer = 0;
+    const showToast = (event: Event) => {
+      setToast((event as CustomEvent<string>).detail);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setToast(undefined), 4_000);
+    };
+    window.addEventListener("diorna-toast", showToast);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener("diorna-toast", showToast);
+    };
+  }, []);
   return (
     <div
       className={`app-shell ${state.sidebarOpen ? "" : "sidebar-collapsed"} ${state.rightPanelOpen ? "" : "right-collapsed"}`}
@@ -284,6 +298,11 @@ export function AppShell() {
       </aside>
       {state.commandPaletteOpen && <CommandPalette />}
       {captureOpen && <QuickCapture onClose={() => setCaptureOpen(false)} />}
+      {toast && (
+        <div className="app-toast" role="status">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }

@@ -251,6 +251,13 @@ export interface RecapStatistics {
     previousRate: number | null;
     best?: { name: string; rate: number };
     worst?: { name: string; rate: number };
+    rates?: Array<{
+      name: string;
+      rate: number | null;
+      currentStreak: number;
+      longestStreak: number;
+    }>;
+    weekdayAverages?: Array<number | null>;
   };
   metrics: Array<{
     name: string;
@@ -260,6 +267,7 @@ export interface RecapStatistics {
     absoluteChange: number;
     percentChange: number | null;
     personalRecord: boolean;
+    values?: Array<{ date: ISODate; value: number }>;
   }>;
   tasks: {
     completed: number;
@@ -268,11 +276,17 @@ export interface RecapStatistics {
     overdue: number;
     byCategory: Record<string, number>;
   };
+  events?: {
+    attended: number;
+    byCategory: Record<string, number>;
+  };
   notes: {
     created: number;
     edited: number;
     wordsWritten: number;
     titles: string[];
+    tags?: Record<string, number>;
+    courses?: Record<string, number>;
   };
   maps: { created: number; nodesCreated: number };
   flashcards: {
@@ -282,6 +296,12 @@ export interface RecapStatistics {
     courses: string[];
   };
   dailyScores: Array<{ date: ISODate; score: number | null }>;
+  monthlyRecaps?: Array<{
+    periodStart: ISODate;
+    habitRate: number | null;
+    tasksCompleted: number;
+    metrics: Record<string, number>;
+  }>;
 }
 
 export interface Recap {
@@ -326,6 +346,8 @@ export interface AppSettings {
   recapProvider: "none" | "remote" | "local";
   recapEndpoint: string;
   recapModel: string;
+  recapTemperature: number;
+  recapMaxTokens: number;
   recapAggregatesOnly: boolean;
   recapAutoMonthly: boolean;
   recapAutoYearly: boolean;

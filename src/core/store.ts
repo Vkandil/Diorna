@@ -177,6 +177,8 @@ const defaultSettings: AppSettings = {
   recapProvider: "none",
   recapEndpoint: "https://openrouter.ai/api/v1",
   recapModel: "",
+  recapTemperature: 0.2,
+  recapMaxTokens: 1600,
   recapAggregatesOnly: true,
   recapAutoMonthly: true,
   recapAutoYearly: true,
