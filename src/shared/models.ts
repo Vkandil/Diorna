@@ -33,8 +33,8 @@ export interface Note {
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
   wordCount: number;
-  starred?: boolean;
-  trashedAt?: ISODateTime;
+  starred?: boolean | undefined;
+  trashedAt?: ISODateTime | undefined;
 }
 
 export interface NoteProperty {
@@ -111,7 +111,7 @@ export interface CalendarItem {
   reminders: number[];
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
-  trashedAt?: ISODateTime;
+  trashedAt?: ISODateTime | undefined;
 }
 
 export type HabitType = "checkbox" | "quantity";
@@ -238,7 +238,7 @@ export interface CanvasMap {
   nodes: CanvasNode[];
   edges: CanvasEdge[];
   updatedAt: ISODateTime;
-  trashedAt?: ISODateTime;
+  trashedAt?: ISODateTime | undefined;
 }
 
 export interface RecapStatistics {
@@ -333,9 +333,15 @@ export interface AppSettings {
   theme: "light" | "dark" | "system";
   accentColor: string;
   density: "compact" | "comfortable";
+  interfaceFont: string;
+  editorFont: string;
+  editorFontSize: number;
+  editorLineWidth: number;
   minimizeToTray: boolean;
   startWithWindows: boolean;
-  defaultWorkspaceId?: Id;
+  defaultWorkspaceId: Id | "";
+  updateChannel: "stable" | "beta";
+  vaultLocation: string;
   weekStartsOn: 0 | 1;
   calendarVisibleStart: number;
   calendarVisibleEnd: number;
@@ -343,6 +349,13 @@ export interface AppSettings {
   defaultReminderMinutes: number;
   dailyWindow: "plus-minus-3" | "7" | "14" | "30" | "week" | "month" | "custom";
   allowFutureCheckIn: boolean;
+  dailyWeekStartsOn: 0 | 1;
+  spellCheck: boolean;
+  spellCheckLanguage: "en-US" | "fr-FR";
+  autoPairBrackets: boolean;
+  tabBehavior: "indent" | "focus";
+  defaultNoteFolder: string;
+  defaultTemplateId: string;
   recapProvider: "none" | "remote" | "local";
   recapEndpoint: string;
   recapModel: string;
@@ -354,4 +367,10 @@ export interface AppSettings {
   recapConsentedProviders: string[];
   linkPreviewEnabled: boolean;
   updateEnabled: boolean;
+  backupLocation: string;
+  backupFrequency: "daily" | "weekly" | "launch";
+  backupRetention: number;
+  dashboardWidgetOrder: Record<Id, string[]>;
+  dashboardHiddenWidgets: Record<Id, string[]>;
+  keymap: Record<string, string>;
 }

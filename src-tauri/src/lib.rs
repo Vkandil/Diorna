@@ -5,16 +5,23 @@ mod spreadsheet;
 mod storage;
 mod structured;
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use storage::{DiskContent, SaveNoteInput, SavedFile, SearchHit, Vault, WorkspaceRecord};
 use tauri::{
     AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder,
-    menu::{MenuBuilder, MenuItemBuilder},
+    menu::{MenuBuilder, MenuItem, MenuItemBuilder},
     tray::TrayIconBuilder,
 };
+use tauri_plugin_autostart::ManagerExt as AutostartManagerExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 use crate::error::{DiornaError, Result};
@@ -23,6 +30,57 @@ use crate::lifecycle::{ImportReport, TrashRecord};
 #[derive(Clone, Default)]
 struct AppState {
     vault: Arc<RwLock<Option<Vault>>>,
+}
+
+#[derive(Clone)]
+struct CloseBehavior(Arc<AtomicBool>);
+
+#[derive(Clone)]
+struct TrayScoreItem(MenuItem<tauri::Wry>);
+
+impl Default for CloseBehavior {
+    fn default() -> Self {
+        Self(Arc::new(AtomicBool::new(true)))
+    }
+}
+
+#[tauri::command]
+fn set_close_to_tray(enabled: bool, behavior: State<'_, CloseBehavior>) {
+    behavior.0.store(enabled, Ordering::Relaxed);
+}
+
+#[tauri::command]
+fn set_start_with_windows(enabled: bool, app: AppHandle) -> Result<()> {
+    if enabled {
+        app.autolaunch()
+            .enable()
+            .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+    } else {
+        app.autolaunch()
+            .disable()
+            .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn update_tray_score(score: Option<u8>, item: State<'_, TrayScoreItem>) -> Result<()> {
+    let label = score
+        .map(|value| format!("Today: {}%", value.min(100)))
+        .unwrap_or_else(|| "Today: —".to_string());
+    item.0
+        .set_text(label)
+        .map_err(|error| DiornaError::InvalidData(error.to_string()))
+}
+
+#[tauri::command]
+fn set_global_shortcut(shortcut: String, app: AppHandle) -> Result<()> {
+    app.global_shortcut()
+        .unregister_all()
+        .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+    app.global_shortcut()
+        .register(shortcut.as_str())
+        .map_err(|error| DiornaError::InvalidData(error.to_string()))
 }
 
 impl AppState {
@@ -42,6 +100,52 @@ struct VaultStatus {
     rebuilt_files: u64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceStorageUsage {
+    workspace_id: String,
+    name: String,
+    bytes: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct VaultInfo {
+    path: String,
+    total_bytes: u64,
+    workspaces: Vec<WorkspaceStorageUsage>,
+}
+
+fn directory_size(path: &std::path::Path) -> u64 {
+    walkdir::WalkDir::new(path)
+        .into_iter()
+        .filter_map(std::result::Result::ok)
+        .filter(|entry| entry.file_type().is_file())
+        .filter_map(|entry| entry.metadata().ok().map(|metadata| metadata.len()))
+        .sum()
+}
+
+fn copy_directory(source: &std::path::Path, destination: &std::path::Path) -> Result<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in walkdir::WalkDir::new(source) {
+        let entry = entry.map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+        let relative = entry
+            .path()
+            .strip_prefix(source)
+            .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+        let target = destination.join(relative);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn initialise_vault(path: String, state: State<'_, AppState>) -> Result<VaultStatus> {
     let root = PathBuf::from(path);
@@ -53,6 +157,7 @@ async fn initialise_vault(path: String, state: State<'_, AppState>) -> Result<Va
         vault.rebuild_file_index().await?
     };
     let workspaces = vault.workspaces().await?;
+    lifecycle::purge_expired_trash(&vault).await?;
     *state.vault.write() = Some(vault);
     Ok(VaultStatus {
         path: root.to_string_lossy().into_owned(),
@@ -74,6 +179,7 @@ async fn initialise_default_vault(state: State<'_, AppState>) -> Result<VaultSta
         vault.rebuild_file_index().await?
     };
     let workspaces = vault.workspaces().await?;
+    lifecycle::purge_expired_trash(&vault).await?;
     *state.vault.write() = Some(vault);
     Ok(VaultStatus {
         path: root.to_string_lossy().into_owned(),
@@ -85,6 +191,11 @@ async fn initialise_default_vault(state: State<'_, AppState>) -> Result<VaultSta
 #[tauri::command]
 async fn list_workspaces(state: State<'_, AppState>) -> Result<Vec<WorkspaceRecord>> {
     state.get_vault()?.workspaces().await
+}
+
+#[tauri::command]
+async fn delete_workspace(workspace_id: String, state: State<'_, AppState>) -> Result<()> {
+    state.get_vault()?.delete_workspace(&workspace_id).await
 }
 
 #[tauri::command]
@@ -140,9 +251,214 @@ fn write_settings(settings: serde_json::Value, state: State<'_, AppState>) -> Re
 }
 
 #[tauri::command]
-async fn create_backup(destination: String, state: State<'_, AppState>) -> Result<String> {
-    let path = state.get_vault()?.backup(&PathBuf::from(destination))?;
+fn read_keymap(state: State<'_, AppState>) -> Result<serde_json::Value> {
+    state.get_vault()?.read_keymap()
+}
+
+#[tauri::command]
+fn write_keymap(keymap: serde_json::Value, state: State<'_, AppState>) -> Result<()> {
+    state.get_vault()?.write_keymap(&keymap)
+}
+
+#[tauri::command]
+async fn vault_info(state: State<'_, AppState>) -> Result<VaultInfo> {
+    let vault = state.get_vault()?;
+    let workspaces = vault.workspaces().await?;
+    Ok(VaultInfo {
+        path: vault.root.to_string_lossy().into_owned(),
+        total_bytes: directory_size(&vault.root),
+        workspaces: workspaces
+            .into_iter()
+            .map(|workspace| WorkspaceStorageUsage {
+                workspace_id: workspace.id,
+                name: workspace.name,
+                bytes: directory_size(&vault.root.join(workspace.folder_name)),
+            })
+            .collect(),
+    })
+}
+
+#[tauri::command]
+async fn move_vault(destination: String, state: State<'_, AppState>) -> Result<VaultInfo> {
+    let vault = state.get_vault()?;
+    let source = vault.root.canonicalize()?;
+    let destination = PathBuf::from(destination);
+    let parent = destination
+        .parent()
+        .ok_or_else(|| DiornaError::UnsafePath(destination.to_string_lossy().into_owned()))?;
+    std::fs::create_dir_all(parent)?;
+    let parent = parent.canonicalize()?;
+    let file_name = destination
+        .file_name()
+        .ok_or_else(|| DiornaError::UnsafePath(destination.to_string_lossy().into_owned()))?;
+    let destination = parent.join(file_name);
+    if destination == source || destination.starts_with(&source) {
+        return Err(DiornaError::InvalidData(
+            "Choose an empty folder outside the current vault".into(),
+        ));
+    }
+    if destination.exists() {
+        if destination.read_dir()?.next().is_some() {
+            return Err(DiornaError::InvalidData(
+                "The destination folder must be empty".into(),
+            ));
+        }
+        std::fs::remove_dir(&destination)?;
+    }
+
+    vault.pool.close().await;
+    *state.vault.write() = None;
+    let move_result = match std::fs::rename(&source, &destination) {
+        Ok(()) => Ok(()),
+        Err(_) => (|| -> Result<()> {
+            copy_directory(&source, &destination)?;
+            if directory_size(&source) != directory_size(&destination) {
+                return Err(DiornaError::InvalidData(
+                    "The copied vault did not pass verification".into(),
+                ));
+            }
+            std::fs::remove_dir_all(&source)?;
+            Ok(())
+        })(),
+    };
+    if let Err(error) = move_result {
+        if destination.exists() {
+            let _ = std::fs::remove_dir_all(&destination);
+        }
+        if let Ok(reopened) = Vault::open(source).await {
+            *state.vault.write() = Some(reopened);
+        }
+        return Err(error);
+    }
+    let reopened = Vault::open(destination.clone()).await?;
+    let workspaces = reopened.workspaces().await?;
+    let info = VaultInfo {
+        path: destination.to_string_lossy().into_owned(),
+        total_bytes: directory_size(&destination),
+        workspaces: workspaces
+            .into_iter()
+            .map(|workspace| WorkspaceStorageUsage {
+                workspace_id: workspace.id,
+                name: workspace.name,
+                bytes: directory_size(&destination.join(workspace.folder_name)),
+            })
+            .collect(),
+    };
+    *state.vault.write() = Some(reopened);
+    Ok(info)
+}
+
+#[tauri::command]
+async fn create_backup(
+    destination: String,
+    retention: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<String> {
+    let mut destination = PathBuf::from(destination);
+    if !destination.is_absolute() {
+        let profile = std::env::var_os("USERPROFILE")
+            .ok_or_else(|| DiornaError::InvalidData("USERPROFILE is unavailable".into()))?;
+        destination = PathBuf::from(profile).join(destination);
+    }
+    let path = state.get_vault()?.backup(&destination)?;
+    let mut backups = destination
+        .read_dir()?
+        .filter_map(std::result::Result::ok)
+        .map(|entry| entry.path())
+        .filter(|entry| {
+            entry
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("Diorna-") && name.ends_with(".zip"))
+        })
+        .collect::<Vec<_>>();
+    backups.sort();
+    let keep = retention.unwrap_or(10).clamp(1, 100);
+    let remove_count = backups.len().saturating_sub(keep);
+    for expired in backups.into_iter().take(remove_count) {
+        std::fs::remove_file(expired)?;
+    }
     Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn restore_backup(backup: String, state: State<'_, AppState>) -> Result<String> {
+    let vault = state.get_vault()?;
+    let root = vault.root.canonicalize()?;
+    let parent = root
+        .parent()
+        .ok_or_else(|| DiornaError::UnsafePath(root.to_string_lossy().into_owned()))?;
+    let temporary = parent.join(format!(".Diorna-restore-{}", uuid::Uuid::new_v4()));
+    let rollback = parent.join(format!(
+        ".Diorna-pre-restore-{}",
+        chrono::Utc::now().format("%Y%m%d-%H%M%S")
+    ));
+    std::fs::create_dir_all(&temporary)?;
+    let extraction = (|| -> Result<()> {
+        let file = std::fs::File::open(PathBuf::from(backup))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+        for index in 0..archive.len() {
+            let mut entry = archive
+                .by_index(index)
+                .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+            let relative = entry
+                .enclosed_name()
+                .ok_or_else(|| DiornaError::UnsafePath(entry.name().to_owned()))?;
+            let target = temporary.join(relative);
+            if entry.is_dir() {
+                std::fs::create_dir_all(&target)?;
+            } else {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                let mut output = std::fs::File::create(target)?;
+                std::io::copy(&mut entry, &mut output)?;
+            }
+        }
+        if !temporary.join(".app").join("settings.json").is_file() {
+            return Err(DiornaError::InvalidData(
+                "The selected archive is not a Diorna vault backup".into(),
+            ));
+        }
+        Ok(())
+    })();
+    if let Err(error) = extraction {
+        let _ = std::fs::remove_dir_all(&temporary);
+        return Err(error);
+    }
+
+    vault.pool.close().await;
+    *state.vault.write() = None;
+    if let Err(error) = std::fs::rename(&root, &rollback) {
+        let _ = std::fs::remove_dir_all(&temporary);
+        if let Ok(reopened) = Vault::open(root.clone()).await {
+            *state.vault.write() = Some(reopened);
+        }
+        return Err(error.into());
+    }
+    if let Err(error) = std::fs::rename(&temporary, &root) {
+        let _ = std::fs::rename(&rollback, &root);
+        if let Ok(reopened) = Vault::open(root.clone()).await {
+            *state.vault.write() = Some(reopened);
+        }
+        return Err(error.into());
+    }
+    match Vault::open(root.clone()).await {
+        Ok(reopened) => {
+            *state.vault.write() = Some(reopened);
+            Ok(rollback.to_string_lossy().into_owned())
+        }
+        Err(error) => {
+            let failed = parent.join(format!(".Diorna-failed-restore-{}", uuid::Uuid::new_v4()));
+            let _ = std::fs::rename(&root, failed);
+            let _ = std::fs::rename(&rollback, &root);
+            if let Ok(reopened) = Vault::open(root).await {
+                *state.vault.write() = Some(reopened);
+            }
+            Err(error)
+        }
+    }
 }
 
 #[tauri::command]
@@ -185,6 +501,20 @@ async fn restore_trash(
     state: State<'_, AppState>,
 ) -> Result<String> {
     lifecycle::restore_trash(&state.get_vault()?, &workspace_id, &trash_id).await
+}
+
+#[tauri::command]
+async fn list_trash(workspace_id: String, state: State<'_, AppState>) -> Result<Vec<TrashRecord>> {
+    lifecycle::list_trash(&state.get_vault()?, &workspace_id).await
+}
+
+#[tauri::command]
+async fn purge_trash(
+    workspace_id: String,
+    trash_id: String,
+    state: State<'_, AppState>,
+) -> Result<()> {
+    lifecycle::purge_trash(&state.get_vault()?, &workspace_id, &trash_id).await
 }
 
 #[tauri::command]
@@ -356,6 +686,7 @@ pub fn run() {
     let state = AppState::default();
     tauri::Builder::default()
         .manage(state)
+        .manage(CloseBehavior::default())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main(app)
         }))
@@ -365,6 +696,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(
             tauri_plugin_log::Builder::new()
                 .max_file_size(10_000_000)
@@ -390,18 +722,26 @@ pub fn run() {
             initialise_vault,
             initialise_default_vault,
             list_workspaces,
+            delete_workspace,
             save_note,
             save_canvas,
             search_notes,
             rebuild_index,
             read_settings,
             write_settings,
+            read_keymap,
+            write_keymap,
+            vault_info,
+            move_vault,
             create_backup,
+            restore_backup,
             import_obsidian,
             import_notion,
             undo_import,
             trash_file,
             restore_trash,
+            list_trash,
+            purge_trash,
             export_vault,
             protect_api_key,
             reveal_api_key,
@@ -413,7 +753,11 @@ pub fn run() {
             load_file_content,
             list_note_revisions,
             export_text_file,
-            export_text_bundle
+            export_text_bundle,
+            set_close_to_tray,
+            set_start_with_windows,
+            update_tray_score,
+            set_global_shortcut
         ])
         .setup(|app| {
             let show = MenuItemBuilder::with_id("show", "Show / Hide").build(app)?;
@@ -423,6 +767,7 @@ pub fn run() {
             let score = MenuItemBuilder::with_id("score", "Today: —")
                 .enabled(false)
                 .build(app)?;
+            app.manage(TrayScoreItem(score.clone()));
             let quit = MenuItemBuilder::with_id("quit", "Quit Diorna").build(app)?;
             let menu = MenuBuilder::new(app)
                 .items(&[&show, &capture, &score, &quit])
@@ -449,12 +794,21 @@ pub fn run() {
                 log::warn!("Global quick-capture shortcut unavailable: {error}");
             }
             if let Some(window) = app.get_webview_window("main") {
+                let app_handle = app.handle().clone();
                 window.on_window_event({
                     let window = window.clone();
                     move |event| {
                         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                            api.prevent_close();
-                            let _ = window.hide();
+                            if app_handle
+                                .state::<CloseBehavior>()
+                                .0
+                                .load(Ordering::Relaxed)
+                            {
+                                api.prevent_close();
+                                let _ = window.hide();
+                            } else {
+                                app_handle.exit(0);
+                            }
                         }
                     }
                 });

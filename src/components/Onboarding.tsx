@@ -12,19 +12,50 @@ import {
 } from "lucide-react";
 import { useDiornaStore } from "@/core/store";
 import type { AppSettings } from "@/shared/models";
-import { chooseVaultFolder, initialiseNativeVault } from "@/core/native";
+import {
+  chooseDirectory,
+  chooseVaultFolder,
+  importNativeFolder,
+  initialiseNativeVault,
+} from "@/core/native";
 
 export function Onboarding() {
   const finish = useDiornaStore((state) => state.finishOnboarding);
+  const updateSettings = useDiornaStore((state) => state.updateSettings);
   const [step, setStep] = useState(0);
   const [theme, setTheme] = useState<AppSettings["theme"]>("system");
   const [studentName, setStudentName] = useState("Student");
   const [personalName, setPersonalName] = useState("Personal");
   const [sample, setSample] = useState(true);
   const [vaultPath, setVaultPath] = useState("Documents\\Diorna");
-  const complete = () => {
-    void initialiseNativeVault(vaultPath === "Documents\\Diorna" ? undefined : vaultPath);
-    finish(studentName || "Student", personalName || "Personal", theme, sample);
+  const [importSource, setImportSource] = useState<{
+    kind: "obsidian" | "notion";
+    path: string;
+  }>();
+  const [finishing, setFinishing] = useState(false);
+  const complete = async () => {
+    setFinishing(true);
+    try {
+      const vault = await initialiseNativeVault(
+        vaultPath === "Documents\\Diorna" ? undefined : vaultPath,
+      );
+      updateSettings({ vaultLocation: vault?.path ?? vaultPath });
+      finish(studentName || "Student", personalName || "Personal", theme, sample);
+      if (importSource) {
+        const report = await importNativeFolder(
+          importSource.kind,
+          importSource.path,
+          "workspace-student",
+        );
+        if (report)
+          window.alert(
+            `Imported ${report.imported} files${report.skipped ? `; skipped ${report.skipped}` : ""}.${report.warnings.length ? `\n${report.warnings.join("\n")}` : ""}`,
+          );
+      }
+    } catch (error) {
+      window.alert(`Unable to prepare the vault: ${String(error)}`);
+      setFinishing(false);
+    }
   };
   const steps = [
     <section key="vault">
@@ -81,7 +112,22 @@ export function Onboarding() {
       <span className="eyebrow">Step 4 of 4</span>
       <h1>Ready when you are</h1>
       <p>You can import an Obsidian or Notion export now or later.</p>
-      <button className="button wide">Import an existing vault…</button>
+      <div className="button-row">
+        {(["obsidian", "notion"] as const).map((kind) => (
+          <button
+            className="button"
+            key={kind}
+            onClick={() =>
+              void chooseDirectory(
+                `Choose ${kind === "obsidian" ? "an Obsidian vault" : "a Notion export"}`,
+              ).then((path) => path && setImportSource({ kind, path }))
+            }
+          >
+            Import {kind === "obsidian" ? "Obsidian" : "Notion"}…
+          </button>
+        ))}
+      </div>
+      {importSource && <small>Ready to import: {importSource.path}</small>}
       <label className="check-row">
         <input
           type="checkbox"
@@ -115,9 +161,10 @@ export function Onboarding() {
             )}
             <button
               className="button primary icon-text"
-              onClick={() => (step === 3 ? complete() : setStep(step + 1))}
+              disabled={finishing}
+              onClick={() => (step === 3 ? void complete() : setStep(step + 1))}
             >
-              {step === 3 ? "Enter Diorna" : "Continue"}
+              {step === 3 ? (finishing ? "Preparing…" : "Enter Diorna") : "Continue"}
               {step < 3 && <ChevronRight size={16} />}
             </button>
           </div>

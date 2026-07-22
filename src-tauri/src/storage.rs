@@ -141,6 +141,7 @@ impl Vault {
             .await?;
         MIGRATOR.run(&pool).await?;
         seed_defaults(&pool).await?;
+        ensure_workspace_layout(&root, &pool).await?;
         let vault = Self { root, pool };
         vault.ensure_settings()?;
         Ok(vault)
@@ -196,6 +197,24 @@ impl Vault {
         atomic_write(&path, &bytes)
     }
 
+    pub fn read_keymap(&self) -> Result<serde_json::Value> {
+        let path = self.root.join(".app").join("keymap.json");
+        serde_json::from_slice(&fs::read(path)?)
+            .map_err(|error| DiornaError::InvalidData(format!("Invalid keymap.json: {error}")))
+    }
+
+    pub fn write_keymap(&self, keymap: &serde_json::Value) -> Result<()> {
+        if !keymap.is_object() {
+            return Err(DiornaError::InvalidData(
+                "Keymap must be a JSON object".into(),
+            ));
+        }
+        let path = self.root.join(".app").join("keymap.json");
+        let bytes = serde_json::to_vec_pretty(keymap)
+            .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+        atomic_write(&path, &bytes)
+    }
+
     pub async fn workspaces(&self) -> Result<Vec<WorkspaceRecord>> {
         Ok(sqlx::query_as::<_, WorkspaceRecord>("SELECT id, name, color, folder_name, sort_order, created_at FROM workspace ORDER BY sort_order")
             .fetch_all(&self.pool).await?)
@@ -205,6 +224,40 @@ impl Vault {
         sqlx::query_as::<_, WorkspaceRecord>("SELECT id, name, color, folder_name, sort_order, created_at FROM workspace WHERE id = ?")
             .bind(workspace_id).fetch_optional(&self.pool).await?
             .ok_or_else(|| DiornaError::WorkspaceNotFound(workspace_id.to_owned()))
+    }
+
+    pub async fn delete_workspace(&self, workspace_id: &str) -> Result<()> {
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspace")
+            .fetch_one(&self.pool)
+            .await?;
+        if count <= 1 {
+            return Err(DiornaError::InvalidData(
+                "The final workspace cannot be deleted".into(),
+            ));
+        }
+        let workspace = self.workspace(workspace_id).await?;
+        let source = self.root.join(&workspace.folder_name);
+        let archive_root = self.root.join(".app").join("deleted-workspaces");
+        fs::create_dir_all(&archive_root)?;
+        let archived = archive_root.join(format!(
+            "{}-{}",
+            workspace_id,
+            Utc::now().format("%Y%m%d-%H%M%S")
+        ));
+        if source.exists() {
+            fs::rename(&source, &archived)?;
+        }
+        if let Err(error) = sqlx::query("DELETE FROM workspace WHERE id = ?")
+            .bind(workspace_id)
+            .execute(&self.pool)
+            .await
+        {
+            if archived.exists() {
+                let _ = fs::rename(&archived, &source);
+            }
+            return Err(error.into());
+        }
+        Ok(())
     }
 
     pub async fn save_note(&self, input: SaveNoteInput) -> Result<SavedFile> {
@@ -808,27 +861,32 @@ fn replace_file(source: &Path, destination: &Path) -> Result<()> {
 }
 
 fn create_vault_layout(root: &Path) -> Result<()> {
-    for relative in [
-        ".app/logs",
-        ".app/revisions",
-        ".app/backups",
-        "Student/notes",
-        "Student/attachments",
-        "Student/maps",
-        "Student/templates",
-        "Student/.trash",
-        "Personal/notes",
-        "Personal/attachments",
-        "Personal/maps",
-        "Personal/templates",
-        "Personal/.trash",
-    ] {
+    for relative in [".app/logs", ".app/revisions", ".app/backups"] {
         fs::create_dir_all(root.join(relative))?;
     }
     Ok(())
 }
 
+async fn ensure_workspace_layout(root: &Path, pool: &SqlitePool) -> Result<()> {
+    let folders = sqlx::query("SELECT folder_name FROM workspace")
+        .fetch_all(pool)
+        .await?;
+    for row in folders {
+        let folder: String = row.get("folder_name");
+        for relative in ["notes", "attachments", "maps", "templates", ".trash"] {
+            fs::create_dir_all(root.join(&folder).join(relative))?;
+        }
+    }
+    Ok(())
+}
+
 async fn seed_defaults(pool: &SqlitePool) -> Result<()> {
+    let existing: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM workspace")
+        .fetch_one(pool)
+        .await?;
+    if existing > 0 {
+        return Ok(());
+    }
     let now = Utc::now().to_rfc3339();
     for (id, name, color, folder, order) in [
         ("workspace-student", "Student", "#5b5bd6", "Student", 0_i64),
@@ -1146,6 +1204,70 @@ mod tests {
             .unwrap();
         assert_eq!(revisions.len(), 1);
         assert_eq!(revisions[0].markdown, "first version");
+    }
+
+    #[tokio::test]
+    async fn settings_and_keymap_are_human_readable_and_round_trip() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = Vault::open(directory.path().to_path_buf()).await.unwrap();
+        let settings = serde_json::json!({"language":"fr","theme":"dark"});
+        let keymap = serde_json::json!({"commandPalette":"Ctrl+P"});
+        vault.write_settings(&settings).unwrap();
+        vault.write_keymap(&keymap).unwrap();
+        assert_eq!(vault.read_settings().unwrap(), settings);
+        assert_eq!(vault.read_keymap().unwrap(), keymap);
+        assert!(
+            fs::read_to_string(directory.path().join(".app/settings.json"))
+                .unwrap()
+                .contains("\n  \"language\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn backup_contains_portable_vault_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let backups = tempfile::tempdir().unwrap();
+        let vault = Vault::open(directory.path().to_path_buf()).await.unwrap();
+        atomic_write(
+            &directory.path().join("Student/notes/Portable.md"),
+            b"# Portable",
+        )
+        .unwrap();
+        let output = vault.backup(backups.path()).unwrap();
+        let file = File::open(output).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
+        assert!(archive.by_name(".app/settings.json").is_ok());
+        assert!(archive.by_name("Student/notes/Portable.md").is_ok());
+    }
+
+    #[tokio::test]
+    async fn deleted_workspace_is_archived_and_not_reseeded() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = Vault::open(directory.path().to_path_buf()).await.unwrap();
+        atomic_write(
+            &directory.path().join("Student/notes/Before deletion.md"),
+            b"# Before deletion",
+        )
+        .unwrap();
+        vault.delete_workspace("workspace-student").await.unwrap();
+        assert_eq!(vault.workspaces().await.unwrap().len(), 1);
+        assert!(!directory.path().join("Student").exists());
+        assert!(
+            directory
+                .path()
+                .join(".app/deleted-workspaces")
+                .read_dir()
+                .unwrap()
+                .next()
+                .is_some()
+        );
+        vault.pool.close().await;
+        let reopened = Vault::open(directory.path().to_path_buf()).await.unwrap();
+        assert_eq!(reopened.workspaces().await.unwrap().len(), 1);
+        assert_eq!(
+            reopened.workspaces().await.unwrap()[0].id,
+            "workspace-personal"
+        );
     }
 
     #[test]

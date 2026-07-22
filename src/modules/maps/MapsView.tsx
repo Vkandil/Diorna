@@ -38,6 +38,7 @@ import {
   StickyNote,
   Type,
   Undo2,
+  Trash2,
 } from "lucide-react";
 import html2canvas from "html2canvas";
 import { selectWorkspace, useDiornaStore } from "@/core/store";
@@ -76,10 +77,10 @@ type Alignment =
 
 const nodeTypes = { diorna: CanvasCardNode };
 
-export function MapsView() {
+export function MapsView({ tabId }: { tabId?: string | undefined } = {}) {
   const state = useDiornaStore();
   const maps = selectWorkspace(state.maps, state.activeWorkspaceId).filter((map) => !map.trashedAt);
-  const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+  const activeTab = state.tabs.find((tab) => tab.id === (tabId ?? state.activeTabId));
   const [mapId, setMapId] = useState(activeTab?.entityId ?? maps[0]?.id);
   const map = maps.find((entry) => entry.id === mapId);
   useEffect(() => {
@@ -585,6 +586,28 @@ function CanvasEditor({
         </select>
         <button className="icon-button" aria-label="New map" onClick={() => onCreateMap()}>
           <Plus />
+        </button>
+        <button
+          className="icon-button"
+          aria-label="Duplicate map"
+          onClick={() => {
+            const copy = state.duplicateMap(map.id);
+            if (copy) onSelectMap(copy);
+          }}
+        >
+          <Copy />
+        </button>
+        <button
+          className="icon-button danger"
+          aria-label="Move map to trash"
+          onClick={() => {
+            if (!window.confirm(`Move “${map.name}” to Trash?`)) return;
+            const next = maps.find((entry) => entry.id !== map.id);
+            state.trashMap(map.id);
+            if (next) onSelectMap(next);
+          }}
+        >
+          <Trash2 />
         </button>
         <button
           className="icon-button"

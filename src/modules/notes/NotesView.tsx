@@ -13,12 +13,14 @@ import TaskList from "@tiptap/extension-task-list";
 import TaskItem from "@tiptap/extension-task-item";
 import TextAlign from "@tiptap/extension-text-align";
 import UnderlineExtension from "@tiptap/extension-underline";
+import { TextSelection } from "@tiptap/pm/state";
 import {
   Bold,
   BookOpen,
   Braces,
   ChevronDown,
   Code2,
+  Copy,
   Download,
   FilePlus2,
   Folder,
@@ -46,6 +48,7 @@ import {
   Sigma,
   Star,
   Table2,
+  Trash2,
   Underline,
   Undo2,
 } from "lucide-react";
@@ -67,12 +70,16 @@ import { NoteExportDialog } from "./NoteExportDialog";
 import { StudentHub, type StudentView } from "@/modules/student/StudentHub";
 import { ReferenceListBlock } from "@/modules/student/ReferenceListBlock";
 
-export function NotesView() {
+export function NotesView({ tabId }: { tabId?: string | undefined } = {}) {
   const state = useDiornaStore();
   const allNotes = selectWorkspace(state.notes, state.activeWorkspaceId).filter(
     (note) => !note.trashedAt,
   );
-  const [filter, setFilter] = useState("");
+  const [filter, setFilter] = useState(() => {
+    const pending = localStorage.getItem("diorna-note-filter") ?? "";
+    localStorage.removeItem("diorna-note-filter");
+    return pending;
+  });
   const [view, setView] = useState<"editor" | "graph" | StudentView>("editor");
   const [replaceOpen, setReplaceOpen] = useState(false);
   const [replaceSearch, setReplaceSearch] = useState("");
@@ -113,7 +120,7 @@ export function NotesView() {
     () => previewReplace(notes, replaceSearch, replaceWith),
     [notes, replaceSearch, replaceWith],
   );
-  const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
+  const activeTab = state.tabs.find((tab) => tab.id === (tabId ?? state.activeTabId));
   const studentWorkspace =
     state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId)?.kind ===
     "student";
@@ -134,6 +141,38 @@ export function NotesView() {
       title: created.title,
       entityId: created.id,
     });
+  };
+  const renameFolder = (folder: string) => {
+    const next = window
+      .prompt("Rename folder", folder)
+      ?.trim()
+      .replace(/^\/+|\/+$/g, "");
+    if (!next || next === folder) return;
+    allNotes
+      .filter((entry) => noteFolder(entry.path).startsWith(folder))
+      .forEach((entry) =>
+        state.updateNote(entry.id, {
+          path: entry.path.replace(`notes/${folder}`, `notes/${next}`),
+        }),
+      );
+  };
+  const duplicateFolder = (folder: string) => {
+    const target = availableFolderName(`${folder} copy`, folders);
+    allNotes
+      .filter((entry) => noteFolder(entry.path).startsWith(folder))
+      .forEach((entry) => {
+        const copy = state.duplicateNote(entry.id);
+        if (copy)
+          state.updateNote(copy.id, {
+            path: copy.path.replace(`notes/${folder}`, `notes/${target}`),
+          });
+      });
+  };
+  const trashFolder = (folder: string) => {
+    if (!window.confirm(`Move “${folder}” and all of its notes to Trash?`)) return;
+    allNotes
+      .filter((entry) => noteFolder(entry.path).startsWith(folder))
+      .forEach((entry) => state.trashNote(entry.id));
   };
   return (
     <div className="notes-layout">
@@ -209,10 +248,10 @@ export function NotesView() {
               All notes <small>{allNotes.length}</small>
             </button>
             {folders.map((folder) => (
-              <button
+              <div
+                className="folder-tree-row"
                 key={folder}
-                style={{ paddingInlineStart: `${10 + folder.split("/").length * 10}px` }}
-                onClick={() => setFilter(`folder:"${folder}"`)}
+                style={{ paddingInlineStart: `${folder.split("/").length * 10}px` }}
                 onDragOver={(event) => event.preventDefault()}
                 onDrop={(event) => {
                   const id = event.dataTransfer.getData("text/diorna-note");
@@ -221,11 +260,27 @@ export function NotesView() {
                     state.updateNote(id, { path: `notes/${folder}/${fileName(moved.path)}` });
                 }}
               >
-                {folder.split("/").at(-1)}
-                <small>
-                  {allNotes.filter((entry) => noteFolder(entry.path).startsWith(folder)).length}
-                </small>
-              </button>
+                <button onClick={() => setFilter(`folder:"${folder}"`)}>
+                  {folder.split("/").at(-1)}
+                  <small>
+                    {allNotes.filter((entry) => noteFolder(entry.path).startsWith(folder)).length}
+                  </small>
+                </button>
+                <div>
+                  <button aria-label={`Rename ${folder}`} onClick={() => renameFolder(folder)}>
+                    Aa
+                  </button>
+                  <button
+                    aria-label={`Duplicate ${folder}`}
+                    onClick={() => duplicateFolder(folder)}
+                  >
+                    <Copy size={11} />
+                  </button>
+                  <button aria-label={`Trash ${folder}`} onClick={() => trashFolder(folder)}>
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+              </div>
             ))}
             <form
               className="new-folder-row"
@@ -398,6 +453,23 @@ export function NotesView() {
                 onClick={() => state.updateNote(entry.id, { starred: !entry.starred })}
               >
                 <Star size={13} fill={entry.starred ? "currentColor" : "none"} />
+              </button>
+              <button
+                className="duplicate-note"
+                aria-label={`Duplicate ${entry.title}`}
+                onClick={() => state.duplicateNote(entry.id)}
+              >
+                <Copy size={13} />
+              </button>
+              <button
+                className="trash-note"
+                aria-label={`Move ${entry.title} to trash`}
+                onClick={() => {
+                  state.trashNote(entry.id);
+                  if (selectedId === entry.id) setSelectedId(undefined);
+                }}
+              >
+                <Trash2 size={13} />
               </button>
             </div>
           ))}
@@ -726,10 +798,35 @@ function Editor({ noteId }: { noteId: string }) {
     editorProps: {
       attributes: {
         class: "prose-editor",
-        spellcheck: "true",
+        spellcheck: state.settings.spellCheck ? "true" : "false",
+        lang: state.settings.spellCheckLanguage,
         "aria-label": "Note editor",
       },
-      handleKeyDown: (_view, event) => {
+      handleKeyDown: (view, event) => {
+        if (event.key === "Tab" && state.settings.tabBehavior === "indent") {
+          event.preventDefault();
+          view.dispatch(view.state.tr.insertText("  "));
+          return true;
+        }
+        const pairs: Record<string, string> = {
+          "(": ")",
+          "[": "]",
+          "{": "}",
+          '"': '"',
+          "'": "'",
+        };
+        const closing = state.settings.autoPairBrackets ? pairs[event.key] : undefined;
+        if (closing && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          event.preventDefault();
+          const { from, to } = view.state.selection;
+          const selected = view.state.doc.textBetween(from, to);
+          let transaction = view.state.tr.insertText(`${event.key}${selected}${closing}`, from, to);
+          transaction = transaction.setSelection(
+            TextSelection.create(transaction.doc, from + 1 + selected.length),
+          );
+          view.dispatch(transaction);
+          return true;
+        }
         if (event.key === "/") {
           window.setTimeout(() => setSlashOpen(true), 0);
           setSlashQuery("");
@@ -755,6 +852,19 @@ function Editor({ noteId }: { noteId: string }) {
       },
     },
   });
+  useEffect(() => {
+    if (!editor) return;
+    editor.setOptions({
+      editorProps: {
+        ...editor.options.editorProps,
+        attributes: {
+          ...editor.options.editorProps.attributes,
+          spellcheck: state.settings.spellCheck ? "true" : "false",
+          lang: state.settings.spellCheckLanguage,
+        },
+      },
+    });
+  }, [editor, state.settings.spellCheck, state.settings.spellCheckLanguage]);
   useEffect(() => {
     const save = () => {
       if (!editor) return;
@@ -1414,6 +1524,17 @@ function availableTitle(requested: string, note: Note, notes: Note[]): string {
     suffix += 1;
   }
   return title;
+}
+
+function availableFolderName(requested: string, folders: string[]): string {
+  const used = new Set(folders.map((folder) => folder.toLocaleLowerCase()));
+  let name = requested;
+  let suffix = 2;
+  while (used.has(name.toLocaleLowerCase())) {
+    name = `${requested} ${suffix}`;
+    suffix += 1;
+  }
+  return name;
 }
 
 const mathSymbols = [

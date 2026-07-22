@@ -23,7 +23,12 @@ import type {
   Workspace,
 } from "@/shared/models";
 import { createId } from "@/shared/id";
-import { persistNativeCanvas, persistNativeNote, persistNativeSettings } from "@/core/native";
+import {
+  persistNativeCanvas,
+  persistNativeNote,
+  persistNativeSettings,
+  trashNativeFile,
+} from "@/core/native";
 import { rewriteWikiLinks } from "@/modules/notes/logic";
 import { applyTemplate } from "@/modules/notes/logic";
 import { extractNoteFlashcards } from "@/modules/student/flashcards";
@@ -34,7 +39,7 @@ import {
   setDatedNoteTaskChecked,
 } from "@/modules/calendar/noteTasks";
 
-interface TabState {
+export interface TabState {
   id: string;
   module: ModuleId;
   title: string;
@@ -42,17 +47,82 @@ interface TabState {
   pinned: boolean;
 }
 
+export interface PaneState {
+  id: string;
+  tabIds: string[];
+  activeTabId: string;
+}
+
+export type PaneLayoutNode =
+  | { kind: "pane"; paneId: string }
+  | {
+      kind: "split";
+      id: string;
+      direction: "horizontal" | "vertical";
+      ratio: number;
+      first: PaneLayoutNode;
+      second: PaneLayoutNode;
+    };
+
+interface WorkspaceSession {
+  tabs: TabState[];
+  panes: PaneState[];
+  paneLayout: PaneLayoutNode;
+  activePaneId: string;
+  activeTabId: string;
+  activeModule: ModuleId;
+  recentTabIds: string[];
+}
+
+function replacePaneNode(
+  node: PaneLayoutNode,
+  paneId: string,
+  replacement: PaneLayoutNode,
+): PaneLayoutNode {
+  if (node.kind === "pane") return node.paneId === paneId ? replacement : node;
+  return {
+    ...node,
+    first: replacePaneNode(node.first, paneId, replacement),
+    second: replacePaneNode(node.second, paneId, replacement),
+  };
+}
+
+function removePaneNode(node: PaneLayoutNode, paneId: string): PaneLayoutNode | undefined {
+  if (node.kind === "pane") return node.paneId === paneId ? undefined : node;
+  const first = removePaneNode(node.first, paneId);
+  const second = removePaneNode(node.second, paneId);
+  if (!first) return second;
+  if (!second) return first;
+  return { ...node, first, second };
+}
+
+function updateSplitRatio(node: PaneLayoutNode, splitId: string, ratio: number): PaneLayoutNode {
+  if (node.kind === "pane") return node;
+  if (node.id === splitId) return { ...node, ratio };
+  return {
+    ...node,
+    first: updateSplitRatio(node.first, splitId, ratio),
+    second: updateSplitRatio(node.second, splitId, ratio),
+  };
+}
+
 interface DiornaState {
   onboardingComplete: boolean;
   activeWorkspaceId: Id;
   activeModule: ModuleId;
   sidebarOpen: boolean;
+  sidebarWidth: number;
   rightPanelOpen: boolean;
   selectedCalendarItemId: Id | undefined;
   selectedDailyHabitId: Id | undefined;
   commandPaletteOpen: boolean;
   tabs: TabState[];
   activeTabId: string;
+  recentTabIds: string[];
+  panes: PaneState[];
+  paneLayout: PaneLayoutNode;
+  activePaneId: string;
+  workspaceSessions: Record<Id, WorkspaceSession>;
   workspaces: Workspace[];
   categories: Category[];
   courses: Course[];
@@ -78,6 +148,7 @@ interface DiornaState {
   setWorkspace: (id: Id) => void;
   setModule: (module: ModuleId) => void;
   toggleSidebar: () => void;
+  setSidebarWidth: (width: number) => void;
   toggleRightPanel: () => void;
   selectCalendarItem: (id?: Id) => void;
   selectDailyHabit: (id?: Id) => void;
@@ -87,9 +158,17 @@ interface DiornaState {
   ) => void;
   closeTab: (id: string) => void;
   setActiveTab: (id: string) => void;
+  setActivePane: (id: string) => void;
   setTabPinned: (id: string, pinned: boolean) => void;
   reorderTabs: (sourceId: string, targetId: string) => void;
+  splitPane: (direction: "horizontal" | "vertical") => void;
+  closePane: (id: string) => void;
+  setSplitRatio: (id: string, ratio: number) => void;
   addNote: (title?: string) => Note;
+  duplicateNote: (id: Id) => Note | undefined;
+  trashNote: (id: Id) => void;
+  restoreFileTrash: (kind: "notes" | "maps", originalPath: string, restoredPath?: string) => void;
+  purgeFileTrash: (kind: "notes" | "maps", originalPath: string) => void;
   updateNote: (id: Id, changes: Partial<Note>) => void;
   addCategory: (name?: string) => Category;
   updateCategory: (id: Id, changes: Partial<Category>) => void;
@@ -103,11 +182,16 @@ interface DiornaState {
   gradeFlashcard: (id: Id, grade: FlashcardGrade) => void;
   addReferences: (references: Array<Omit<ReferenceRecord, "workspaceId">>) => void;
   addMap: (name?: string) => CanvasMap;
+  duplicateMap: (id: Id) => CanvasMap | undefined;
+  trashMap: (id: Id) => void;
   updateMap: (id: Id, changes: Partial<CanvasMap>) => void;
   addItem: (
     item: Omit<CalendarItem, "id" | "workspaceId" | "createdAt" | "updatedAt">,
   ) => CalendarItem;
   updateItem: (id: Id, changes: Partial<CalendarItem>) => void;
+  restoreItem: (id: Id) => void;
+  purgeItem: (id: Id) => void;
+  purgeExpiredTrash: (now?: string) => void;
   addHabit: (habit: Pick<Habit, "name" | "categoryId" | "type"> & Partial<Habit>) => Habit;
   updateHabit: (
     id: Id,
@@ -149,6 +233,8 @@ interface DiornaState {
   hydrateFileContent: (content: { notes: Note[]; maps: CanvasMap[] }) => void;
   addWorkspace: (name: string, color: string) => void;
   renameWorkspace: (id: Id, name: string) => void;
+  updateWorkspace: (id: Id, changes: Pick<Partial<Workspace>, "name" | "color">) => void;
+  moveWorkspace: (id: Id, direction: -1 | 1) => void;
   deleteWorkspace: (id: Id) => void;
   resetAll: () => void;
 }
@@ -164,9 +250,15 @@ const defaultSettings: AppSettings = {
   theme: "system",
   accentColor: "#5b5bd6",
   density: "compact",
+  interfaceFont: "system-ui",
+  editorFont: "system-ui",
+  editorFontSize: 15,
+  editorLineWidth: 760,
   minimizeToTray: true,
   startWithWindows: false,
-  defaultWorkspaceId: studentId,
+  defaultWorkspaceId: "",
+  updateChannel: "stable",
+  vaultLocation: "Documents\\Diorna",
   weekStartsOn: 1,
   calendarVisibleStart: 7,
   calendarVisibleEnd: 23,
@@ -174,6 +266,13 @@ const defaultSettings: AppSettings = {
   defaultReminderMinutes: 10,
   dailyWindow: "plus-minus-3",
   allowFutureCheckIn: false,
+  dailyWeekStartsOn: 1,
+  spellCheck: true,
+  spellCheckLanguage: "en-US",
+  autoPairBrackets: true,
+  tabBehavior: "indent",
+  defaultNoteFolder: "notes",
+  defaultTemplateId: "",
   recapProvider: "none",
   recapEndpoint: "https://openrouter.ai/api/v1",
   recapModel: "",
@@ -185,6 +284,42 @@ const defaultSettings: AppSettings = {
   recapConsentedProviders: [],
   linkPreviewEnabled: false,
   updateEnabled: true,
+  backupLocation: "Documents\\Diorna Backups",
+  backupFrequency: "daily",
+  backupRetention: 10,
+  dashboardWidgetOrder: {
+    [studentId]: ["score", "agenda", "courses", "flashcards", "streaks", "recent", "recap"],
+    [personalId]: ["score", "agenda", "projects", "streaks", "recent", "recap"],
+  },
+  dashboardHiddenWidgets: {},
+  keymap: {
+    commandPalette: "Ctrl+K",
+    quickCapture: "Ctrl+Alt+Space",
+    toggleSidebar: "Ctrl+B",
+    closeTab: "Ctrl+W",
+    nextRecentTab: "Ctrl+Tab",
+    notes: "Ctrl+1",
+    maps: "Ctrl+2",
+    calendar: "Ctrl+3",
+    daily: "Ctrl+4",
+    recap: "Ctrl+5",
+    home: "Ctrl+0",
+    settings: "Ctrl+,",
+    newNote: "Ctrl+N",
+    newTask: "Ctrl+Shift+T",
+    toggleContext: "Ctrl+Shift+B",
+    splitHorizontal: "Ctrl+\\",
+    splitVertical: "Ctrl+Shift+\\",
+    workspace1: "Ctrl+Shift+1",
+    workspace2: "Ctrl+Shift+2",
+    workspace3: "Ctrl+Shift+3",
+    workspace4: "Ctrl+Shift+4",
+    workspace5: "Ctrl+Shift+5",
+    workspace6: "Ctrl+Shift+6",
+    workspace7: "Ctrl+Shift+7",
+    workspace8: "Ctrl+Shift+8",
+    workspace9: "Ctrl+Shift+9",
+  },
 };
 
 const baseWorkspaces: Workspace[] = [
@@ -551,12 +686,18 @@ const initial = {
   activeWorkspaceId: studentId,
   activeModule: "home" as ModuleId,
   sidebarOpen: true,
+  sidebarWidth: 248,
   rightPanelOpen: true,
   selectedCalendarItemId: undefined,
   selectedDailyHabitId: undefined,
   commandPaletteOpen: false,
   tabs: [{ id: "home", module: "home" as ModuleId, title: "Home", pinned: true }],
   activeTabId: "home",
+  recentTabIds: ["home"],
+  panes: [{ id: "pane-main", tabIds: ["home"], activeTabId: "home" }],
+  paneLayout: { kind: "pane" as const, paneId: "pane-main" },
+  activePaneId: "pane-main",
+  workspaceSessions: {},
   workspaces: baseWorkspaces,
   categories: baseCategories,
   courses: samples.courses,
@@ -609,11 +750,36 @@ export const useDiornaStore = create<DiornaState>()(
         for (const map of get().maps) void persistNativeCanvas(map);
       },
       setWorkspace: (id) =>
-        set({
-          activeWorkspaceId: id,
-          activeModule: "home",
-          tabs: [{ id: `home-${id}`, module: "home", title: "Home", pinned: true }],
-          activeTabId: `home-${id}`,
+        set((state) => {
+          if (id === state.activeWorkspaceId) return state;
+          const homeId = `home-${id}`;
+          const paneId = `pane-${id}`;
+          const workspaceSessions = {
+            ...state.workspaceSessions,
+            [state.activeWorkspaceId]: {
+              tabs: state.tabs,
+              panes: state.panes,
+              paneLayout: state.paneLayout,
+              activePaneId: state.activePaneId,
+              activeTabId: state.activeTabId,
+              activeModule: state.activeModule,
+              recentTabIds: state.recentTabIds,
+            },
+          };
+          const saved = workspaceSessions[id];
+          return {
+            activeWorkspaceId: id,
+            workspaceSessions,
+            ...(saved ?? {
+              activeModule: "home" as ModuleId,
+              tabs: [{ id: homeId, module: "home" as ModuleId, title: "Home", pinned: true }],
+              activeTabId: homeId,
+              recentTabIds: [homeId],
+              panes: [{ id: paneId, tabIds: [homeId], activeTabId: homeId }],
+              paneLayout: { kind: "pane" as const, paneId },
+              activePaneId: paneId,
+            }),
+          };
         }),
       setModule: (module) => {
         const id = `${module}-${get().activeWorkspaceId}`;
@@ -624,56 +790,188 @@ export const useDiornaStore = create<DiornaState>()(
         });
       },
       toggleSidebar: () => set((state) => ({ sidebarOpen: !state.sidebarOpen })),
+      setSidebarWidth: (width) =>
+        set({ sidebarWidth: Math.max(190, Math.min(420, Math.round(width))) }),
       toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
       selectCalendarItem: (id) => set({ selectedCalendarItemId: id }),
       selectDailyHabit: (id) => set({ selectedDailyHabitId: id }),
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
       openTab: (tab) =>
         set((state) => {
-          const id = tab.id ?? `${tab.module}-${tab.entityId ?? createId("tab")}`;
-          const existing = state.tabs.some((entry) => entry.id === id);
+          const pane =
+            state.panes.find((entry) => entry.id === state.activePaneId) ?? state.panes[0];
+          if (!pane) return state;
+          const existing = pane.tabIds
+            .map((id) => state.tabs.find((entry) => entry.id === id))
+            .find(
+              (entry) =>
+                entry &&
+                ((tab.id && entry.id === tab.id) ||
+                  (entry.module === tab.module && entry.entityId === tab.entityId)),
+            );
+          if (existing)
+            return {
+              activeTabId: existing.id,
+              activeModule: existing.module,
+              activePaneId: pane.id,
+              panes: state.panes.map((entry) =>
+                entry.id === pane.id ? { ...entry, activeTabId: existing.id } : entry,
+              ),
+              recentTabIds: [
+                existing.id,
+                ...state.recentTabIds.filter((entry) => entry !== existing.id),
+              ].slice(0, 50),
+            };
+          const requestedId = tab.id ?? `${tab.module}-${tab.entityId ?? createId("tab")}`;
+          const id = state.tabs.some((entry) => entry.id === requestedId)
+            ? `${requestedId}-${createId("pane")}`
+            : requestedId;
           return {
-            tabs: existing
-              ? state.tabs
-              : [...state.tabs, { ...tab, id, pinned: tab.pinned ?? false }],
+            tabs: [...state.tabs, { ...tab, id, pinned: tab.pinned ?? false }],
             activeTabId: id,
             activeModule: tab.module,
+            activePaneId: pane.id,
+            panes: state.panes.map((entry) =>
+              entry.id === pane.id
+                ? { ...entry, tabIds: [...entry.tabIds, id], activeTabId: id }
+                : entry,
+            ),
+            recentTabIds: [id, ...state.recentTabIds.filter((entry) => entry !== id)].slice(0, 50),
           };
         }),
       closeTab: (id) =>
         set((state) => {
-          const tabs = state.tabs.filter((tab) => tab.id !== id);
-          const next =
-            state.activeTabId === id
-              ? tabs.at(-1)
-              : state.tabs.find((tab) => tab.id === state.activeTabId);
+          const tab = state.tabs.find((entry) => entry.id === id);
+          if (!tab || tab.pinned) return state;
+          const pane = state.panes.find((entry) => entry.tabIds.includes(id));
+          if (!pane) return state;
+          const nextIds = pane.tabIds.filter((entry) => entry !== id);
+          const nextId = pane.activeTabId === id ? nextIds.at(-1) : pane.activeTabId;
+          if (!nextId) return state;
+          const panes = state.panes.map((entry) =>
+            entry.id === pane.id ? { ...entry, tabIds: nextIds, activeTabId: nextId } : entry,
+          );
+          const stillUsed = panes.some((entry) => entry.tabIds.includes(id));
+          const tabs = stillUsed ? state.tabs : state.tabs.filter((entry) => entry.id !== id);
+          const next = tabs.find((entry) => entry.id === nextId);
+          const activeChanged = state.activePaneId === pane.id && state.activeTabId === id;
           return {
             tabs,
-            activeTabId: next?.id ?? "",
-            activeModule: next?.module ?? "home",
+            panes,
+            activeTabId: activeChanged ? (next?.id ?? state.activeTabId) : state.activeTabId,
+            activeModule: activeChanged ? (next?.module ?? state.activeModule) : state.activeModule,
+            recentTabIds: state.recentTabIds.filter((entry) => entry !== id),
           };
         }),
       setActiveTab: (id) =>
-        set((state) => ({
-          activeTabId: id,
-          activeModule: state.tabs.find((tab) => tab.id === id)?.module ?? state.activeModule,
-        })),
+        set((state) => {
+          const pane = state.panes.find((entry) => entry.tabIds.includes(id));
+          const tab = state.tabs.find((entry) => entry.id === id);
+          if (!pane || !tab) return state;
+          return {
+            activeTabId: id,
+            activeModule: tab.module,
+            activePaneId: pane.id,
+            panes: state.panes.map((entry) =>
+              entry.id === pane.id ? { ...entry, activeTabId: id } : entry,
+            ),
+            recentTabIds: [id, ...state.recentTabIds.filter((entry) => entry !== id)].slice(0, 50),
+          };
+        }),
+      setActivePane: (id) =>
+        set((state) => {
+          const pane = state.panes.find((entry) => entry.id === id);
+          const tab = pane && state.tabs.find((entry) => entry.id === pane.activeTabId);
+          if (!pane || !tab) return state;
+          return {
+            activePaneId: pane.id,
+            activeTabId: tab.id,
+            activeModule: tab.module,
+            recentTabIds: [tab.id, ...state.recentTabIds.filter((entry) => entry !== tab.id)].slice(
+              0,
+              50,
+            ),
+          };
+        }),
       setTabPinned: (id, pinned) =>
         set((state) => ({
           tabs: state.tabs.map((tab) => (tab.id === id ? { ...tab, pinned } : tab)),
         })),
       reorderTabs: (sourceId, targetId) =>
         set((state) => {
-          const source = state.tabs.findIndex((tab) => tab.id === sourceId);
-          const target = state.tabs.findIndex((tab) => tab.id === targetId);
-          if (source < 0 || target < 0 || source === target) return state;
-          const tabs = [...state.tabs];
-          const [moved] = tabs.splice(source, 1);
-          if (moved) tabs.splice(target, 0, moved);
-          return { tabs };
+          const pane = state.panes.find(
+            (entry) => entry.tabIds.includes(sourceId) && entry.tabIds.includes(targetId),
+          );
+          if (!pane) return state;
+          const source = pane.tabIds.indexOf(sourceId);
+          const target = pane.tabIds.indexOf(targetId);
+          if (source === target) return state;
+          const tabIds = [...pane.tabIds];
+          const [moved] = tabIds.splice(source, 1);
+          if (moved) tabIds.splice(target, 0, moved);
+          return {
+            panes: state.panes.map((entry) =>
+              entry.id === pane.id ? { ...entry, tabIds } : entry,
+            ),
+          };
         }),
+      splitPane: (direction) =>
+        set((state) => {
+          if (state.panes.length >= 4) return state;
+          const sourcePane =
+            state.panes.find((entry) => entry.id === state.activePaneId) ?? state.panes[0];
+          const sourceTab =
+            sourcePane && state.tabs.find((entry) => entry.id === sourcePane.activeTabId);
+          if (!sourcePane || !sourceTab) return state;
+          const paneId = createId("pane");
+          const tabId = `${sourceTab.id}-${paneId}`;
+          const splitId = createId("split");
+          const clonedTab = { ...sourceTab, id: tabId, pinned: false };
+          return {
+            tabs: [...state.tabs, clonedTab],
+            panes: [...state.panes, { id: paneId, tabIds: [tabId], activeTabId: tabId }],
+            paneLayout: replacePaneNode(state.paneLayout, sourcePane.id, {
+              kind: "split",
+              id: splitId,
+              direction,
+              ratio: 0.5,
+              first: { kind: "pane", paneId: sourcePane.id },
+              second: { kind: "pane", paneId },
+            }),
+            activePaneId: paneId,
+            activeTabId: tabId,
+            activeModule: clonedTab.module,
+            recentTabIds: [tabId, ...state.recentTabIds].slice(0, 50),
+          };
+        }),
+      closePane: (id) =>
+        set((state) => {
+          if (state.panes.length <= 1) return state;
+          const pane = state.panes.find((entry) => entry.id === id);
+          const paneLayout = removePaneNode(state.paneLayout, id);
+          if (!pane || !paneLayout) return state;
+          const panes = state.panes.filter((entry) => entry.id !== id);
+          const referenced = new Set(panes.flatMap((entry) => entry.tabIds));
+          const tabs = state.tabs.filter((entry) => referenced.has(entry.id));
+          const nextPane = panes.find((entry) => entry.id === state.activePaneId) ?? panes[0]!;
+          const next = tabs.find((entry) => entry.id === nextPane.activeTabId)!;
+          return {
+            panes,
+            paneLayout,
+            tabs,
+            activePaneId: nextPane.id,
+            activeTabId: next.id,
+            activeModule: next.module,
+            recentTabIds: state.recentTabIds.filter((entry) => referenced.has(entry)),
+          };
+        }),
+      setSplitRatio: (id, ratio) =>
+        set((state) => ({
+          paneLayout: updateSplitRatio(state.paneLayout, id, Math.max(0.2, Math.min(0.8, ratio))),
+        })),
       addNote: (title = "Untitled") => {
         const workspaceId = get().activeWorkspaceId;
+        const settings = get().settings;
         const usedTitles = new Set(
           get()
             .notes.filter((entry) => entry.workspaceId === workspaceId && !entry.trashedAt)
@@ -686,12 +984,17 @@ export const useDiornaStore = create<DiornaState>()(
           uniqueTitle = `${requestedTitle} ${suffix}`;
           suffix += 1;
         }
+        const folder =
+          settings.defaultNoteFolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") || "notes";
+        const template = get().templates.find(
+          (entry) => entry.id === settings.defaultTemplateId && entry.workspaceId === workspaceId,
+        );
         const note: Note = {
           id: createId("note"),
           workspaceId,
-          path: `notes/${uniqueTitle}.md`,
+          path: `${folder.startsWith("notes") ? folder : `notes/${folder}`}/${uniqueTitle}.md`,
           title: uniqueTitle,
-          body: "<p></p>",
+          body: template?.body ?? "<p></p>",
           tags: [],
           properties: {},
           createdAt: new Date().toISOString(),
@@ -702,6 +1005,84 @@ export const useDiornaStore = create<DiornaState>()(
         void persistNativeNote(note);
         return note;
       },
+      duplicateNote: (id) => {
+        const source = get().notes.find(
+          (entry) => entry.id === id && entry.workspaceId === get().activeWorkspaceId,
+        );
+        if (!source) return undefined;
+        const copy = get().addNote(`${source.title} copy`);
+        const folder = source.path.replace(/[^/]+\.md$/, "");
+        get().updateNote(copy.id, {
+          body: source.body,
+          tags: [...source.tags],
+          properties: structuredClone(source.properties),
+          wordCount: source.wordCount,
+          starred: source.starred,
+          path: `${folder}${copy.title}.md`,
+          ...(source.courseId ? { courseId: source.courseId } : {}),
+        });
+        return get().notes.find((entry) => entry.id === copy.id);
+      },
+      trashNote: (id) => {
+        const note = get().notes.find(
+          (entry) => entry.id === id && entry.workspaceId === get().activeWorkspaceId,
+        );
+        if (!note || note.trashedAt) return;
+        const trashedAt = new Date().toISOString();
+        set((state) => ({
+          notes: state.notes.map((entry) => (entry.id === id ? { ...entry, trashedAt } : entry)),
+        }));
+        void trashNativeFile(note.workspaceId, "notes", note.path.replace(/^notes[\\/]/, "")).catch(
+          (error: unknown) => {
+            console.error("Unable to move note to native trash", error);
+            set((state) => ({
+              notes: state.notes.map((entry) =>
+                entry.id === id ? { ...entry, trashedAt: undefined } : entry,
+              ),
+            }));
+          },
+        );
+      },
+      restoreFileTrash: (kind, originalPath, restoredPath) =>
+        set((state) =>
+          kind === "notes"
+            ? {
+                notes: state.notes.map((entry) =>
+                  entry.path.replace(/^notes[\\/]/, "") === originalPath
+                    ? {
+                        ...entry,
+                        path: `notes/${restoredPath || originalPath}`,
+                        trashedAt: undefined,
+                      }
+                    : entry,
+                ),
+              }
+            : {
+                maps: state.maps.map((entry) =>
+                  entry.path.replace(/^maps[\\/]/, "") === originalPath
+                    ? {
+                        ...entry,
+                        path: `maps/${restoredPath || originalPath}`,
+                        trashedAt: undefined,
+                      }
+                    : entry,
+                ),
+              },
+        ),
+      purgeFileTrash: (kind, originalPath) =>
+        set((state) =>
+          kind === "notes"
+            ? {
+                notes: state.notes.filter(
+                  (entry) => entry.path.replace(/^notes[\\/]/, "") !== originalPath,
+                ),
+              }
+            : {
+                maps: state.maps.filter(
+                  (entry) => entry.path.replace(/^maps[\\/]/, "") !== originalPath,
+                ),
+              },
+        ),
       updateNote: (id, changes) => {
         const previous = get().notes.find((entry) => entry.id === id);
         const renamed = Boolean(previous && changes.title && previous.title !== changes.title);
@@ -1075,6 +1456,39 @@ export const useDiornaStore = create<DiornaState>()(
         void persistNativeCanvas(map);
         return map;
       },
+      duplicateMap: (id) => {
+        const source = get().maps.find(
+          (entry) => entry.id === id && entry.workspaceId === get().activeWorkspaceId,
+        );
+        if (!source) return undefined;
+        const copy = get().addMap(`${source.name} copy`);
+        get().updateMap(copy.id, {
+          nodes: structuredClone(source.nodes),
+          edges: structuredClone(source.edges),
+          ...(source.parentMapId ? { parentMapId: source.parentMapId } : {}),
+        });
+        return get().maps.find((entry) => entry.id === copy.id);
+      },
+      trashMap: (id) => {
+        const map = get().maps.find(
+          (entry) => entry.id === id && entry.workspaceId === get().activeWorkspaceId,
+        );
+        if (!map || map.trashedAt) return;
+        const trashedAt = new Date().toISOString();
+        set((state) => ({
+          maps: state.maps.map((entry) => (entry.id === id ? { ...entry, trashedAt } : entry)),
+        }));
+        void trashNativeFile(map.workspaceId, "maps", map.path.replace(/^maps[\\/]/, "")).catch(
+          (error: unknown) => {
+            console.error("Unable to move map to native trash", error);
+            set((state) => ({
+              maps: state.maps.map((entry) =>
+                entry.id === id ? { ...entry, trashedAt: undefined } : entry,
+              ),
+            }));
+          },
+        );
+      },
       updateMap: (id, changes) => {
         set((state) => ({
           maps: state.maps.map((map) =>
@@ -1155,6 +1569,18 @@ export const useDiornaStore = create<DiornaState>()(
         void persistNativeNote(updated).catch((error: unknown) =>
           console.error("Native note save failed", error),
         );
+      },
+      restoreItem: (id) => get().updateItem(id, { trashedAt: undefined }),
+      purgeItem: (id) =>
+        set((state) => ({ items: state.items.filter((entry) => entry.id !== id) })),
+      purgeExpiredTrash: (now = new Date().toISOString()) => {
+        const cutoff = new Date(now).getTime() - 30 * 86_400_000;
+        const keep = (trashedAt?: string) => !trashedAt || new Date(trashedAt).getTime() > cutoff;
+        set((state) => ({
+          notes: state.notes.filter((entry) => keep(entry.trashedAt)),
+          maps: state.maps.filter((entry) => keep(entry.trashedAt)),
+          items: state.items.filter((entry) => keep(entry.trashedAt)),
+        }));
       },
       addHabit: (data) => {
         const habit: Habit = {
@@ -1400,18 +1826,79 @@ export const useDiornaStore = create<DiornaState>()(
             workspace.id === id ? { ...workspace, name } : workspace,
           ),
         })),
+      updateWorkspace: (id, changes) =>
+        set((state) => ({
+          workspaces: state.workspaces.map((workspace) =>
+            workspace.id === id ? { ...workspace, ...changes } : workspace,
+          ),
+        })),
+      moveWorkspace: (id, direction) =>
+        set((state) => {
+          const ordered = [...state.workspaces].sort((a, b) => a.sortOrder - b.sortOrder);
+          const index = ordered.findIndex((workspace) => workspace.id === id);
+          const target = index + direction;
+          if (index < 0 || target < 0 || target >= ordered.length) return state;
+          [ordered[index], ordered[target]] = [ordered[target]!, ordered[index]!];
+          return {
+            workspaces: ordered.map((workspace, sortOrder) => ({ ...workspace, sortOrder })),
+          };
+        }),
       deleteWorkspace: (id) =>
-        set((state) =>
-          state.workspaces.length <= 1
-            ? state
-            : {
-                workspaces: state.workspaces.filter((workspace) => workspace.id !== id),
-                activeWorkspaceId:
-                  state.activeWorkspaceId === id
-                    ? state.workspaces.find((workspace) => workspace.id !== id)!.id
-                    : state.activeWorkspaceId,
-              },
-        ),
+        set((state) => {
+          if (state.workspaces.length <= 1) return state;
+          const workspaces = state.workspaces
+            .filter((workspace) => workspace.id !== id)
+            .map((workspace, sortOrder) => ({ ...workspace, sortOrder }));
+          const activeWorkspaceId =
+            state.activeWorkspaceId === id ? workspaces[0]!.id : state.activeWorkspaceId;
+          const deletingActive = state.activeWorkspaceId === id;
+          const homeId = `home-${activeWorkspaceId}`;
+          const paneId = `pane-${activeWorkspaceId}`;
+          const dashboardWidgetOrder = { ...state.settings.dashboardWidgetOrder };
+          const dashboardHiddenWidgets = { ...state.settings.dashboardHiddenWidgets };
+          const workspaceSessions = { ...state.workspaceSessions };
+          delete dashboardWidgetOrder[id];
+          delete dashboardHiddenWidgets[id];
+          delete workspaceSessions[id];
+          return {
+            workspaces,
+            activeWorkspaceId,
+            categories: state.categories.filter((entry) => entry.workspaceId !== id),
+            courses: state.courses.filter((entry) => entry.workspaceId !== id),
+            templates: state.templates.filter((entry) => entry.workspaceId !== id),
+            flashcards: state.flashcards.filter((entry) => entry.workspaceId !== id),
+            reviewLogs: state.reviewLogs.filter((entry) => entry.workspaceId !== id),
+            references: state.references.filter((entry) => entry.workspaceId !== id),
+            notes: state.notes.filter((entry) => entry.workspaceId !== id),
+            maps: state.maps.filter((entry) => entry.workspaceId !== id),
+            items: state.items.filter((entry) => entry.workspaceId !== id),
+            habits: state.habits.filter((entry) => entry.workspaceId !== id),
+            habitEntries: state.habitEntries.filter((entry) => entry.workspaceId !== id),
+            metrics: state.metrics.filter((entry) => entry.workspaceId !== id),
+            metricEntries: state.metricEntries.filter((entry) => entry.workspaceId !== id),
+            recaps: state.recaps.filter((entry) => entry.workspaceId !== id),
+            settings: {
+              ...state.settings,
+              dashboardWidgetOrder,
+              dashboardHiddenWidgets,
+              ...(state.settings.defaultWorkspaceId === id
+                ? { defaultWorkspaceId: activeWorkspaceId }
+                : {}),
+            },
+            workspaceSessions,
+            ...(deletingActive
+              ? {
+                  activeModule: "home" as ModuleId,
+                  tabs: [{ id: homeId, module: "home" as ModuleId, title: "Home", pinned: true }],
+                  activeTabId: homeId,
+                  recentTabIds: [homeId],
+                  panes: [{ id: paneId, tabIds: [homeId], activeTabId: homeId }],
+                  paneLayout: { kind: "pane" as const, paneId },
+                  activePaneId: paneId,
+                }
+              : {}),
+          };
+        }),
       resetAll: () => set({ ...initial }),
     }),
     {
@@ -1419,10 +1906,25 @@ export const useDiornaStore = create<DiornaState>()(
       partialize: (state) => state,
       merge: (persisted, current) => {
         const saved = persisted as Partial<DiornaState>;
+        const fallbackPaneId = "pane-main";
+        const fallbackTabId = saved.activeTabId ?? saved.tabs?.[0]?.id ?? "home";
+        const panes = saved.panes?.length
+          ? saved.panes
+          : [
+              {
+                id: fallbackPaneId,
+                tabIds: (saved.tabs ?? current.tabs).map((tab) => tab.id),
+                activeTabId: fallbackTabId,
+              },
+            ];
         return {
           ...current,
           ...saved,
           settings: { ...defaultSettings, ...(saved.settings ?? {}) },
+          panes,
+          paneLayout:
+            saved.paneLayout ?? ({ kind: "pane", paneId: panes[0]!.id } as PaneLayoutNode),
+          activePaneId: saved.activePaneId ?? panes[0]!.id,
         };
       },
     },

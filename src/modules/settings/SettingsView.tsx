@@ -4,6 +4,7 @@ import {
   ArrowDown,
   ArrowUp,
   Bell,
+  BookOpen,
   Database,
   Download,
   FolderOpen,
@@ -27,11 +28,27 @@ import {
   chooseAndBackupVault,
   chooseAndExportVault,
   chooseAndImport,
+  chooseAndMoveVault,
+  chooseAndRestoreBackup,
+  chooseDirectory,
+  deleteNativeWorkspace,
+  getNativeVaultInfo,
+  listNativeTrash,
   openExternalUrl,
+  openNativeVault,
+  persistNativeKeymap,
+  purgeNativeTrash,
+  readNativeKeymap,
+  readNativeFileContent,
+  rebuildNativeIndex,
+  restoreNativeTrash,
   storeNativeApiKey,
+  type NativeVaultInfo,
+  type NativeTrashRecord,
 } from "@/core/native";
 import thirdPartyNotices from "../../../THIRD_PARTY_NOTICES.md?raw";
 import projectLicense from "../../../LICENSE?raw";
+import releaseNotes from "../../../CHANGELOG.md?raw";
 import { listOllamaModels } from "@/modules/recap/summarizer";
 
 const sections = [
@@ -50,11 +67,42 @@ const sections = [
   ["about", "About", ShieldCheck],
 ] as const;
 
+const sectionKeywords: Record<string, string> = {
+  general: "language windows launch tray default workspace update channel",
+  appearance: "theme accent font size line width density",
+  vault: "location move explorer re-index storage usage",
+  workspaces: "create rename color reorder delete dashboard layout",
+  editor: "spell check language brackets tab folder template",
+  categories: "name color icon order",
+  calendar: "week start visible hours duration reminder",
+  daily: "window future check-in week start",
+  recap: "provider endpoint model api key automatic privacy",
+  shortcuts: "keymap keyboard conflict reset",
+  backup: "location frequency retention restore",
+  import: "obsidian notion export vault",
+  about: "version licence notices repository release notes",
+};
+
+const dashboardLabels: Record<string, string> = {
+  score: "Today’s completion",
+  agenda: "Agenda and deadlines",
+  courses: "Courses",
+  flashcards: "Flashcards due",
+  projects: "Active projects",
+  streaks: "Current streaks",
+  recent: "Recently edited",
+  recap: "Monthly recap",
+};
+
 export function SettingsView() {
   const state = useDiornaStore();
-  const [active, setActive] = useState("general");
+  const [active, setActive] = useState(() => {
+    const requested = localStorage.getItem("diorna-settings-section")?.toLocaleLowerCase();
+    return sections.find(([, label]) => label.toLocaleLowerCase() === requested)?.[0] ?? "general";
+  });
   const [query, setQuery] = useState("");
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
+  const [vaultInfo, setVaultInfo] = useState<NativeVaultInfo>();
   const [ollamaStatus, setOllamaStatus] = useState<"idle" | "checking" | "ready" | "offline">(
     "idle",
   );
@@ -68,8 +116,20 @@ export function SettingsView() {
       })
       .catch(() => setOllamaStatus("offline"));
   }, [state.settings.recapProvider]);
+  useEffect(() => {
+    void getNativeVaultInfo().then((info) => info && setVaultInfo(info));
+    void readNativeKeymap().then((keymap) => {
+      if (keymap) {
+        const current = useDiornaStore.getState();
+        current.updateSettings({ keymap: { ...current.settings.keymap, ...keymap } });
+      }
+    });
+  }, []);
   const visible = useMemo(
-    () => sections.filter(([, label]) => label.toLowerCase().includes(query.toLowerCase())),
+    () =>
+      sections.filter(([id, label]) =>
+        `${label} ${sectionKeywords[id]}`.toLowerCase().includes(query.toLowerCase()),
+      ),
     [query],
   );
   return (
@@ -84,7 +144,14 @@ export function SettingsView() {
           />
         </div>
         {visible.map(([id, label, Icon]) => (
-          <button key={id} className={active === id ? "active" : ""} onClick={() => setActive(id)}>
+          <button
+            key={id}
+            className={active === id ? "active" : ""}
+            onClick={() => {
+              setActive(id);
+              localStorage.setItem("diorna-settings-section", label);
+            }}
+          >
             <Icon />
             {label}
           </button>
@@ -95,7 +162,7 @@ export function SettingsView() {
           <span className="eyebrow">Preferences</span>
           <h1>{sections.find(([id]) => id === active)?.[1]}</h1>
         </header>
-        {renderSection(active, state, ollamaModels, ollamaStatus)}
+        {renderSection(active, state, ollamaModels, ollamaStatus, vaultInfo, setVaultInfo)}
       </div>
     </div>
   );
@@ -106,6 +173,8 @@ function renderSection(
   state: ReturnType<typeof useDiornaStore.getState>,
   ollamaModels: string[],
   ollamaStatus: "idle" | "checking" | "ready" | "offline",
+  vaultInfo: NativeVaultInfo | undefined,
+  setVaultInfo: (info: NativeVaultInfo) => void,
 ) {
   if (active === "appearance")
     return (
@@ -152,41 +221,134 @@ function renderSection(
           </select>
         </Field>
         <Field label="Interface font">
-          <select>
-            <option>System UI</option>
-            <option>Inter</option>
+          <select
+            value={state.settings.interfaceFont}
+            onChange={(event) => state.updateSettings({ interfaceFont: event.target.value })}
+          >
+            <option value="system-ui">System UI</option>
+            <option value="Inter">Inter</option>
+            <option value="Cascadia Code">Cascadia Code</option>
           </select>
         </Field>
         <Field label="Editor font">
-          <select>
-            <option>System sans</option>
-            <option>Source Serif</option>
-            <option>Inter</option>
+          <select
+            value={state.settings.editorFont}
+            onChange={(event) => state.updateSettings({ editorFont: event.target.value })}
+          >
+            <option value="system-ui">System sans</option>
+            <option value="Charter">Charter</option>
+            <option value="Georgia">Georgia</option>
+            <option value="Inter">Inter</option>
+            <option value="Cascadia Code">Cascadia Code</option>
           </select>
+        </Field>
+        <Field label="Editor font size">
+          <div className="range-fields">
+            <input
+              type="range"
+              min={12}
+              max={24}
+              value={state.settings.editorFontSize}
+              onChange={(event) =>
+                state.updateSettings({ editorFontSize: Number(event.target.value) })
+              }
+            />
+            <output>{state.settings.editorFontSize}px</output>
+          </div>
+        </Field>
+        <Field label="Editor line width">
+          <div className="range-fields">
+            <input
+              type="range"
+              min={520}
+              max={1200}
+              step={20}
+              value={state.settings.editorLineWidth}
+              onChange={(event) =>
+                state.updateSettings({ editorLineWidth: Number(event.target.value) })
+              }
+            />
+            <output>{state.settings.editorLineWidth}px</output>
+          </div>
         </Field>
       </SettingsGroup>
     );
   if (active === "workspaces")
     return (
-      <SettingsGroup title="Workspaces" description="Data is isolated at the storage boundary.">
-        {state.workspaces.map((workspace) => (
-          <div className="workspace-setting" key={workspace.id}>
-            <i style={{ background: workspace.color }} />
-            <input
-              value={workspace.name}
-              onChange={(event) => state.renameWorkspace(workspace.id, event.target.value)}
-            />
-            <span>{workspace.kind}</span>
-            <button>•••</button>
-          </div>
-        ))}
-        <button
-          className="button icon-text"
-          onClick={() => state.addWorkspace(`Workspace ${state.workspaces.length + 1}`, "#657287")}
+      <>
+        <SettingsGroup title="Workspaces" description="Data is isolated at the storage boundary.">
+          {[...state.workspaces]
+            .sort((a, b) => a.sortOrder - b.sortOrder)
+            .map((workspace, index) => (
+              <div className="workspace-setting" key={workspace.id}>
+                <input
+                  type="color"
+                  aria-label={`${workspace.name} color`}
+                  value={workspace.color}
+                  onChange={(event) =>
+                    state.updateWorkspace(workspace.id, { color: event.target.value })
+                  }
+                />
+                <input
+                  aria-label="Workspace name"
+                  value={workspace.name}
+                  onChange={(event) =>
+                    state.updateWorkspace(workspace.id, { name: event.target.value })
+                  }
+                />
+                <span>{workspace.kind}</span>
+                <button
+                  className="icon-button"
+                  aria-label={`Move ${workspace.name} up`}
+                  disabled={index === 0}
+                  onClick={() => state.moveWorkspace(workspace.id, -1)}
+                >
+                  <ArrowUp />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label={`Move ${workspace.name} down`}
+                  disabled={index === state.workspaces.length - 1}
+                  onClick={() => state.moveWorkspace(workspace.id, 1)}
+                >
+                  <ArrowDown />
+                </button>
+                <button
+                  className="icon-button danger"
+                  aria-label={`Delete ${workspace.name}`}
+                  disabled={state.workspaces.length <= 1}
+                  onClick={() => {
+                    const confirmation = window.prompt(
+                      `Type ${workspace.name} to permanently delete this workspace`,
+                    );
+                    if (confirmation === workspace.name)
+                      void deleteNativeWorkspace(workspace.id)
+                        .then(() => state.deleteWorkspace(workspace.id))
+                        .catch((error: unknown) =>
+                          window.alert(`Unable to delete workspace: ${String(error)}`),
+                        );
+                  }}
+                >
+                  <Trash2 />
+                </button>
+              </div>
+            ))}
+          <button
+            className="button icon-text"
+            onClick={() =>
+              state.addWorkspace(`Workspace ${state.workspaces.length + 1}`, "#657287")
+            }
+          >
+            <Plus /> New workspace
+          </button>
+        </SettingsGroup>
+        <SettingsGroup
+          title="Dashboard layout"
+          description="Order or hide widgets for the active workspace. You can also drag them on Home."
         >
-          <Plus /> New workspace
-        </button>
-      </SettingsGroup>
+          <DashboardLayoutSettings state={state} />
+        </SettingsGroup>
+      </>
     );
   if (active === "categories") {
     const categories = state.categories
@@ -342,6 +504,114 @@ function renderSection(
         <small>Individual items can override this with one or more reminder times.</small>
       </SettingsGroup>
     );
+  if (active === "editor")
+    return (
+      <SettingsGroup
+        title="Editor defaults"
+        description="These defaults apply to new editor sessions; note-specific view options can still override them."
+      >
+        <Toggle
+          label="Spell-check"
+          description="Use the Windows spell-check service while typing."
+          checked={state.settings.spellCheck}
+          onChange={(spellCheck) => state.updateSettings({ spellCheck })}
+        />
+        <Field label="Spell-check language">
+          <select
+            value={state.settings.spellCheckLanguage}
+            onChange={(event) =>
+              state.updateSettings({
+                spellCheckLanguage: event.target.value as "en-US" | "fr-FR",
+              })
+            }
+          >
+            <option value="en-US">English (United States)</option>
+            <option value="fr-FR">Français (France)</option>
+          </select>
+        </Field>
+        <Toggle
+          label="Auto-pair brackets"
+          description="Insert the closing bracket, brace, quote, or parenthesis."
+          checked={state.settings.autoPairBrackets}
+          onChange={(autoPairBrackets) => state.updateSettings({ autoPairBrackets })}
+        />
+        <Field label="Tab key">
+          <select
+            value={state.settings.tabBehavior}
+            onChange={(event) =>
+              state.updateSettings({ tabBehavior: event.target.value as "indent" | "focus" })
+            }
+          >
+            <option value="indent">Indent the current block</option>
+            <option value="focus">Move focus to the next control</option>
+          </select>
+        </Field>
+        <Field label="Default new-note folder">
+          <input
+            value={state.settings.defaultNoteFolder}
+            onChange={(event) => state.updateSettings({ defaultNoteFolder: event.target.value })}
+            placeholder="notes"
+          />
+        </Field>
+        <Field label="Default template">
+          <select
+            value={state.settings.defaultTemplateId}
+            onChange={(event) => state.updateSettings({ defaultTemplateId: event.target.value })}
+          >
+            <option value="">None</option>
+            {state.templates
+              .filter((template) => template.workspaceId === state.activeWorkspaceId)
+              .map((template) => (
+                <option value={template.id} key={template.id}>
+                  {template.name}
+                </option>
+              ))}
+          </select>
+        </Field>
+      </SettingsGroup>
+    );
+  if (active === "shortcuts") {
+    const conflicts = shortcutConflicts(state.settings.keymap);
+    return (
+      <SettingsGroup
+        title="Keyboard shortcuts"
+        description="Changes are written to .app/keymap.json. Duplicate shortcuts are highlighted."
+      >
+        <div className="shortcut-list">
+          {Object.entries(state.settings.keymap).map(([command, shortcut]) => {
+            const conflict = conflicts.has(command);
+            return (
+              <label className={conflict ? "conflict" : ""} key={command}>
+                <span>{shortcutLabel(command)}</span>
+                <input
+                  value={shortcut}
+                  aria-invalid={conflict}
+                  onChange={(event) => {
+                    const keymap = { ...state.settings.keymap, [command]: event.target.value };
+                    state.updateSettings({ keymap });
+                    void persistNativeKeymap(keymap);
+                  }}
+                />
+                {conflict && <small>Conflict</small>}
+              </label>
+            );
+          })}
+        </div>
+        <div className="button-row">
+          <button
+            className="button"
+            onClick={() => {
+              const keymap = defaultKeymap();
+              state.updateSettings({ keymap });
+              void persistNativeKeymap(keymap);
+            }}
+          >
+            <RotateCcw /> Reset to defaults
+          </button>
+        </div>
+      </SettingsGroup>
+    );
+  }
   if (active === "recap")
     return (
       <>
@@ -457,32 +727,62 @@ function renderSection(
     );
   if (active === "vault")
     return (
-      <SettingsGroup
-        title="Vault location"
-        description="Markdown notes and Canvas JSON remain the source of truth."
-      >
-        <Field label="Current location">
-          <div className="path-field">
-            <code>Documents\Diorna</code>
-            <button className="button">
-              <FolderOpen /> Open
+      <>
+        <SettingsGroup
+          title="Vault location"
+          description="Markdown notes and Canvas JSON remain the source of truth."
+        >
+          <Field label="Current location">
+            <div className="path-field">
+              <code>{vaultInfo?.path ?? state.settings.vaultLocation}</code>
+              <button className="button" onClick={() => void openNativeVault()}>
+                <FolderOpen /> Open
+              </button>
+            </div>
+          </Field>
+          <div className="storage-card">
+            <HardDrive />
+            <span>
+              <strong>{formatBytes(vaultInfo?.totalBytes ?? 0)} used</strong>
+              <small>
+                {vaultInfo?.workspaces
+                  .map((workspace) => `${workspace.name} ${formatBytes(workspace.bytes)}`)
+                  .join(" · ") ?? "Open the desktop build to inspect storage"}
+              </small>
+            </span>
+          </div>
+          <div className="button-row">
+            <button
+              className="button"
+              onClick={() =>
+                void chooseAndMoveVault()
+                  .then((info) => {
+                    if (!info) return;
+                    setVaultInfo(info);
+                    state.updateSettings({ vaultLocation: info.path });
+                  })
+                  .catch((error: unknown) => window.alert(`Unable to move vault: ${String(error)}`))
+              }
+            >
+              Move vault…
+            </button>
+            <button
+              className="button"
+              onClick={() =>
+                void rebuildNativeIndex()
+                  .then((count) => {
+                    window.alert(`Index rebuilt from ${count} files.`);
+                    return getNativeVaultInfo();
+                  })
+                  .then((info) => info && setVaultInfo(info))
+              }
+            >
+              <RotateCcw /> Re-index
             </button>
           </div>
-        </Field>
-        <div className="storage-card">
-          <HardDrive />
-          <span>
-            <strong>12.4 MB used</strong>
-            <small>Notes 2.1 MB · Attachments 9.8 MB · Index 0.5 MB</small>
-          </span>
-        </div>
-        <div className="button-row">
-          <button className="button">Move vault…</button>
-          <button className="button">
-            <RotateCcw /> Re-index
-          </button>
-        </div>
-      </SettingsGroup>
+        </SettingsGroup>
+        <TrashManager state={state} />
+      </>
     );
   if (active === "backup")
     return (
@@ -492,25 +792,59 @@ function renderSection(
       >
         <Field label="Backup location">
           <div className="path-field">
-            <code>Documents\Diorna Backups</code>
-            <button className="button">Choose…</button>
+            <code>{state.settings.backupLocation}</code>
+            <button
+              className="button"
+              onClick={() =>
+                void chooseDirectory("Choose backup folder").then(
+                  (backupLocation) => backupLocation && state.updateSettings({ backupLocation }),
+                )
+              }
+            >
+              Choose…
+            </button>
           </div>
         </Field>
         <Field label="Frequency">
-          <select>
-            <option>Daily</option>
-            <option>Weekly</option>
-            <option>On launch</option>
+          <select
+            value={state.settings.backupFrequency}
+            onChange={(event) =>
+              state.updateSettings({
+                backupFrequency: event.target.value as "daily" | "weekly" | "launch",
+              })
+            }
+          >
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="launch">On launch</option>
           </select>
         </Field>
         <Field label="Retention">
-          <input type="number" defaultValue={10} />
+          <input
+            type="number"
+            min={1}
+            max={100}
+            value={state.settings.backupRetention}
+            onChange={(event) =>
+              state.updateSettings({
+                backupRetention: Math.max(1, Math.min(100, Number(event.target.value))),
+              })
+            }
+          />
         </Field>
         <div className="button-row">
-          <button className="button primary" onClick={() => void chooseAndBackupVault()}>
+          <button
+            className="button primary"
+            onClick={() =>
+              void chooseAndBackupVault(
+                state.settings.backupLocation,
+                state.settings.backupRetention,
+              )
+            }
+          >
             <Download /> Back up now
           </button>
-          <button className="button">
+          <button className="button" onClick={() => void chooseAndRestoreBackup()}>
             <ArchiveRestore /> Restore…
           </button>
         </div>
@@ -585,6 +919,33 @@ function renderSection(
             checked={state.settings.minimizeToTray}
             onChange={(checked) => state.updateSettings({ minimizeToTray: checked })}
           />
+          <Field label="Default workspace on launch">
+            <select
+              value={state.settings.defaultWorkspaceId}
+              onChange={(event) => state.updateSettings({ defaultWorkspaceId: event.target.value })}
+            >
+              <option value="">Last used workspace</option>
+              {state.workspaces
+                .slice()
+                .sort((a, b) => a.sortOrder - b.sortOrder)
+                .map((workspace) => (
+                  <option value={workspace.id} key={workspace.id}>
+                    {workspace.name}
+                  </option>
+                ))}
+            </select>
+          </Field>
+          <Field label="Update channel">
+            <select
+              value={state.settings.updateChannel}
+              onChange={(event) =>
+                state.updateSettings({ updateChannel: event.target.value as "stable" | "beta" })
+              }
+            >
+              <option value="stable">Stable</option>
+              <option value="beta">Beta</option>
+            </select>
+          </Field>
           <Toggle
             label="Automatic updates"
             description="Disable for a fully manual update workflow."
@@ -614,6 +975,21 @@ function renderSection(
               <option value="7">7 days</option>
               <option value="14">14 days</option>
               <option value="30">30 days</option>
+              <option value="week">Current week</option>
+              <option value="month">Current month</option>
+            </select>
+          </Field>
+          <Field label="Week starts on">
+            <select
+              value={state.settings.dailyWeekStartsOn}
+              onChange={(event) =>
+                state.updateSettings({
+                  dailyWeekStartsOn: Number(event.target.value) as 0 | 1,
+                })
+              }
+            >
+              <option value={1}>Monday</option>
+              <option value={0}>Sunday</option>
             </select>
           </Field>
         </>
@@ -630,7 +1006,7 @@ function renderSection(
 }
 
 function AboutSection({ onComponents }: { onComponents: () => void }) {
-  const [document, setDocument] = useState<"license" | "notices" | null>(null);
+  const [document, setDocument] = useState<"license" | "notices" | "release" | null>(null);
   return (
     <SettingsGroup title="Diorna 0.1.0" description="The daily register of things done.">
       <div className="about-mark">D</div>
@@ -651,6 +1027,9 @@ function AboutSection({ onComponents }: { onComponents: () => void }) {
         <button className="button" onClick={() => setDocument("notices")}>
           Third-party notices
         </button>
+        <button className="button" onClick={() => setDocument("release")}>
+          Release notes
+        </button>
         <button className="button" onClick={onComponents}>
           Component library
         </button>
@@ -660,16 +1039,219 @@ function AboutSection({ onComponents }: { onComponents: () => void }) {
         <div className="legal-overlay" role="dialog" aria-modal="true">
           <section className="legal-dialog">
             <header>
-              <h2>{document === "license" ? "Licence" : "Third-party notices"}</h2>
+              <h2>
+                {document === "license"
+                  ? "Licence"
+                  : document === "notices"
+                    ? "Third-party notices"
+                    : "Release notes"}
+              </h2>
               <button className="icon-button" aria-label="Close" onClick={() => setDocument(null)}>
                 ×
               </button>
             </header>
-            <pre>{document === "license" ? projectLicense : thirdPartyNotices}</pre>
+            <pre>
+              {document === "license"
+                ? projectLicense
+                : document === "notices"
+                  ? thirdPartyNotices
+                  : releaseNotes}
+            </pre>
           </section>
         </div>
       )}
     </SettingsGroup>
+  );
+}
+
+function TrashManager({ state }: { state: ReturnType<typeof useDiornaStore.getState> }) {
+  const [nativeRecords, setNativeRecords] = useState<NativeTrashRecord[]>([]);
+  const workspaceId = state.activeWorkspaceId;
+  const refresh = () =>
+    void listNativeTrash(workspaceId)
+      .then(setNativeRecords)
+      .catch((error: unknown) => console.warn("Unable to list native trash", error));
+  useEffect(() => {
+    void listNativeTrash(workspaceId)
+      .then(setNativeRecords)
+      .catch((error: unknown) => console.warn("Unable to list native trash", error));
+  }, [workspaceId]);
+  const nativeKeys = new Set(
+    nativeRecords.map((record) => `${record.kind}:${record.originalPath.replace(/\\/g, "/")}`),
+  );
+  const localRecords: NativeTrashRecord[] = [
+    ...state.notes
+      .filter((entry) => entry.workspaceId === workspaceId && entry.trashedAt)
+      .map((entry) => ({
+        id: `local-note-${entry.id}`,
+        workspaceId,
+        kind: "notes" as const,
+        originalPath: entry.path.replace(/^notes[\\/]/, "").replace(/\\/g, "/"),
+        trashPath: "",
+        deletedAt: entry.trashedAt!,
+      })),
+    ...state.maps
+      .filter((entry) => entry.workspaceId === workspaceId && entry.trashedAt)
+      .map((entry) => ({
+        id: `local-map-${entry.id}`,
+        workspaceId,
+        kind: "maps" as const,
+        originalPath: entry.path.replace(/^maps[\\/]/, "").replace(/\\/g, "/"),
+        trashPath: "",
+        deletedAt: entry.trashedAt!,
+      })),
+  ].filter((record) => !nativeKeys.has(`${record.kind}:${record.originalPath}`));
+  const files = [...nativeRecords, ...localRecords].sort((a, b) =>
+    b.deletedAt.localeCompare(a.deletedAt),
+  );
+  const items = state.items.filter((entry) => entry.workspaceId === workspaceId && entry.trashedAt);
+  const restoreFile = async (record: NativeTrashRecord) => {
+    const localOnly = record.id.startsWith("local-");
+    const restoredPath = localOnly
+      ? record.originalPath
+      : await restoreNativeTrash(workspaceId, record.id);
+    state.restoreFileTrash(record.kind, record.originalPath, restoredPath);
+    if (!localOnly) {
+      const disk = await readNativeFileContent();
+      if (disk) state.hydrateFileContent(disk);
+    }
+    refresh();
+  };
+  const purgeFile = async (record: NativeTrashRecord) => {
+    if (!record.id.startsWith("local-")) await purgeNativeTrash(workspaceId, record.id);
+    state.purgeFileTrash(record.kind, record.originalPath);
+    refresh();
+  };
+  const empty = !files.length && !items.length;
+  return (
+    <SettingsGroup
+      title="Trash"
+      description="Deleted files can be restored for 30 days; expired entries are removed automatically."
+    >
+      <div className="trash-settings-list">
+        {files.map((record) => (
+          <div key={record.id}>
+            {record.kind === "notes" ? <BookOpen size={15} /> : <LayoutGrid size={15} />}
+            <span>
+              <strong>{record.originalPath.split(/[\\/]/).at(-1)}</strong>
+              <small>
+                {record.kind === "notes" ? "Note" : "Map"} · deleted{" "}
+                {new Date(record.deletedAt).toLocaleDateString()}
+              </small>
+            </span>
+            <button className="button compact" onClick={() => void restoreFile(record)}>
+              Restore
+            </button>
+            <button
+              className="icon-button danger"
+              aria-label="Purge permanently"
+              onClick={() => void purgeFile(record)}
+            >
+              <Trash2 />
+            </button>
+          </div>
+        ))}
+        {items.map((item) => (
+          <div key={item.id}>
+            <Bell size={15} />
+            <span>
+              <strong>{item.title}</strong>
+              <small>
+                {item.kind} · deleted {new Date(item.trashedAt!).toLocaleDateString()}
+              </small>
+            </span>
+            <button className="button compact" onClick={() => state.restoreItem(item.id)}>
+              Restore
+            </button>
+            <button
+              className="icon-button danger"
+              aria-label={`Purge ${item.title} permanently`}
+              onClick={() => state.purgeItem(item.id)}
+            >
+              <Trash2 />
+            </button>
+          </div>
+        ))}
+        {empty && <div className="empty-mini">Trash is empty.</div>}
+      </div>
+      {!empty && (
+        <button
+          className="button danger"
+          onClick={() => {
+            if (!window.confirm("Permanently purge every item in this workspace’s Trash?")) return;
+            files.forEach((record) => void purgeFile(record));
+            items.forEach((item) => state.purgeItem(item.id));
+          }}
+        >
+          Empty trash now
+        </button>
+      )}
+    </SettingsGroup>
+  );
+}
+
+function DashboardLayoutSettings({ state }: { state: ReturnType<typeof useDiornaStore.getState> }) {
+  const workspace = state.workspaces.find((entry) => entry.id === state.activeWorkspaceId)!;
+  const defaults =
+    workspace.kind === "student"
+      ? ["score", "agenda", "courses", "flashcards", "streaks", "recent", "recap"]
+      : ["score", "agenda", "projects", "streaks", "recent", "recap"];
+  const stored = state.settings.dashboardWidgetOrder[workspace.id] ?? defaults;
+  const order = [...stored, ...defaults.filter((id) => !stored.includes(id))];
+  const hidden = state.settings.dashboardHiddenWidgets[workspace.id] ?? [];
+  const save = (nextOrder: string[], nextHidden = hidden) =>
+    state.updateSettings({
+      dashboardWidgetOrder: {
+        ...state.settings.dashboardWidgetOrder,
+        [workspace.id]: nextOrder,
+      },
+      dashboardHiddenWidgets: {
+        ...state.settings.dashboardHiddenWidgets,
+        [workspace.id]: nextHidden,
+      },
+    });
+  const move = (index: number, direction: -1 | 1) => {
+    const target = index + direction;
+    if (target < 0 || target >= order.length) return;
+    const next = [...order];
+    [next[index], next[target]] = [next[target]!, next[index]!];
+    save(next);
+  };
+  return (
+    <div className="dashboard-setting-list">
+      {order.map((id, index) => (
+        <div key={id}>
+          <input
+            type="checkbox"
+            aria-label={`Show ${dashboardLabels[id]}`}
+            checked={!hidden.includes(id)}
+            onChange={(event) =>
+              save(
+                order,
+                event.target.checked ? hidden.filter((entry) => entry !== id) : [...hidden, id],
+              )
+            }
+          />
+          <span>{dashboardLabels[id] ?? id}</span>
+          <button
+            className="icon-button"
+            aria-label={`Move ${dashboardLabels[id]} up`}
+            disabled={index === 0}
+            onClick={() => move(index, -1)}
+          >
+            <ArrowUp />
+          </button>
+          <button
+            className="icon-button"
+            aria-label={`Move ${dashboardLabels[id]} down`}
+            disabled={index === order.length - 1}
+            onClick={() => move(index, 1)}
+          >
+            <ArrowDown />
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -725,4 +1307,85 @@ function Toggle({
       <i />
     </label>
   );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let index = 0;
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024;
+    index += 1;
+  }
+  return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[index]}`;
+}
+
+function defaultKeymap(): Record<string, string> {
+  return {
+    commandPalette: "Ctrl+K",
+    quickCapture: "Ctrl+Alt+Space",
+    toggleSidebar: "Ctrl+B",
+    closeTab: "Ctrl+W",
+    nextRecentTab: "Ctrl+Tab",
+    notes: "Ctrl+1",
+    maps: "Ctrl+2",
+    calendar: "Ctrl+3",
+    daily: "Ctrl+4",
+    recap: "Ctrl+5",
+    home: "Ctrl+0",
+    settings: "Ctrl+,",
+    newNote: "Ctrl+N",
+    newTask: "Ctrl+Shift+T",
+    toggleContext: "Ctrl+Shift+B",
+    splitHorizontal: "Ctrl+\\",
+    splitVertical: "Ctrl+Shift+\\",
+    workspace1: "Ctrl+Shift+1",
+    workspace2: "Ctrl+Shift+2",
+    workspace3: "Ctrl+Shift+3",
+    workspace4: "Ctrl+Shift+4",
+    workspace5: "Ctrl+Shift+5",
+    workspace6: "Ctrl+Shift+6",
+    workspace7: "Ctrl+Shift+7",
+    workspace8: "Ctrl+Shift+8",
+    workspace9: "Ctrl+Shift+9",
+  };
+}
+
+function shortcutConflicts(keymap: Record<string, string>): Set<string> {
+  const commands = Object.keys(keymap);
+  return new Set(
+    commands.filter((command) => {
+      const value = keymap[command]?.trim().toLocaleLowerCase();
+      return Boolean(
+        value &&
+          commands.some(
+            (other) => other !== command && keymap[other]?.trim().toLocaleLowerCase() === value,
+          ),
+      );
+    }),
+  );
+}
+
+function shortcutLabel(command: string): string {
+  const labels: Record<string, string> = {
+    commandPalette: "Command palette",
+    quickCapture: "Quick capture",
+    toggleSidebar: "Toggle sidebar",
+    closeTab: "Close tab",
+    nextRecentTab: "Most recent tab",
+    notes: "Open Notes",
+    maps: "Open Maps",
+    calendar: "Open Calendar",
+    daily: "Open Daily",
+    recap: "Open Recap",
+    home: "Open Home",
+    settings: "Open Settings",
+    newNote: "New note",
+    newTask: "New task",
+    toggleContext: "Toggle context panel",
+    splitHorizontal: "Split pane right",
+    splitVertical: "Split pane down",
+  };
+  return labels[command] ?? command.replace(/([A-Z])/g, " $1");
 }

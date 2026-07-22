@@ -326,3 +326,73 @@ test("creates a course lecture and reviews an authored flashcard", async ({ page
   await expect(page.locator(".reference-list-node")).toContainText("Local First Learning");
   await page.screenshot({ path: "test-results/student-workflow.png", fullPage: true });
 });
+
+test("customizes the dashboard, split layout, appearance, and keymap", async ({ page }) => {
+  await completeOnboarding(page);
+
+  await page.getByText("Customize", { exact: true }).click();
+  const flashcardsToggle = page.getByRole("checkbox", { name: "Flashcards due" });
+  await flashcardsToggle.uncheck();
+  await expect(page.getByText("Flashcards due today", { exact: true })).toHaveCount(0);
+  await flashcardsToggle.check();
+  await expect(page.getByText("Flashcards due today", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Split pane right" }).click();
+  await expect(page.locator(".workspace-pane")).toHaveCount(2);
+  await page.getByRole("button", { name: "Split pane down" }).last().click();
+  await expect(page.locator(".workspace-pane")).toHaveCount(3);
+  await expect(page.getByRole("separator", { name: /Resize .* split/ })).toHaveCount(2);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Appearance" }).click();
+  await page.getByLabel("Interface font").selectOption("Inter");
+  await page.getByLabel("Editor font size").fill("18");
+  await expect(page.locator("html")).toHaveCSS("--editor-font-size", "18px");
+
+  await page.getByRole("button", { name: "Shortcuts" }).click();
+  const quickCapture = page.locator(".shortcut-list label").filter({ hasText: "Quick capture" });
+  await quickCapture.locator("input").fill("Ctrl+K");
+  await expect(page.locator(".shortcut-list label.conflict")).toHaveCount(2);
+  await page.getByRole("button", { name: "Reset to defaults" }).click();
+  await expect(page.locator(".shortcut-list label.conflict")).toHaveCount(0);
+
+  await page.reload();
+  await expect(page.locator(".workspace-pane")).toHaveCount(3);
+  await page.screenshot({ path: "test-results/custom-shell-settings.png", fullPage: true });
+});
+
+test("duplicates, trashes, and restores a note", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  await page.getByRole("button", { name: "New note" }).click();
+  const title = page.getByLabel("Note title");
+  await title.fill("Trash acceptance");
+  await title.blur();
+  const originalRow = page
+    .locator(".note-list-row")
+    .filter({ hasText: "Trash acceptance" })
+    .first();
+  await originalRow.hover();
+  await page.getByRole("button", { name: "Duplicate Trash acceptance" }).click();
+  await expect(
+    page.locator(".note-list-row").filter({ hasText: "Trash acceptance copy" }),
+  ).toBeVisible();
+  await originalRow.hover();
+  await page.getByRole("button", { name: "Move Trash acceptance to trash" }).click();
+  await expect(
+    page.locator(".note-list-row").filter({ hasText: /^Trash acceptance(?! copy)/ }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Vault" }).click();
+  const trashGroup = page.locator(".settings-group").filter({
+    has: page.getByRole("heading", { name: "Trash", exact: true }),
+  });
+  await expect(trashGroup.getByText("Trash acceptance.md", { exact: true })).toBeVisible();
+  await trashGroup.getByRole("button", { name: "Restore" }).click();
+  await expect(trashGroup.getByText("Trash is empty.")).toBeVisible();
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  await expect(
+    page.locator(".note-list-row").filter({ hasText: /^Trash acceptance(?! copy)/ }),
+  ).toBeVisible();
+});

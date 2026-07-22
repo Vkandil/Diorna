@@ -36,10 +36,17 @@ export async function openExternalUrl(url: string): Promise<void> {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-export async function initialiseNativeVault(path?: string): Promise<void> {
-  if (!isTauri()) return;
+export interface NativeVaultInfo {
+  path: string;
+  totalBytes: number;
+  workspaces: Array<{ workspaceId: string; name: string; bytes: number }>;
+}
+
+export async function initialiseNativeVault(path?: string): Promise<NativeVaultInfo | undefined> {
+  if (!isTauri()) return undefined;
   if (path) await invoke("initialise_vault", { path });
   else await invoke("initialise_default_vault");
+  return getNativeVaultInfo();
 }
 
 export async function persistNativeSettings(settings: AppSettings): Promise<void> {
@@ -47,9 +54,103 @@ export async function persistNativeSettings(settings: AppSettings): Promise<void
   await invoke("write_settings", { settings });
 }
 
+export async function applyNativeShellSettings(settings: AppSettings): Promise<void> {
+  if (!isTauri()) return;
+  await Promise.all([
+    invoke("set_close_to_tray", { enabled: settings.minimizeToTray }),
+    invoke("set_start_with_windows", { enabled: settings.startWithWindows }),
+    invoke("set_global_shortcut", { shortcut: settings.keymap.quickCapture }),
+  ]);
+}
+
+export async function updateNativeTrayScore(score: number | null): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("update_tray_score", { score });
+}
+
 export async function readNativeSettings(): Promise<Partial<AppSettings> | undefined> {
   if (!isTauri()) return undefined;
   return invoke<Partial<AppSettings>>("read_settings");
+}
+
+export async function getNativeVaultInfo(): Promise<NativeVaultInfo | undefined> {
+  if (!isTauri()) return undefined;
+  return invoke<NativeVaultInfo>("vault_info");
+}
+
+export async function rebuildNativeIndex(): Promise<number> {
+  if (!isTauri()) return 0;
+  return invoke<number>("rebuild_index");
+}
+
+export async function deleteNativeWorkspace(workspaceId: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("delete_workspace", { workspaceId });
+}
+
+export interface NativeTrashRecord {
+  id: string;
+  workspaceId: string;
+  kind: "notes" | "maps";
+  originalPath: string;
+  trashPath: string;
+  deletedAt: string;
+}
+
+export async function trashNativeFile(
+  workspaceId: string,
+  kind: "notes" | "maps",
+  relativePath: string,
+): Promise<NativeTrashRecord | undefined> {
+  if (!isTauri()) return undefined;
+  return invoke<NativeTrashRecord>("trash_file", { workspaceId, kind, relativePath });
+}
+
+export async function listNativeTrash(workspaceId: string): Promise<NativeTrashRecord[]> {
+  if (!isTauri()) return [];
+  return invoke<NativeTrashRecord[]>("list_trash", { workspaceId });
+}
+
+export async function restoreNativeTrash(workspaceId: string, trashId: string): Promise<string> {
+  if (!isTauri()) return "";
+  return invoke<string>("restore_trash", { workspaceId, trashId });
+}
+
+export async function purgeNativeTrash(workspaceId: string, trashId: string): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("purge_trash", { workspaceId, trashId });
+}
+
+export async function openNativeVault(): Promise<void> {
+  const info = await getNativeVaultInfo();
+  if (!info) return;
+  const { openPath } = await import("@tauri-apps/plugin-opener");
+  await openPath(info.path);
+}
+
+export async function chooseAndMoveVault(): Promise<NativeVaultInfo | undefined> {
+  if (!isTauri()) {
+    window.alert("Moving the vault is available in the Windows desktop build.");
+    return undefined;
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const destination = await open({
+    directory: true,
+    multiple: false,
+    title: "Choose an empty destination for the Diorna vault",
+  });
+  if (typeof destination !== "string") return undefined;
+  return invoke<NativeVaultInfo>("move_vault", { destination });
+}
+
+export async function readNativeKeymap(): Promise<Record<string, string> | undefined> {
+  if (!isTauri()) return undefined;
+  return invoke<Record<string, string>>("read_keymap");
+}
+
+export async function persistNativeKeymap(keymap: Record<string, string>): Promise<void> {
+  if (!isTauri()) return;
+  await invoke("write_keymap", { keymap });
 }
 
 export interface StructuredSnapshot {
@@ -252,6 +353,13 @@ export async function chooseVaultFolder(): Promise<string | null> {
   return typeof selected === "string" ? selected : null;
 }
 
+export async function chooseDirectory(title: string): Promise<string | null> {
+  if (!isTauri()) return null;
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const selected = await open({ directory: true, multiple: false, title });
+  return typeof selected === "string" ? selected : null;
+}
+
 export async function chooseAndImport(
   kind: "obsidian" | "notion",
   workspaceId: string,
@@ -277,6 +385,15 @@ export async function chooseAndImport(
   );
 }
 
+export async function importNativeFolder(
+  kind: "obsidian" | "notion",
+  source: string,
+  workspaceId: string,
+): Promise<{ imported: number; skipped: number; warnings: string[] } | undefined> {
+  if (!isTauri()) return undefined;
+  return invoke(`import_${kind}`, { source, workspaceId });
+}
+
 export async function chooseAndExportVault(): Promise<void> {
   if (!isTauri()) {
     window.alert("Full export is available in the Windows desktop build.");
@@ -293,20 +410,42 @@ export async function chooseAndExportVault(): Promise<void> {
   window.alert(`Export complete:\n${output}`);
 }
 
-export async function chooseAndBackupVault(): Promise<void> {
+export async function chooseAndBackupVault(destination?: string, retention = 10): Promise<void> {
   if (!isTauri()) {
     window.alert("Backups are available in the Windows desktop build.");
     return;
   }
-  const { open } = await import("@tauri-apps/plugin-dialog");
-  const destination = await open({
-    directory: true,
-    multiple: false,
-    title: "Choose backup folder",
-  });
-  if (typeof destination !== "string") return;
-  const output = await invoke<string>("create_backup", { destination });
+  const selected = destination ?? (await chooseDirectory("Choose backup folder"));
+  if (!selected) return;
+  const output = await invoke<string>("create_backup", { destination: selected, retention });
   window.alert(`Backup complete:\n${output}`);
+}
+
+export async function runNativeBackup(destination: string, retention: number): Promise<string> {
+  if (!isTauri()) return "";
+  return invoke<string>("create_backup", { destination, retention });
+}
+
+export async function chooseAndRestoreBackup(): Promise<void> {
+  if (!isTauri()) {
+    window.alert("Backup restore is available in the Windows desktop build.");
+    return;
+  }
+  const { open } = await import("@tauri-apps/plugin-dialog");
+  const backup = await open({
+    directory: false,
+    multiple: false,
+    title: "Choose a Diorna backup",
+    filters: [{ name: "Diorna backup", extensions: ["zip"] }],
+  });
+  if (typeof backup !== "string") return;
+  const confirmed = window.confirm(
+    "Restore this backup? Diorna will preserve the current vault beside it as a rollback copy.",
+  );
+  if (!confirmed) return;
+  const rollback = await invoke<string>("restore_backup", { backup });
+  window.alert(`Restore complete. The previous vault was preserved at:\n${rollback}`);
+  window.location.reload();
 }
 
 export async function exportNativeXlsx(

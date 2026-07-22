@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import {
   CalendarDays,
   ChevronDown,
+  Columns2,
   Grid3X3,
   Home,
   Map,
@@ -11,6 +12,7 @@ import {
   Pin,
   Plus,
   RotateCcw,
+  Rows2,
   Search,
   Settings,
   Sparkles,
@@ -20,6 +22,7 @@ import { useTranslation } from "react-i18next";
 import { startOfYear } from "date-fns";
 import { useDiornaStore } from "@/core/store";
 import type { ModuleId } from "@/shared/models";
+import type { PaneLayoutNode } from "@/core/store";
 import { CommandPalette } from "./CommandPalette";
 import { QuickCapture } from "./QuickCapture";
 import { HomeView } from "@/modules/home/HomeView";
@@ -31,6 +34,7 @@ import {
 } from "@/modules/notes/logic";
 import { listenForReminderActions, scheduleNativeReminders } from "@/modules/calendar/reminders";
 import { dateKey, habitStatistics } from "@/modules/daily/logic";
+import { matchesShortcut } from "@/core/shortcuts";
 
 const NotesView = lazy(() =>
   import("@/modules/notes/NotesView").then((module) => ({
@@ -91,35 +95,70 @@ export function AppShell() {
   const workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId)!;
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.ctrlKey && event.key.toLowerCase() === "k") {
+      const keymap = state.settings.keymap;
+      if (matchesShortcut(event, keymap.commandPalette)) {
         event.preventDefault();
         state.setCommandPaletteOpen(true);
       }
-      if (event.ctrlKey && event.key.toLowerCase() === "b") {
+      if (matchesShortcut(event, keymap.toggleSidebar)) {
         event.preventDefault();
         state.toggleSidebar();
       }
-      if (event.ctrlKey && event.key.toLowerCase() === "w") {
+      if (matchesShortcut(event, keymap.closeTab)) {
         event.preventDefault();
         state.closeTab(state.activeTabId);
       }
-      if (event.ctrlKey && event.altKey && event.code === "Space") {
+      if (matchesShortcut(event, keymap.quickCapture)) {
         event.preventDefault();
         setCaptureOpen(true);
       }
-      if (event.ctrlKey && event.shiftKey && /^[1-9]$/.test(event.key)) {
-        const next = state.workspaces[Number(event.key) - 1];
+      const workspaceIndex = state.workspaces.findIndex((_, index) =>
+        matchesShortcut(event, keymap[`workspace${index + 1}`]),
+      );
+      if (workspaceIndex >= 0) {
+        event.preventDefault();
+        const next = state.workspaces[workspaceIndex];
         if (next) state.setWorkspace(next.id);
       }
-      if (event.ctrlKey && !event.shiftKey && /^[1-5]$/.test(event.key)) {
+      const targetModule = modules.find(({ id }) => matchesShortcut(event, keymap[id]));
+      if (targetModule) {
         event.preventDefault();
-        state.setModule(modules[Number(event.key) - 1]!.id);
+        state.setModule(targetModule.id);
       }
-      if (event.ctrlKey && event.key === "Tab") {
+      if (matchesShortcut(event, keymap.nextRecentTab)) {
         event.preventDefault();
-        const index = state.tabs.findIndex((tab) => tab.id === state.activeTabId);
-        const next = state.tabs[(index + 1) % state.tabs.length];
+        const nextId = state.recentTabIds.find((id) => id !== state.activeTabId);
+        const next = state.tabs.find((tab) => tab.id === nextId);
         if (next) state.setActiveTab(next.id);
+      }
+      if (matchesShortcut(event, keymap.splitHorizontal)) {
+        event.preventDefault();
+        state.splitPane("horizontal");
+      }
+      if (matchesShortcut(event, keymap.splitVertical)) {
+        event.preventDefault();
+        state.splitPane("vertical");
+      }
+      if (matchesShortcut(event, keymap.toggleContext)) {
+        event.preventDefault();
+        state.toggleRightPanel();
+      }
+      if (matchesShortcut(event, keymap.home)) {
+        event.preventDefault();
+        state.setModule("home");
+      }
+      if (matchesShortcut(event, keymap.settings)) {
+        event.preventDefault();
+        state.setModule("settings");
+      }
+      if (matchesShortcut(event, keymap.newNote)) {
+        event.preventDefault();
+        const note = state.addNote();
+        state.openTab({ module: "notes", title: note.title, entityId: note.id });
+      }
+      if (matchesShortcut(event, keymap.newTask)) {
+        event.preventDefault();
+        state.setModule("calendar");
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -171,9 +210,15 @@ export function AppShell() {
       window.removeEventListener("diorna-toast", showToast);
     };
   }, []);
+  useEffect(() => {
+    const openCapture = () => setCaptureOpen(true);
+    window.addEventListener("diorna-open-quick-capture", openCapture);
+    return () => window.removeEventListener("diorna-open-quick-capture", openCapture);
+  }, []);
   return (
     <div
       className={`app-shell ${state.sidebarOpen ? "" : "sidebar-collapsed"} ${state.rightPanelOpen ? "" : "right-collapsed"}`}
+      style={{ "--sidebar": `${state.sidebarWidth}px` } as React.CSSProperties}
     >
       <aside className="sidebar">
         <div className="workspace-switcher">
@@ -181,13 +226,21 @@ export function AppShell() {
           <select
             aria-label="Workspace"
             value={workspace.id}
-            onChange={(event) => state.setWorkspace(event.target.value)}
+            onChange={(event) => {
+              if (event.target.value === "__new__") {
+                const name = window.prompt("New workspace name");
+                if (name?.trim()) state.addWorkspace(name.trim(), "#657287");
+                return;
+              }
+              state.setWorkspace(event.target.value);
+            }}
           >
             {state.workspaces.map((entry) => (
               <option value={entry.id} key={entry.id}>
                 {entry.name}
               </option>
             ))}
+            <option value="__new__">New workspace…</option>
           </select>
           <ChevronDown size={14} />
         </div>
@@ -199,7 +252,7 @@ export function AppShell() {
             <Home size={17} />
             <span>{t("Home")}</span>
           </button>
-          {modules.map(({ id, label, icon: Icon, shortcut }) => (
+          {modules.map(({ id, label, icon: Icon }) => (
             <button
               key={id}
               className={state.activeModule === id ? "active" : ""}
@@ -207,7 +260,7 @@ export function AppShell() {
             >
               <Icon size={17} />
               <span>{t(label)}</span>
-              <kbd>Ctrl {shortcut}</kbd>
+              <kbd>{(state.settings.keymap[id] ?? "").replaceAll("+", " ")}</kbd>
             </button>
           ))}
         </nav>
@@ -221,42 +274,34 @@ export function AppShell() {
             <i /> Documents\Diorna
           </div>
         </div>
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          tabIndex={0}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowLeft") state.setSidebarWidth(state.sidebarWidth - 10);
+            if (event.key === "ArrowRight") state.setSidebarWidth(state.sidebarWidth + 10);
+          }}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+          }}
+          onPointerMove={(event) => {
+            if (event.currentTarget.hasPointerCapture(event.pointerId))
+              state.setSidebarWidth(event.clientX);
+          }}
+        />
       </aside>
       <main className="workspace-area">
         <header className="titlebar">
           <button className="icon-button" aria-label="Toggle sidebar" onClick={state.toggleSidebar}>
             <Menu size={17} />
           </button>
-          <div className="tab-strip">
-            {state.tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={`tab ${state.activeTabId === tab.id ? "active" : ""}`}
-                onClick={() => state.setActiveTab(tab.id)}
-                onDoubleClick={() => state.setTabPinned(tab.id, !tab.pinned)}
-                draggable
-                onDragStart={() => setDraggedTab(tab.id)}
-                onDragOver={(event) => event.preventDefault()}
-                onDrop={() => {
-                  if (draggedTab) state.reorderTabs(draggedTab, tab.id);
-                  setDraggedTab(undefined);
-                }}
-                title="Drag to reorder · double-click to pin"
-              >
-                {tab.pinned && <Pin size={11} aria-label="Pinned" />}
-                <span>{tab.title}</span>
-                {!tab.pinned && (
-                  <X
-                    size={13}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      state.closeTab(tab.id);
-                    }}
-                  />
-                )}
-              </button>
-            ))}
-          </div>
+          <div className="titlebar-spacer" />
+          <span className="pane-count">
+            {state.panes.length} pane{state.panes.length === 1 ? "" : "s"}
+          </span>
           <button
             className="icon-button"
             aria-label="Open command palette"
@@ -289,7 +334,11 @@ export function AppShell() {
             </div>
           )}
           <Suspense fallback={<div className="module-loading">Loading…</div>}>
-            {renderModule(state.activeModule)}
+            <PaneLayout
+              node={state.paneLayout}
+              draggedTab={draggedTab}
+              setDraggedTab={setDraggedTab}
+            />
           </Suspense>
         </div>
       </main>
@@ -307,6 +356,148 @@ export function AppShell() {
   );
 }
 
+function PaneLayout({
+  node,
+  draggedTab,
+  setDraggedTab,
+}: {
+  node: PaneLayoutNode;
+  draggedTab: string | undefined;
+  setDraggedTab: (id?: string) => void;
+}) {
+  const state = useDiornaStore();
+  if (node.kind === "pane")
+    return (
+      <WorkspacePane paneId={node.paneId} draggedTab={draggedTab} setDraggedTab={setDraggedTab} />
+    );
+  const horizontal = node.direction === "horizontal";
+  return (
+    <div className={`pane-split ${node.direction}`} data-split-id={node.id}>
+      <div className="pane-split-child" style={{ flexBasis: `${node.ratio * 100}%` }}>
+        <PaneLayout node={node.first} draggedTab={draggedTab} setDraggedTab={setDraggedTab} />
+      </div>
+      <div
+        className="pane-divider"
+        role="separator"
+        aria-label={`Resize ${horizontal ? "horizontal" : "vertical"} split`}
+        aria-orientation={horizontal ? "vertical" : "horizontal"}
+        tabIndex={0}
+        onKeyDown={(event) => {
+          const decrease = horizontal ? event.key === "ArrowLeft" : event.key === "ArrowUp";
+          const increase = horizontal ? event.key === "ArrowRight" : event.key === "ArrowDown";
+          if (decrease || increase) {
+            event.preventDefault();
+            state.setSplitRatio(node.id, node.ratio + (increase ? 0.03 : -0.03));
+          }
+        }}
+        onPointerDown={(event) => event.currentTarget.setPointerCapture(event.pointerId)}
+        onPointerMove={(event) => {
+          if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+          const parent = event.currentTarget.parentElement;
+          if (!parent) return;
+          const rect = parent.getBoundingClientRect();
+          const ratio = horizontal
+            ? (event.clientX - rect.left) / rect.width
+            : (event.clientY - rect.top) / rect.height;
+          state.setSplitRatio(node.id, ratio);
+        }}
+      />
+      <div className="pane-split-child" style={{ flexBasis: `${(1 - node.ratio) * 100}%` }}>
+        <PaneLayout node={node.second} draggedTab={draggedTab} setDraggedTab={setDraggedTab} />
+      </div>
+    </div>
+  );
+}
+
+function WorkspacePane({
+  paneId,
+  draggedTab,
+  setDraggedTab,
+}: {
+  paneId: string;
+  draggedTab: string | undefined;
+  setDraggedTab: (id?: string) => void;
+}) {
+  const state = useDiornaStore();
+  const pane = state.panes.find((entry) => entry.id === paneId);
+  if (!pane) return null;
+  const tabs = pane.tabIds
+    .map((id) => state.tabs.find((tab) => tab.id === id))
+    .filter((tab) => tab !== undefined);
+  const active = tabs.find((tab) => tab.id === pane.activeTabId) ?? tabs[0];
+  if (!active) return null;
+  return (
+    <section
+      className={`workspace-pane ${state.activePaneId === paneId ? "active" : ""}`}
+      onPointerDown={() => state.setActivePane(paneId)}
+    >
+      <header className="pane-tabbar">
+        <div className="tab-strip">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              className={`tab ${active.id === tab.id ? "active" : ""}`}
+              onClick={() => state.setActiveTab(tab.id)}
+              onDoubleClick={() => state.setTabPinned(tab.id, !tab.pinned)}
+              draggable
+              onDragStart={() => setDraggedTab(tab.id)}
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={() => {
+                if (draggedTab) state.reorderTabs(draggedTab, tab.id);
+                setDraggedTab(undefined);
+              }}
+              title="Drag to reorder · double-click to pin"
+            >
+              {tab.pinned && <Pin size={11} aria-label="Pinned" />}
+              <span>{tab.title}</span>
+              {!tab.pinned && (
+                <X
+                  size={13}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    state.closeTab(tab.id);
+                  }}
+                />
+              )}
+            </button>
+          ))}
+        </div>
+        <div className="pane-actions">
+          <button
+            className="icon-button"
+            aria-label="Split pane right"
+            title="Split right"
+            disabled={state.panes.length >= 4}
+            onClick={() => state.splitPane("horizontal")}
+          >
+            <Columns2 size={14} />
+          </button>
+          <button
+            className="icon-button"
+            aria-label="Split pane down"
+            title="Split down"
+            disabled={state.panes.length >= 4}
+            onClick={() => state.splitPane("vertical")}
+          >
+            <Rows2 size={14} />
+          </button>
+          {state.panes.length > 1 && (
+            <button
+              className="icon-button"
+              aria-label="Close pane"
+              title="Close pane"
+              onClick={() => state.closePane(paneId)}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </header>
+      <div className="pane-content">{renderModule(active.module, active.id)}</div>
+    </section>
+  );
+}
+
 const coachCopy: Partial<Record<ModuleId, string>> = {
   notes: "Type / for blocks and [[ to link ideas. Everything saves automatically.",
   maps: "Double-click the canvas to add an idea; drag handles to connect it.",
@@ -315,12 +506,12 @@ const coachCopy: Partial<Record<ModuleId, string>> = {
   recap: "Every number is calculated locally; a model is optional and only improves prose.",
 };
 
-function renderModule(module: ModuleId) {
+function renderModule(module: ModuleId, tabId?: string) {
   switch (module) {
     case "notes":
-      return <NotesView />;
+      return <NotesView tabId={tabId} />;
     case "maps":
-      return <MapsView />;
+      return <MapsView tabId={tabId} />;
     case "calendar":
       return <CalendarView />;
     case "daily":

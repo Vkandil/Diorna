@@ -4,17 +4,22 @@ import { Onboarding } from "@/components/Onboarding";
 import { useDiornaStore } from "@/core/store";
 import {
   hideCurrentWindow,
+  applyNativeShellSettings,
   initialiseNativeVault,
   persistNativeCanvas,
   persistNativeNote,
   persistNativeStructuredState,
   readNativeFileContent,
+  readNativeKeymap,
   readNativeSettings,
   readNativeStructuredState,
+  runNativeBackup,
+  updateNativeTrayScore,
 } from "@/core/native";
 import { QuickCapture } from "@/components/QuickCapture";
 import i18n from "@/i18n";
 import { generateDueAutomaticRecaps } from "@/modules/recap/automatic";
+import { completionScore, dateKey } from "@/modules/daily/logic";
 
 class ErrorBoundary extends Component<{ children: ReactNode }, { error?: Error }> {
   state: { error?: Error } = {};
@@ -52,6 +57,9 @@ export default function App() {
   const quickCaptureWindow = new URLSearchParams(window.location.search).has("quick-capture");
   const onboardingComplete = useDiornaStore((state) => state.onboardingComplete);
   const settings = useDiornaStore((state) => state.settings);
+  const activeWorkspaceId = useDiornaStore((state) => state.activeWorkspaceId);
+  const habits = useDiornaStore((state) => state.habits);
+  const habitEntries = useDiornaStore((state) => state.habitEntries);
   const [systemDark, setSystemDark] = useState(matchMedia("(prefers-color-scheme: dark)").matches);
   useEffect(() => {
     const query = matchMedia("(prefers-color-scheme: dark)");
@@ -64,11 +72,64 @@ export default function App() {
     document.documentElement.dataset.theme = dark ? "dark" : "light";
     document.documentElement.dataset.density = settings.density;
     document.documentElement.style.setProperty("--accent", settings.accentColor);
-  }, [dark, settings.accentColor, settings.density]);
+    document.documentElement.style.setProperty("--font-ui", fontStack(settings.interfaceFont));
+    document.documentElement.style.setProperty("--font-editor", fontStack(settings.editorFont));
+    document.documentElement.style.setProperty(
+      "--editor-font-size",
+      `${settings.editorFontSize}px`,
+    );
+    document.documentElement.style.setProperty(
+      "--editor-line-width",
+      `${settings.editorLineWidth}px`,
+    );
+  }, [
+    dark,
+    settings.accentColor,
+    settings.density,
+    settings.editorFont,
+    settings.editorFontSize,
+    settings.editorLineWidth,
+    settings.interfaceFont,
+  ]);
   useEffect(() => {
     void i18n.changeLanguage(settings.language);
     document.documentElement.lang = settings.language;
   }, [settings.language]);
+  useEffect(() => {
+    void applyNativeShellSettings(settings).catch((error: unknown) =>
+      console.warn("Unable to apply native shell settings", error),
+    );
+  }, [settings]);
+  useEffect(() => {
+    const workspaceHabits = habits.filter(
+      (habit) => habit.workspaceId === activeWorkspaceId && !habit.archived,
+    );
+    const workspaceEntries = habitEntries.filter(
+      (entry) => entry.workspaceId === activeWorkspaceId,
+    );
+    void updateNativeTrayScore(
+      completionScore(workspaceHabits, workspaceEntries, dateKey(new Date())),
+    ).catch((error: unknown) => console.warn("Unable to update tray score", error));
+  }, [activeWorkspaceId, habitEntries, habits]);
+  useEffect(() => {
+    if (!onboardingComplete || sessionStorage.getItem("diorna-backup-checked") === "yes") return;
+    sessionStorage.setItem("diorna-backup-checked", "yes");
+    const last = localStorage.getItem("diorna-last-backup");
+    const elapsed = last ? Date.now() - new Date(last).getTime() : Number.POSITIVE_INFINITY;
+    const due =
+      settings.backupFrequency === "launch" ||
+      (settings.backupFrequency === "daily" && elapsed >= 86_400_000) ||
+      (settings.backupFrequency === "weekly" && elapsed >= 7 * 86_400_000);
+    if (!due) return;
+    void runNativeBackup(settings.backupLocation, settings.backupRetention)
+      .then(() => localStorage.setItem("diorna-last-backup", new Date().toISOString()))
+      .catch((error: unknown) => console.warn("Automatic backup failed", error));
+  }, [
+    onboardingComplete,
+    settings.backupFrequency,
+    settings.backupLocation,
+    settings.backupRetention,
+  ]);
   useEffect(() => {
     void initialiseNativeVault()
       .then(async () => {
@@ -88,6 +149,14 @@ export default function App() {
             ]);
             await persistNativeStructuredState(structuredSnapshot(state));
           }
+        }
+        const ready = useDiornaStore.getState();
+        ready.purgeExpiredTrash();
+        if (
+          ready.settings.defaultWorkspaceId &&
+          ready.workspaces.some((workspace) => workspace.id === ready.settings.defaultWorkspaceId)
+        ) {
+          ready.setWorkspace(ready.settings.defaultWorkspaceId);
         }
         if (useDiornaStore.getState().onboardingComplete) await generateDueAutomaticRecaps();
       })
@@ -126,6 +195,7 @@ export default function App() {
   }, []);
   useEffect(() => {
     let lastDiskValue = "";
+    let lastKeymapValue = "";
     const syncExternalSettings = async () => {
       try {
         const disk = await readNativeSettings();
@@ -138,6 +208,14 @@ export default function App() {
           }
         }
         lastDiskValue = serialized;
+        const keymap = await readNativeKeymap();
+        if (keymap) {
+          const keymapSerialized = JSON.stringify(keymap);
+          if (lastKeymapValue && keymapSerialized !== lastKeymapValue) {
+            useDiornaStore.getState().updateSettings({ keymap });
+          }
+          lastKeymapValue = keymapSerialized;
+        }
       } catch (error) {
         console.warn("Unable to hot-reload settings.json", error);
       }
@@ -149,6 +227,17 @@ export default function App() {
     return <QuickCapture onClose={() => void hideCurrentWindow()} />;
   }
   return <ErrorBoundary>{onboardingComplete ? <AppShell /> : <Onboarding />}</ErrorBoundary>;
+}
+
+function fontStack(font: string): string {
+  const stacks: Record<string, string> = {
+    "system-ui": 'ui-sans-serif, "Segoe UI Variable", "Segoe UI", sans-serif',
+    Inter: 'Inter, ui-sans-serif, "Segoe UI", sans-serif',
+    Charter: "Charter, Georgia, serif",
+    Georgia: "Georgia, serif",
+    "Cascadia Code": '"Cascadia Code", Consolas, monospace',
+  };
+  return stacks[font] ?? stacks["system-ui"]!;
 }
 
 function structuredSnapshot(state: ReturnType<typeof useDiornaStore.getState>) {

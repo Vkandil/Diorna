@@ -273,6 +273,61 @@ pub async fn restore_trash(vault: &Vault, workspace_id: &str, trash_id: &str) ->
     Ok(relative.to_string_lossy().into_owned())
 }
 
+pub async fn list_trash(vault: &Vault, workspace_id: &str) -> Result<Vec<TrashRecord>> {
+    let workspace = vault.workspace(workspace_id).await?;
+    let directory = vault.root.join(&workspace.folder_name).join(".trash");
+    if !directory.exists() {
+        return Ok(Vec::new());
+    }
+    let mut records = Vec::new();
+    for entry in fs::read_dir(directory)? {
+        let path = entry?.path();
+        if path
+            .extension()
+            .is_some_and(|extension| extension == "json")
+        {
+            let record: TrashRecord = serde_json::from_slice(&fs::read(path)?)
+                .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+            if record.workspace_id == workspace_id {
+                records.push(record);
+            }
+        }
+    }
+    records.sort_by(|a, b| b.deleted_at.cmp(&a.deleted_at));
+    Ok(records)
+}
+
+pub async fn purge_trash(vault: &Vault, workspace_id: &str, trash_id: &str) -> Result<()> {
+    let workspace = vault.workspace(workspace_id).await?;
+    let id = safe_identifier(trash_id)?;
+    let directory = vault.root.join(&workspace.folder_name).join(".trash");
+    let manifest = directory.join(format!("{id}.json"));
+    if manifest.exists() {
+        fs::remove_file(manifest)?;
+    }
+    let content = directory.join(id);
+    if content.exists() {
+        fs::remove_dir_all(content)?;
+    }
+    Ok(())
+}
+
+pub async fn purge_expired_trash(vault: &Vault) -> Result<usize> {
+    let cutoff = Utc::now() - chrono::Duration::days(30);
+    let mut purged = 0;
+    for workspace in vault.workspaces().await? {
+        for record in list_trash(vault, &workspace.id).await? {
+            let deleted = chrono::DateTime::parse_from_rfc3339(&record.deleted_at)
+                .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+            if deleted.with_timezone(&Utc) <= cutoff {
+                purge_trash(vault, &workspace.id, &record.id).await?;
+                purged += 1;
+            }
+        }
+    }
+    Ok(purged)
+}
+
 pub async fn export_vault(vault: &Vault, destination: &Path) -> Result<PathBuf> {
     fs::create_dir_all(destination)?;
     let output = destination.join(format!(
@@ -460,5 +515,39 @@ mod tests {
     fn validates_operation_identifiers() {
         assert!(safe_identifier("3e9b1d4c-1234").is_ok());
         assert!(safe_identifier("../escape").is_err());
+    }
+
+    #[tokio::test]
+    async fn trashes_lists_restores_and_purges_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let vault = Vault::open(directory.path().to_path_buf()).await.unwrap();
+        let source = directory.path().join("Student/notes/Trash me.md");
+        atomic_write(&source, b"# Recoverable").unwrap();
+        let record = trash_file(&vault, "workspace-student", "notes", "Trash me.md")
+            .await
+            .unwrap();
+        assert!(!source.exists());
+        assert_eq!(
+            list_trash(&vault, "workspace-student").await.unwrap().len(),
+            1
+        );
+        let restored = restore_trash(&vault, "workspace-student", &record.id)
+            .await
+            .unwrap();
+        assert_eq!(restored, "Trash me.md");
+        assert!(source.exists());
+
+        let record = trash_file(&vault, "workspace-student", "notes", "Trash me.md")
+            .await
+            .unwrap();
+        purge_trash(&vault, "workspace-student", &record.id)
+            .await
+            .unwrap();
+        assert!(
+            list_trash(&vault, "workspace-student")
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }
