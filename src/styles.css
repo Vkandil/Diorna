@@ -2964,6 +2964,52 @@ article.ready .timeline-dot {
     transform: rotate(360deg);
   }
 }
+.note-graph {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: var(--space-5);
+  overflow: hidden;
+}
+.note-graph > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.note-graph h2 {
+  margin: var(--space-1) 0 0;
+}
+.note-graph svg {
+  width: 100%;
+  min-height: 0;
+  flex: 1;
+  margin-top: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface-sunken);
+}
+.note-graph line {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+.note-graph circle {
+  cursor: pointer;
+  fill: color-mix(in srgb, var(--accent) 22%, var(--surface-raised));
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+.note-graph g:hover circle,
+.note-graph g:focus circle {
+  fill: color-mix(in srgb, var(--accent) 38%, var(--surface-raised));
+  outline: none;
+}
+.note-graph text {
+  fill: var(--text);
+  font: 500 var(--type-sm) var(--font-ui);
+  pointer-events: none;
+}
+
 .coach-mark {
   display: flex;
   align-items: center;

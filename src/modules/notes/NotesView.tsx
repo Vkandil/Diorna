@@ -29,6 +29,7 @@ import {
   ListChecks,
   ListOrdered,
   MoreHorizontal,
+  Network,
   Quote,
   Redo2,
   Search,
@@ -38,7 +39,8 @@ import {
   Undo2,
 } from "lucide-react";
 import { selectWorkspace, useDiornaStore } from "@/core/store";
-import { searchNotes } from "./logic";
+import type { Note } from "@/shared/models";
+import { parseWikiLinks, searchNotes } from "./logic";
 import {
   AttachmentBlock,
   CalloutBlock,
@@ -53,6 +55,7 @@ export function NotesView() {
     (note) => !note.trashedAt,
   );
   const [filter, setFilter] = useState("");
+  const [view, setView] = useState<"editor" | "graph">("editor");
   const notes = useMemo(() => searchNotes(allNotes, filter), [allNotes, filter]);
   const activeTab = state.tabs.find((tab) => tab.id === state.activeTabId);
   const [selectedId, setSelectedId] = useState(activeTab?.entityId ?? notes[0]?.id);
@@ -79,6 +82,14 @@ export function NotesView() {
           </div>
           <button className="icon-button" aria-label="New note" onClick={create}>
             <FilePlus2 size={17} />
+          </button>
+          <button
+            className={`icon-button ${view === "graph" ? "active" : ""}`}
+            aria-label="Note graph"
+            title="Note graph (read-only)"
+            onClick={() => setView((current) => (current === "graph" ? "editor" : "graph"))}
+          >
+            <Network size={17} />
           </button>
         </header>
         <div className="note-filter">
@@ -110,7 +121,18 @@ export function NotesView() {
           ))}
         </div>
       </aside>
-      {note ? (
+      {view === "graph" ? (
+        <NoteGraph
+          notes={allNotes}
+          onOpen={(id) => {
+            const target = allNotes.find((entry) => entry.id === id);
+            if (!target) return;
+            setSelectedId(id);
+            setView("editor");
+            state.openTab({ module: "notes", title: target.title, entityId: id });
+          }}
+        />
+      ) : note ? (
         <Editor key={note.id} noteId={note.id} />
       ) : (
         <div className="empty-state">
@@ -125,6 +147,81 @@ export function NotesView() {
         </div>
       )}
     </div>
+  );
+}
+
+function NoteGraph({ notes, onOpen }: { notes: Note[]; onOpen: (id: string) => void }) {
+  const width = 900;
+  const height = 620;
+  const positions = new Map(
+    notes.map((note, index) => {
+      const angle = (index / Math.max(1, notes.length)) * Math.PI * 2;
+      const ring = 180 + (index % 3) * 42;
+      return [
+        note.id,
+        { x: width / 2 + Math.cos(angle) * ring, y: height / 2 + Math.sin(angle) * ring },
+      ];
+    }),
+  );
+  const byTitle = new Map(notes.map((note) => [note.title.toLocaleLowerCase(), note]));
+  const edges = notes.flatMap((source) =>
+    parseWikiLinks(stripHtml(source.body)).flatMap((link) => {
+      const target = byTitle.get(link.target.toLocaleLowerCase());
+      return target ? [{ source, target }] : [];
+    }),
+  );
+  const degrees = new Map<string, number>();
+  edges.forEach(({ source, target }) => {
+    degrees.set(source.id, (degrees.get(source.id) ?? 0) + 1);
+    degrees.set(target.id, (degrees.get(target.id) ?? 0) + 1);
+  });
+  return (
+    <section className="note-graph" aria-label="Read-only note graph">
+      <header>
+        <div>
+          <span className="eyebrow">Knowledge graph</span>
+          <h2>
+            {notes.length} notes · {edges.length} links
+          </h2>
+        </div>
+        <span className="badge">Read-only · distinct from Maps</span>
+      </header>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Linked notes graph">
+        {edges.map(({ source, target }, index) => {
+          const from = positions.get(source.id)!;
+          const to = positions.get(target.id)!;
+          return (
+            <line
+              key={`${source.id}-${target.id}-${index}`}
+              x1={from.x}
+              y1={from.y}
+              x2={to.x}
+              y2={to.y}
+            />
+          );
+        })}
+        {notes.map((entry) => {
+          const point = positions.get(entry.id)!;
+          const radius = 15 + Math.min(14, (degrees.get(entry.id) ?? 0) * 3);
+          return (
+            <g
+              key={entry.id}
+              onClick={() => onOpen(entry.id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") onOpen(entry.id);
+              }}
+              role="button"
+              tabIndex={0}
+            >
+              <circle cx={point.x} cy={point.y} r={radius} />
+              <text x={point.x} y={point.y + radius + 16} textAnchor="middle">
+                {entry.title}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </section>
   );
 }
 
