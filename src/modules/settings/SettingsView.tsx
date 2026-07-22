@@ -33,6 +33,7 @@ import {
   chooseDirectory,
   deleteNativeWorkspace,
   getNativeVaultInfo,
+  hasNativeApiKey,
   listNativeTrash,
   openExternalUrl,
   openNativeVault,
@@ -51,6 +52,7 @@ import projectLicense from "../../../LICENSE?raw";
 import releaseNotes from "../../../CHANGELOG.md?raw";
 import { listOllamaModels } from "@/modules/recap/summarizer";
 import { checkAndDownloadUpdate, isPortableBuild, type UpdateState } from "@/core/updater";
+import { OPENROUTER_ENDPOINT, OPENROUTER_MODEL, recapSecretId } from "@/shared/recapConfig";
 
 const sections = [
   ["general", "General", UserRound],
@@ -656,6 +658,24 @@ function renderSection(
           title="Summariser"
           description="The report always works without a model. Remote and local models only enrich its prose."
         >
+          <div className="recommended-provider">
+            <span>
+              <strong>Recommended: OpenRouter + Kimi K2.6</strong>
+              <small>A capable, low-cost model for monthly and yearly recap narratives.</small>
+            </span>
+            <button
+              className="button"
+              onClick={() =>
+                state.updateSettings({
+                  recapProvider: "remote",
+                  recapEndpoint: OPENROUTER_ENDPOINT,
+                  recapModel: OPENROUTER_MODEL,
+                })
+              }
+            >
+              Use recommended setup
+            </button>
+          </div>
           <Field label="Provider">
             <select
               value={state.settings.recapProvider}
@@ -722,23 +742,10 @@ function renderSection(
               }
             />
           </Field>
-          <Field label="API key">
-            <input
-              type="password"
-              placeholder="Stored with Windows DPAPI"
-              onBlur={(event) => {
-                let provider = "openrouter";
-                try {
-                  provider = new URL(state.settings.recapEndpoint).host || provider;
-                } catch {
-                  // Keep the default identifier until the endpoint is valid.
-                }
-                void storeNativeApiKey(provider, event.currentTarget.value);
-                event.currentTarget.value = "";
-              }}
-            />
-            <small>Never stored in the vault or synced files.</small>
-          </Field>
+          <RemoteApiKeyField
+            endpoint={state.settings.recapEndpoint}
+            onSaved={() => state.updateSettings({ recapProvider: "remote" })}
+          />
           <Toggle
             label="Aggregated statistics only"
             description="Exclude note titles and all free text from remote requests."
@@ -1348,6 +1355,76 @@ function SettingsGroup({
       </header>
       {children}
     </section>
+  );
+}
+
+function RemoteApiKeyField({ endpoint, onSaved }: { endpoint: string; onSaved: () => void }) {
+  const [apiKey, setApiKey] = useState("");
+  const [status, setStatus] = useState<"checking" | "missing" | "saved" | "error">("checking");
+  const provider = recapSecretId(endpoint);
+
+  useEffect(() => {
+    let active = true;
+    setStatus("checking");
+    void hasNativeApiKey(provider)
+      .then((stored) => active && setStatus(stored ? "saved" : "missing"))
+      .catch(() => active && setStatus("error"));
+    return () => {
+      active = false;
+    };
+  }, [provider]);
+
+  const save = async () => {
+    const value = apiKey.trim();
+    if (!value) return;
+    try {
+      await storeNativeApiKey(provider, value);
+      setApiKey("");
+      setStatus("saved");
+      onSaved();
+    } catch {
+      setStatus("error");
+    }
+  };
+
+  return (
+    <div className="setting-field api-key-field">
+      <span>API key</span>
+      <div>
+        <div className="api-key-input">
+          <input
+            aria-label="OpenRouter API key"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            value={apiKey}
+            placeholder="sk-or-v1-…"
+            onChange={(event) => setApiKey(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") void save();
+            }}
+          />
+          <button className="button" disabled={!apiKey.trim()} onClick={() => void save()}>
+            Save key
+          </button>
+        </div>
+        <small className={`api-key-status ${status}`} aria-live="polite">
+          {status === "checking"
+            ? "Checking secure storage…"
+            : status === "saved"
+              ? "API key saved securely with Windows DPAPI."
+              : status === "error"
+                ? "The API key could not be saved or read."
+                : "No API key saved on this device."}
+        </small>
+        <button
+          className="text-button"
+          onClick={() => void openExternalUrl("https://openrouter.ai/keys")}
+        >
+          Create or manage an OpenRouter key
+        </button>
+      </div>
+    </div>
   );
 }
 function Field({ label, children }: { label: string; children: React.ReactNode }) {

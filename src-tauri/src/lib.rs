@@ -824,6 +824,11 @@ fn load_api_key(provider: String, app: AppHandle) -> Result<Option<String>> {
 }
 
 #[tauri::command]
+fn has_api_key(provider: String, app: AppHandle) -> Result<bool> {
+    Ok(load_api_key(provider, app)?.is_some())
+}
+
+#[tauri::command]
 fn export_xlsx(path: String, sheets: Vec<spreadsheet::SheetInput>) -> Result<()> {
     spreadsheet::export_xlsx(&PathBuf::from(path), sheets)
 }
@@ -986,6 +991,7 @@ pub fn run() {
             reveal_api_key,
             store_api_key,
             load_api_key,
+            has_api_key,
             export_xlsx,
             persist_structured_state,
             load_structured_state,

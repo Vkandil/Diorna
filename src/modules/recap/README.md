@@ -10,6 +10,9 @@ OpenAI-compatible, and Ollama implementations.
 Remote use requires a one-time exact payload preview/consent and defaults to
 aggregates only. Aggregate-only payloads remove workspace identifiers, note
 titles, tags, course names, and every user-authored label before transmission.
+The recommended remote preset is OpenRouter with `moonshotai/kimi-k2.6`; its
+key can be entered during onboarding or in Settings and is protected by Windows
+DPAPI outside the vault.
 Numeric claims are checked against authoritative inputs; failure retries once,
 then falls back to the template.
 

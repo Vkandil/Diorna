@@ -61,6 +61,12 @@ provider receives only the previewed payload after consent; Ollama stays local.
 Invalid model numbers are rejected and regenerated once before template
 fallback. Recaps are ordinary revisioned notes and can print to PDF.
 
+The optional onboarding step configures OpenRouter with Kimi K2.6. Existing
+users can choose the same preset in Settings → Recap, paste their OpenRouter
+API key, and press **Save key**. The key is stored per Windows user with DPAPI,
+outside the vault. Changing the endpoint or model remains possible for any
+OpenAI-compatible provider.
+
 ## Data lifecycle
 
 Settings imports Obsidian or Notion into a dated folder without modifying the

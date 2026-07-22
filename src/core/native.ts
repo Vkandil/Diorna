@@ -629,3 +629,8 @@ export async function loadNativeApiKey(provider: string): Promise<string | undef
   if (!isTauri()) return undefined;
   return (await invoke<string | null>("load_api_key", { provider })) ?? undefined;
 }
+
+export async function hasNativeApiKey(provider: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  return invoke<boolean>("has_api_key", { provider });
+}

@@ -399,6 +399,28 @@ select {
 .onboarding-workspace select {
   height: 38px;
 }
+.onboarding-ai-note {
+  display: flex;
+  max-width: 470px;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 0 0 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--text-secondary);
+  font-size: var(--type-sm);
+}
+.onboarding-ai-note svg {
+  flex: none;
+  margin-top: 1px;
+  color: var(--accent);
+}
+.onboarding-card section > small {
+  margin-top: 10px;
+  color: var(--text-muted);
+}
 .onboarding-card footer {
   display: flex;
   align-items: center;
@@ -5555,6 +5577,52 @@ article.ready .timeline-dot {
   max-width: 260px;
   margin-top: 5px;
   color: var(--text-muted);
+}
+.recommended-provider {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+}
+.recommended-provider > span {
+  display: grid;
+  gap: 2px;
+}
+.recommended-provider small,
+.api-key-status {
+  color: var(--text-muted);
+}
+.api-key-field > div {
+  display: grid;
+  justify-items: end;
+}
+.api-key-field {
+  padding: 9px 0;
+}
+.api-key-input {
+  display: flex;
+  gap: 7px;
+}
+.api-key-input input {
+  min-width: 210px;
+}
+.api-key-status.saved {
+  color: var(--success);
+}
+.api-key-status.error {
+  color: var(--danger);
+}
+.api-key-field .text-button {
+  margin-top: 4px;
+  padding: 0;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: var(--type-xs);
 }
 .toggle-field {
   position: relative;

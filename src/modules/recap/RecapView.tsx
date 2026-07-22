@@ -45,6 +45,7 @@ import {
 } from "./summarizer";
 import { loadNativeApiKey } from "@/core/native";
 import type { Recap, RecapStatistics } from "@/shared/models";
+import { recapSecretId } from "@/shared/recapConfig";
 
 type PeriodType = Recap["periodType"];
 
@@ -162,24 +163,35 @@ export function RecapView() {
         remoteProviderId
       ) {
         const providerId = remoteProviderId;
-        if (!state.settings.recapConsentedProviders.includes(providerId)) {
+        let consented = state.settings.recapConsentedProviders.includes(providerId);
+        if (!consented && !automatic) {
           const preview = JSON.stringify(payload, null, 2);
           const accepted = window.confirm(
             `Diorna will send exactly the following payload to ${providerId}:\n\n${preview}\n\nContinue?`,
           );
           if (!accepted) return;
+          consented = true;
           state.updateSettings({
             recapConsentedProviders: [...state.settings.recapConsentedProviders, providerId],
           });
         }
-        const apiKey = await loadNativeApiKey(providerId);
-        primary = new OpenAICompatibleSummarizer({
-          endpoint: state.settings.recapEndpoint,
-          model: state.settings.recapModel,
-          temperature: state.settings.recapTemperature,
-          maxTokens: state.settings.recapMaxTokens,
-          ...(apiKey ? { apiKey } : {}),
-        });
+        if (consented) {
+          const apiKey = await loadNativeApiKey(recapSecretId(state.settings.recapEndpoint));
+          const openRouter = providerId === "openrouter.ai";
+          if (apiKey || !openRouter) {
+            primary = new OpenAICompatibleSummarizer(
+              {
+                endpoint: state.settings.recapEndpoint,
+                model: state.settings.recapModel,
+                temperature: state.settings.recapTemperature,
+                maxTokens: state.settings.recapMaxTokens,
+                ...(apiKey ? { apiKey } : {}),
+                ...(openRouter ? { headers: { "X-OpenRouter-Title": "Diorna" } } : {}),
+              },
+              state.settings.recapModel,
+            );
+          }
+        }
       } else if (state.settings.recapProvider === "local" && state.settings.recapModel) {
         primary = createOllamaSummarizer(state.settings.recapModel);
       }
@@ -235,7 +247,11 @@ export function RecapView() {
       }));
       setSelected(recap.id);
       setProgress(100);
-      setToast(`${periodLabel} recap generated`);
+      setToast(
+        generated.fallback && state.settings.recapProvider !== "none"
+          ? `${periodLabel} recap generated locally — the configured model was unavailable`
+          : `${periodLabel} recap generated`,
+      );
       window.setTimeout(() => setToast(undefined), 4000);
     } finally {
       setGenerating(false);

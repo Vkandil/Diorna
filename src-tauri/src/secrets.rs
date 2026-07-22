@@ -85,3 +85,17 @@ pub fn unprotect(_encoded: &str) -> Result<String> {
         "DPAPI is available on Windows only".into(),
     ))
 }
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::{protect, unprotect};
+
+    #[test]
+    fn dpapi_round_trips_an_openrouter_key_without_plaintext_storage() {
+        let key = "sk-or-v1-test-only";
+        let protected = protect(key).unwrap();
+        assert_ne!(protected, key);
+        assert!(!protected.contains(key));
+        assert_eq!(unprotect(&protected).unwrap(), key);
+    }
+}

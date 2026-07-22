@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  KeyRound,
   Moon,
   Palette,
   Plus,
@@ -20,7 +21,10 @@ import {
   chooseVaultFolder,
   importNativeFolder,
   initialiseNativeVault,
+  openExternalUrl,
+  storeNativeApiKey,
 } from "@/core/native";
+import { OPENROUTER_ENDPOINT, OPENROUTER_MODEL, recapSecretId } from "@/shared/recapConfig";
 
 export function Onboarding() {
   const finish = useDiornaStore((state) => state.finishOnboarding);
@@ -48,6 +52,7 @@ export function Onboarding() {
     },
   ]);
   const [sample, setSample] = useState(true);
+  const [openRouterApiKey, setOpenRouterApiKey] = useState("");
   const [vaultPath, setVaultPath] = useState("Documents\\Diorna");
   const [importSource, setImportSource] = useState<{
     kind: "obsidian" | "notion";
@@ -60,7 +65,14 @@ export function Onboarding() {
       const vault = await initialiseNativeVault(
         vaultPath === "Documents\\Diorna" ? undefined : vaultPath,
       );
-      updateSettings({ vaultLocation: vault?.path ?? vaultPath });
+      const apiKey = openRouterApiKey.trim();
+      if (apiKey) await storeNativeApiKey(recapSecretId(OPENROUTER_ENDPOINT), apiKey);
+      updateSettings({
+        vaultLocation: vault?.path ?? vaultPath,
+        recapEndpoint: OPENROUTER_ENDPOINT,
+        recapModel: OPENROUTER_MODEL,
+        ...(apiKey ? { recapProvider: "remote" as const } : {}),
+      });
       await finish(workspaces, theme, sample);
       if (importSource) {
         const report = await importNativeFolder(
@@ -81,7 +93,7 @@ export function Onboarding() {
   const steps = [
     <section key="vault">
       <Database size={28} />
-      <span className="eyebrow">Step 1 of 4</span>
+      <span className="eyebrow">Step 1 of 5</span>
       <h1>Choose your vault</h1>
       <p>Diorna stores everything as files you own. The default is a Diorna folder in Documents.</p>
       <label>
@@ -97,7 +109,7 @@ export function Onboarding() {
     </section>,
     <section key="theme">
       <Palette size={28} />
-      <span className="eyebrow">Step 2 of 4</span>
+      <span className="eyebrow">Step 2 of 5</span>
       <h1>Make it comfortable</h1>
       <p>You can change this any time in Appearance.</p>
       <div className="choice-grid">
@@ -116,7 +128,7 @@ export function Onboarding() {
     </section>,
     <section key="workspaces">
       <Users size={28} />
-      <span className="eyebrow">Step 3 of 4</span>
+      <span className="eyebrow">Step 3 of 5</span>
       <h1>Separate your worlds</h1>
       <p>Workspaces never leak data into one another. Keep one, rename them, or build your own.</p>
       <div className="onboarding-workspaces">
@@ -210,9 +222,40 @@ export function Onboarding() {
         <Plus /> Add workspace
       </button>
     </section>,
+    <section key="openrouter">
+      <KeyRound size={28} />
+      <span className="eyebrow">Step 4 of 5 · Optional</span>
+      <h1>Improve your recaps</h1>
+      <p>
+        Add your own OpenRouter API key to turn Diorna’s verified statistics into richer monthly and
+        yearly narratives with Kimi K2.6.
+      </p>
+      <label>
+        OpenRouter API key
+        <input
+          type="password"
+          autoComplete="off"
+          spellCheck={false}
+          value={openRouterApiKey}
+          onChange={(event) => setOpenRouterApiKey(event.target.value)}
+          placeholder="sk-or-v1-…"
+        />
+      </label>
+      <div className="onboarding-ai-note">
+        <Check size={16} />
+        <span>
+          The key is protected by Windows DPAPI and never stored in your vault. Diorna asks before
+          sending recap statistics to OpenRouter for the first time.
+        </span>
+      </div>
+      <button className="button" onClick={() => void openExternalUrl("https://openrouter.ai/keys")}>
+        Create or manage an OpenRouter key
+      </button>
+      <small>You can skip this and configure a provider later in Settings → Recap.</small>
+    </section>,
     <section key="import">
       <Upload size={28} />
-      <span className="eyebrow">Step 4 of 4</span>
+      <span className="eyebrow">Step 5 of 5</span>
       <h1>Ready when you are</h1>
       <p>You can import an Obsidian or Notion export now or later.</p>
       <div className="button-row">
@@ -265,10 +308,10 @@ export function Onboarding() {
             <button
               className="button primary icon-text"
               disabled={finishing}
-              onClick={() => (step === 3 ? void complete() : setStep(step + 1))}
+              onClick={() => (step === 4 ? void complete() : setStep(step + 1))}
             >
-              {step === 3 ? (finishing ? "Preparing…" : "Enter Diorna") : "Continue"}
-              {step < 3 && <ChevronRight size={16} />}
+              {step === 4 ? (finishing ? "Preparing…" : "Enter Diorna") : "Continue"}
+              {step < 4 && <ChevronRight size={16} />}
             </button>
           </div>
         </footer>

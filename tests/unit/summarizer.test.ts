@@ -7,6 +7,7 @@ import {
   type Summarizer,
 } from "@/modules/recap/summarizer";
 import type { RecapStatistics } from "@/shared/models";
+import { OPENROUTER_ENDPOINT, OPENROUTER_MODEL, recapSecretId } from "@/shared/recapConfig";
 
 const stats: RecapStatistics = {
   workspaceId: "w1",
@@ -36,6 +37,12 @@ const stats: RecapStatistics = {
 afterEach(() => vi.restoreAllMocks());
 
 describe("summarizer boundary", () => {
+  it("ships a stable OpenRouter Kimi configuration and safe secret identifier", () => {
+    expect(OPENROUTER_ENDPOINT).toBe("https://openrouter.ai/api/v1");
+    expect(OPENROUTER_MODEL).toBe("moonshotai/kimi-k2.6");
+    expect(recapSecretId(OPENROUTER_ENDPOINT)).toBe("openrouter_ai");
+    expect(recapSecretId("not a URL")).toBe("remote");
+  });
   it("uses deterministic fallback with no provider", async () =>
     expect(await generateValidatedNarrative(null, stats, "Personal")).toMatchObject({
       modelUsed: "deterministic-template",

@@ -42,6 +42,7 @@ import {
   setDatedNoteTaskChecked,
 } from "@/modules/calendar/noteTasks";
 import { persistStorage } from "@/core/persistStorage";
+import { OPENROUTER_ENDPOINT, OPENROUTER_MODEL } from "@/shared/recapConfig";
 
 export interface TabState {
   id: string;
@@ -277,8 +278,8 @@ const defaultSettings: AppSettings = {
   defaultNoteFolder: "notes",
   defaultTemplateId: "",
   recapProvider: "none",
-  recapEndpoint: "https://openrouter.ai/api/v1",
-  recapModel: "",
+  recapEndpoint: OPENROUTER_ENDPOINT,
+  recapModel: OPENROUTER_MODEL,
   recapTemperature: 0.2,
   recapMaxTokens: 1600,
   recapAggregatesOnly: true,
@@ -849,6 +850,7 @@ export const useDiornaStore = create<DiornaState>()(
         }));
         const next = get();
         await Promise.all([
+          persistNativeSettings(next.settings),
           ...next.notes.map(persistNativeNote),
           ...next.maps.map(persistNativeCanvas),
         ]);
@@ -2029,6 +2031,10 @@ export const useDiornaStore = create<DiornaState>()(
       partialize: (state) => persistedSlice(state, !isTauri()),
       merge: (persisted, current) => {
         const saved = persisted as Partial<DiornaState>;
+        const settings = { ...defaultSettings, ...(saved.settings ?? {}) };
+        if (settings.recapEndpoint === OPENROUTER_ENDPOINT && !settings.recapModel.trim()) {
+          settings.recapModel = OPENROUTER_MODEL;
+        }
         const fallbackPaneId = "pane-main";
         const fallbackTabId = saved.activeTabId ?? saved.tabs?.[0]?.id ?? "home";
         const panes = saved.panes?.length
@@ -2043,7 +2049,7 @@ export const useDiornaStore = create<DiornaState>()(
         return {
           ...current,
           ...saved,
-          settings: { ...defaultSettings, ...(saved.settings ?? {}) },
+          settings,
           panes,
           paneLayout:
             saved.paneLayout ?? ({ kind: "pane", paneId: panes[0]!.id } as PaneLayoutNode),

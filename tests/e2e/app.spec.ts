@@ -10,6 +10,8 @@ async function completeOnboarding(page: Page) {
   await page.getByLabel("Study workspace", { exact: true }).fill("University");
   await page.getByLabel("Personal workspace", { exact: true }).fill("Studio");
   await page.getByRole("button", { name: "Continue" }).click();
+  await expect(page.getByRole("heading", { name: "Improve your recaps" })).toBeVisible();
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Enter Diorna" }).click();
   await expect(page.getByRole("heading", { name: "University" })).toBeVisible();
 }
@@ -30,10 +32,35 @@ test("customizes and replaces both starter workspaces during onboarding", async 
   await page.getByLabel("Projects workspace type").selectOption("custom");
   await page.getByRole("button", { name: "Remove Personal workspace" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Enter Diorna" }).click();
   await expect(page.getByRole("heading", { name: "Projects" })).toBeVisible();
   await expect(page.getByLabel("Workspace").locator("option")).toHaveCount(2);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
+});
+
+test("configures OpenRouter during onboarding and manages its API key in settings", async ({
+  page,
+}) => {
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByLabel("OpenRouter API key").fill("sk-or-v1-test-only");
+  await page.screenshot({ path: "test-results/openrouter-onboarding.png", fullPage: true });
+  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Enter Diorna" }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.locator(".settings-layout aside").getByRole("button", { name: "Recap" }).click();
+  await expect(page.getByLabel("OpenRouter API key")).toHaveValue("");
+  await expect(page.getByLabel("Endpoint")).toHaveValue("https://openrouter.ai/api/v1");
+  await expect(page.getByLabel("Model")).toHaveValue("moonshotai/kimi-k2.6");
+  await expect(page.getByLabel("Provider")).toHaveValue("remote");
+  await page.getByLabel("Provider").selectOption("none");
+  await page.getByLabel("OpenRouter API key").fill("replacement-key");
+  await page.getByRole("button", { name: "Save key" }).click();
+  await expect(page.getByLabel("Provider")).toHaveValue("remote");
+  await expect(page.getByText("API key saved securely with Windows DPAPI.")).toBeVisible();
+  await page.screenshot({ path: "test-results/openrouter-recap-settings.png", fullPage: true });
 });
 
 test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page }) => {
