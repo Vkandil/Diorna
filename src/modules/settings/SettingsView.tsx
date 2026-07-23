@@ -1382,6 +1382,7 @@ function RemoteApiKeyField({ endpoint, onSaved }: { endpoint: string; onSaved: (
       setApiKey("");
       setStatus("saved");
       onSaved();
+      window.dispatchEvent(new Event("diorna-api-key-changed"));
     } catch {
       setStatus("error");
     }

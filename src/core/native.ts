@@ -696,16 +696,20 @@ export async function exportNativeXlsx(
 }
 
 export async function storeNativeApiKey(provider: string, apiKey: string): Promise<void> {
-  if (!isTauri() || !apiKey) return;
+  if (!apiKey) return;
+  if (!isTauri()) {
+    sessionStorage.setItem(`diorna-dev-secret:${provider}`, apiKey);
+    return;
+  }
   await invoke("store_api_key", { provider, apiKey });
 }
 
 export async function loadNativeApiKey(provider: string): Promise<string | undefined> {
-  if (!isTauri()) return undefined;
+  if (!isTauri()) return sessionStorage.getItem(`diorna-dev-secret:${provider}`) ?? undefined;
   return (await invoke<string | null>("load_api_key", { provider })) ?? undefined;
 }
 
 export async function hasNativeApiKey(provider: string): Promise<boolean> {
-  if (!isTauri()) return false;
+  if (!isTauri()) return Boolean(sessionStorage.getItem(`diorna-dev-secret:${provider}`));
   return invoke<boolean>("has_api_key", { provider });
 }

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 
-async function completeOnboarding(page: Page) {
+async function completeOnboarding(page: Page, openRouterApiKey?: string) {
   await expect(page.getByRole("heading", { name: "Choose your vault" })).toBeVisible();
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { name: "Make it comfortable" })).toBeVisible();
@@ -11,6 +11,7 @@ async function completeOnboarding(page: Page) {
   await page.getByLabel("Personal workspace", { exact: true }).fill("Studio");
   await page.getByRole("button", { name: "Continue" }).click();
   await expect(page.getByRole("heading", { name: "Improve your recaps" })).toBeVisible();
+  if (openRouterApiKey) await page.getByLabel("OpenRouter API key").fill(openRouterApiKey);
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Enter Diorna" }).click();
   await expect(page.getByRole("heading", { name: "University" })).toBeVisible();
@@ -18,7 +19,10 @@ async function completeOnboarding(page: Page) {
 
 test.beforeEach(async ({ page }) => {
   await page.goto("/");
-  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
   await page.reload();
 });
 
@@ -61,6 +65,144 @@ test("configures OpenRouter during onboarding and manages its API key in setting
   await expect(page.getByLabel("Provider")).toHaveValue("remote");
   await expect(page.getByText("API key saved securely with Windows DPAPI.")).toBeVisible();
   await page.screenshot({ path: "test-results/openrouter-recap-settings.png", fullPage: true });
+});
+
+test("plans, previews, creates, and undoes workspace content with Diorna AI", async ({ page }) => {
+  let submittedPayload: Record<string, unknown> | undefined;
+  await page.route("**/chat/completions", async (route) => {
+    const request = route.request();
+    const body = request.postDataJSON() as {
+      model: string;
+      messages: Array<{ role: string; content: string }>;
+      response_format: { json_schema: { strict: boolean } };
+      provider: { data_collection: string };
+    };
+    submittedPayload = JSON.parse(body.messages.at(-1)!.content) as Record<string, unknown>;
+    expect(body.model).toBe("moonshotai/kimi-k2.6");
+    expect(body.response_format.json_schema.strict).toBe(true);
+    expect(body.provider.data_collection).toBe("deny");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                version: 1,
+                summary: "Prepare the kernel project and personal schedule.",
+                assumptions: ["Football lasts one hour."],
+                operations: [
+                  {
+                    id: "kernel-note",
+                    type: "create_note",
+                    title: "AI Kernel Guide",
+                    bodyMarkdown:
+                      "# Kernel processes\n\nThe kernel schedules processes and isolates resources.",
+                    tags: ["systems"],
+                  },
+                  {
+                    id: "business-map",
+                    type: "create_map",
+                    name: "AI Coffee Business",
+                    nodes: [
+                      {
+                        id: "root",
+                        kind: "text",
+                        title: "Adaptogenic coffee",
+                        body: null,
+                        noteOperationId: null,
+                        locked: true,
+                      },
+                      {
+                        id: "research",
+                        kind: "note",
+                        title: "Research",
+                        body: null,
+                        noteOperationId: "kernel-note",
+                        locked: false,
+                      },
+                    ],
+                    edges: [{ from: "root", to: "research", label: "uses" }],
+                  },
+                  {
+                    id: "football",
+                    type: "create_calendar_item",
+                    kind: "event",
+                    title: "AI Football",
+                    description: "",
+                    startAt: "2026-07-23T19:00:00+02:00",
+                    endAt: "2026-07-23T20:00:00+02:00",
+                    allDay: false,
+                    category: "",
+                    priority: "none",
+                  },
+                  {
+                    id: "stretch",
+                    type: "create_habit",
+                    name: "AI Stretch",
+                    description: "Track time completed.",
+                    category: "",
+                    tracking: "quantity",
+                    unit: "minutes",
+                    target: 20,
+                    activeWeekdays: [1, 2, 3, 4, 5, 6],
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+    });
+  });
+  page.on("dialog", (dialog) => void dialog.accept());
+
+  await completeOnboarding(page, "sk-or-v1-e2e-only");
+  const launcher = page.getByRole("button", { name: "Diorna AI" });
+  await expect(launcher).toBeVisible();
+  await launcher.click();
+  const drawer = page.getByRole("dialog", { name: "Diorna AI" });
+  await expect(drawer.getByRole("heading", { name: "Diorna AI" })).toBeVisible();
+  const composer = drawer.getByLabel("Ask Diorna AI");
+  await composer.fill("Create a useful project from /");
+  const mentionMenu = drawer.getByRole("listbox", { name: "Mention a note" });
+  await expect(mentionMenu).toBeVisible();
+  await mentionMenu.getByRole("option", { name: /Welcome to Diorna/ }).click();
+  await expect(drawer.getByLabel("Referenced notes")).toContainText("Welcome to Diorna");
+  await composer.fill(
+    `${await composer.inputValue()} plus a football event and a 20 minute stretching habit`,
+  );
+  await drawer.getByRole("button", { name: "Plan", exact: true }).click();
+
+  const preview = drawer.getByLabel("AI plan preview");
+  await expect(preview).toBeVisible();
+  await expect(preview.getByText("AI Kernel Guide", { exact: true })).toBeVisible();
+  await expect(preview.getByText("AI Coffee Business", { exact: true })).toBeVisible();
+  await expect(preview.getByText("AI Football", { exact: true })).toBeVisible();
+  await expect(preview.getByText("AI Stretch", { exact: true })).toBeVisible();
+  expect(submittedPayload).toMatchObject({
+    workspace: "University",
+    timezone: "Europe/Brussels",
+    referencedNotes: [expect.objectContaining({ title: "Welcome to Diorna" })],
+  });
+  await page.screenshot({ path: "test-results/diorna-ai-plan.png", fullPage: true });
+
+  await preview.getByRole("button", { name: "Apply 4 actions" }).click();
+  await expect(drawer.getByRole("heading", { name: "Created in University" })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: /AI Kernel Guide/ })).toBeVisible();
+  await expect(drawer.getByRole("button", { name: /AI Coffee Business/ })).toBeVisible();
+  await drawer.getByRole("button", { name: "Undo this batch" }).click();
+
+  await drawer.getByRole("button", { name: "Close Diorna AI" }).click();
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  await expect(
+    page.locator(".context-sidebar").getByRole("button", { name: "AI Kernel Guide" }),
+  ).toHaveCount(0);
+  await page.getByRole("button", { name: "Maps Ctrl 2" }).click();
+  await expect(
+    page.locator(".context-sidebar").getByRole("button", { name: "AI Coffee Business" }),
+  ).toHaveCount(0);
 });
 
 test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page }) => {

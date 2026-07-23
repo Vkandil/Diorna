@@ -36,7 +36,8 @@ import { listenForReminderActions, scheduleNativeReminders } from "@/modules/cal
 import { dateKey, habitStatistics } from "@/modules/daily/logic";
 import { matchesShortcut } from "@/core/shortcuts";
 import { installDownloadedUpdate, type UpdateState } from "@/core/updater";
-import { getNativeVaultInfo, takeNativeOpenRequests } from "@/core/native";
+import { getNativeVaultInfo, hasNativeApiKey, takeNativeOpenRequests } from "@/core/native";
+import { recapSecretId } from "@/shared/recapConfig";
 
 const NotesView = lazy(() =>
   import("@/modules/notes/NotesView").then((module) => ({
@@ -73,6 +74,11 @@ const ComponentLibrary = lazy(() =>
     default: module.ComponentLibrary,
   })),
 );
+const AiDrawer = lazy(() =>
+  import("@/modules/ai/AiDrawer").then((module) => ({
+    default: module.AiDrawer,
+  })),
+);
 
 const modules: Array<{
   id: ModuleId;
@@ -95,7 +101,23 @@ export function AppShell() {
   const [coachVisible, setCoachVisible] = useState(false);
   const [toast, setToast] = useState<string>();
   const [updateState, setUpdateState] = useState<UpdateState>();
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiAvailable, setAiAvailable] = useState(false);
   const workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId)!;
+  useEffect(() => {
+    let active = true;
+    const refresh = () => {
+      void hasNativeApiKey(recapSecretId(state.settings.recapEndpoint))
+        .then((available) => active && setAiAvailable(available))
+        .catch(() => active && setAiAvailable(false));
+    };
+    refresh();
+    window.addEventListener("diorna-api-key-changed", refresh);
+    return () => {
+      active = false;
+      window.removeEventListener("diorna-api-key-changed", refresh);
+    };
+  }, [state.settings.recapEndpoint]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const keymap = state.settings.keymap;
@@ -336,6 +358,16 @@ export function AppShell() {
         </nav>
         <ContextSidebar module={state.activeModule} />
         <div className="sidebar-bottom">
+          {aiAvailable && (
+            <button
+              className={aiOpen ? "active" : ""}
+              aria-pressed={aiOpen}
+              onClick={() => setAiOpen((current) => !current)}
+            >
+              <Sparkles size={16} />
+              <span>Diorna AI</span>
+            </button>
+          )}
           <button onClick={() => state.setModule("settings")}>
             <Settings size={16} />
             <span>{t("Settings")}</span>
@@ -418,6 +450,11 @@ export function AppShell() {
       <aside className="right-panel">
         <RightPanel module={state.activeModule} />
       </aside>
+      {aiOpen && (
+        <Suspense fallback={null}>
+          <AiDrawer open onClose={() => setAiOpen(false)} />
+        </Suspense>
+      )}
       {state.commandPaletteOpen && <CommandPalette />}
       {captureOpen && <QuickCapture onClose={() => setCaptureOpen(false)} />}
       {toast && (

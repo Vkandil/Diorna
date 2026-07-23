@@ -44,7 +44,7 @@ These govern every ambiguous implementation choice.
 | **Keyboard-first** | Every frequent action has a shortcut. The command palette can reach everything. A power user should rarely need the mouse outside the Maps module. |
 | **Zero-friction capture** | Creating a note, task, or habit entry never takes more than two keystrokes. |
 | **Speed is a feature** | See §14. Perceived latency is treated as a bug, not a trade-off. |
-| **Privacy by construction** | Zero telemetry. The only outbound network call is recap generation, which the user triggers and can route to a fully local model. |
+| **Privacy by construction** | Zero telemetry. Outbound model calls happen only for user-triggered recap generation or a confirmed Diorna AI request, and can be routed to a fully local model. |
 | **Open source** | Clean module boundaries, documented APIs, reproducible build, no proprietary service in the core. |
 
 ### 1.2 Target user
@@ -63,7 +63,7 @@ Explicitly **not** to be built. Listed to prevent scope drift; proposals to add 
 - ❌ macOS, Linux, mobile, web, or browser-extension clients.
 - ❌ Cloud sync, hosted accounts, or any server component.
 - ❌ Code execution inside notes.
-- ❌ AI writing assistance inside the editor (autocomplete, rewrite, chat-with-notes). The language model is used **only** for §9 recap generation.
+- ❌ Passive AI writing assistance inside the editor (autocomplete or automatic rewrite). Diorna AI is an explicit command surface governed by §9.6.
 
 > **The Recap module derives its content exclusively from data the user entered in the app** — tasks, habits, metrics, calendar events, notes, flashcard reviews. Nothing is observed in the background. This is a product commitment, not an implementation detail.
 
@@ -438,6 +438,45 @@ At the close of each month, the application produces a **narrative report of wha
 ### 9.5 Presentation
 
 **REQ-RECAP-10** — The Recap tab shows a vertical timeline of periods, newest first. Each entry is a card: period name, a one-line generated headline, three headline statistics, and a Read action. Periods with no recap yet show a Generate action.
+
+### 9.6 Diorna AI command center
+
+**REQ-AI-1** — When a remote OpenRouter key is configured, the left sidebar exposes a
+`Diorna AI` launcher directly above Settings. It opens a drawer beside the sidebar and
+becomes an overlay on narrow windows. Every conversation is local and scoped
+to the active workspace.
+
+**REQ-AI-2** — A request never mutates data directly. The configured model returns a
+versioned, JSON-Schema-constrained plan containing only `create_note`, `create_map`,
+`create_calendar_item`, and `create_habit` operations. Diorna validates the complete plan
+locally, displays every operation and assumption, and requires explicit confirmation
+before applying it.
+
+**REQ-AI-3** — Applying a plan uses the ordinary store and persistence APIs. The active
+workspace ID is supplied locally and cannot be selected by the model. A resulting change
+set records every created entity and exposes an Undo action.
+
+**REQ-AI-4** — Typing `/` in the composer opens a keyboard-accessible picker containing
+only non-trashed notes from the active workspace. A selection is stored as a stable note
+ID and rendered as a title chip. Only explicitly mentioned note bodies are included in
+the remote payload; renamed or moved notes remain resolvable.
+
+**REQ-AI-5** — Map plans describe semantic nodes and edges, not coordinates. Diorna lays
+out the graph deterministically, keeps a requested central node fixed, and resolves note
+nodes created by earlier operations in the same plan.
+
+**REQ-AI-6** — Calendar dates are validated as ISO timestamps in the local timezone.
+Daily duration goals compile to quantity habits with a numeric target, unit, and active
+weekdays. Missing durations or categories appear as visible assumptions in the preview.
+
+**REQ-AI-7** — The model receives the active workspace name, current local date, timezone,
+the user's prompt, and explicitly mentioned notes only. The first request previews the
+exact outbound payload and requires provider consent. Provider routing requires support
+for structured outputs and denies providers that collect prompts where supported.
+
+**REQ-AI-8** — The feature degrades safely: with no key, invalid JSON, a schema violation,
+cross-workspace references, unsupported operations, or a network failure, no entity is
+created. Tests use mocked provider responses and never depend on a live model.
 
 **REQ-RECAP-11** — A full recap page contains, in order:
 1. **Headline statistics** — four to six key numbers with month-over-month deltas and directional arrows
