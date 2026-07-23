@@ -70,7 +70,9 @@ test("configures OpenRouter during onboarding and manages its API key in setting
 
 test("plans, previews, creates, and undoes workspace content with Diorna AI", async ({ page }) => {
   let submittedPayload: Record<string, unknown> | undefined;
+  let aiRequestCount = 0;
   await page.route("**/chat/completions", async (route) => {
+    aiRequestCount += 1;
     const request = route.request();
     const body = request.postDataJSON() as {
       model: string;
@@ -82,81 +84,83 @@ test("plans, previews, creates, and undoes workspace content with Diorna AI", as
     expect(body.model).toBe("moonshotai/kimi-k2.6");
     expect(body.response_format.json_schema.strict).toBe(true);
     expect(body.provider.data_collection).toBe("deny");
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        choices: [
-          {
-            message: {
-              content: JSON.stringify({
-                version: 1,
-                summary: "Prepare the kernel project and personal schedule.",
-                assumptions: ["Football lasts one hour."],
-                operations: [
-                  {
-                    id: "kernel-note",
-                    type: "create_note",
-                    title: "AI Kernel Guide",
-                    bodyMarkdown:
-                      "# Kernel processes\n\nThe kernel schedules processes and isolates resources.",
-                    tags: ["systems"],
-                  },
-                  {
-                    id: "business-map",
-                    type: "create_map",
-                    name: "AI Coffee Business",
-                    nodes: [
-                      {
-                        id: "root",
-                        kind: "text",
-                        title: "Adaptogenic coffee",
-                        body: null,
-                        noteOperationId: null,
-                        locked: true,
-                      },
-                      {
-                        id: "research",
-                        kind: "note",
-                        title: "Research",
-                        body: null,
-                        noteOperationId: "kernel-note",
-                        locked: false,
-                      },
-                    ],
-                    edges: [{ from: "root", to: "research", label: "uses" }],
-                  },
-                  {
-                    id: "football",
-                    type: "create_calendar_item",
-                    kind: "event",
-                    title: "AI Football",
-                    description: "",
-                    startAt: "2026-07-23T19:00:00+02:00",
-                    endAt: "2026-07-23T20:00:00+02:00",
-                    allDay: false,
-                    category: "",
-                    priority: "none",
-                  },
-                  {
-                    id: "stretch",
-                    type: "create_habit",
-                    name: "AI Stretch",
-                    description: "Track time completed.",
-                    category: "",
-                    tracking: "quantity",
-                    unit: "minutes",
-                    target: 20,
-                    activeWeekdays: [1, 2, 3, 4, 5, 6],
-                  },
-                ],
-              }),
+    await new Promise((resolve) => setTimeout(resolve, aiRequestCount === 1 ? 1_000 : 250));
+    await route
+      .fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  version: 1,
+                  summary: "Prepare the kernel project and personal schedule.",
+                  assumptions: ["Football lasts one hour."],
+                  operations: [
+                    {
+                      id: "kernel-note",
+                      type: "create_note",
+                      title: "AI Kernel Guide",
+                      bodyMarkdown:
+                        "# Kernel processes\n\nThe kernel schedules processes and isolates resources.",
+                      tags: ["systems"],
+                    },
+                    {
+                      id: "business-map",
+                      type: "create_map",
+                      name: "AI Coffee Business",
+                      nodes: [
+                        {
+                          id: "root",
+                          kind: "text",
+                          title: "Adaptogenic coffee",
+                          body: null,
+                          noteOperationId: null,
+                          locked: true,
+                        },
+                        {
+                          id: "research",
+                          kind: "note",
+                          title: "Research",
+                          body: null,
+                          noteOperationId: "kernel-note",
+                          locked: false,
+                        },
+                      ],
+                      edges: [{ from: "root", to: "research", label: "uses" }],
+                    },
+                    {
+                      id: "football",
+                      type: "create_calendar_item",
+                      kind: "event",
+                      title: "AI Football",
+                      description: "",
+                      startAt: "2026-07-23T19:00:00+02:00",
+                      endAt: "2026-07-23T20:00:00+02:00",
+                      allDay: false,
+                      category: "",
+                      priority: "none",
+                    },
+                    {
+                      id: "stretch",
+                      type: "create_habit",
+                      name: "AI Stretch",
+                      description: "Track time completed.",
+                      category: "",
+                      tracking: "quantity",
+                      unit: "minutes",
+                      target: 20,
+                      activeWeekdays: [1, 2, 3, 4, 5, 6],
+                    },
+                  ],
+                }),
+              },
             },
-          },
-        ],
-      }),
-    });
+          ],
+        }),
+      })
+      .catch(() => undefined);
   });
   page.on("dialog", (dialog) => void dialog.accept());
 
@@ -179,6 +183,9 @@ test("plans, previews, creates, and undoes workspace content with Diorna AI", as
   await drawer.getByRole("button", { name: "Plan", exact: true }).click();
   await expect(drawer.getByText("Building your plan")).toBeVisible();
   await expect(drawer.getByText("Asking Kimi K2.6 for a structured plan")).toBeVisible();
+  await drawer.getByRole("button", { name: "Stop generation" }).click();
+  await expect(drawer.getByRole("alert")).toContainText("Generation stopped");
+  await drawer.getByRole("button", { name: "Plan", exact: true }).click();
 
   const preview = drawer.getByLabel("AI plan preview");
   await expect(preview).toBeVisible();

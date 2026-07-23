@@ -47,6 +47,17 @@ export interface AiChangeSet {
 export function applyAiPlan(plan: AiPlan, store: DiornaAiStore): AiChangeSet {
   const changes: AiChangeSet = { notes: [], maps: [], items: [], habits: [], created: [] };
   const createdNotes = new Map<string, Note>();
+  const mapTagsByNoteOperation = new Map<string, Set<string>>();
+  for (const operation of plan.operations) {
+    if (operation.type !== "create_map") continue;
+    const groupTag = mapGroupTag(operation.name);
+    for (const node of operation.nodes) {
+      if (!node.noteOperationId) continue;
+      const tags = mapTagsByNoteOperation.get(node.noteOperationId) ?? new Set<string>();
+      tags.add(groupTag);
+      mapTagsByNoteOperation.set(node.noteOperationId, tags);
+    }
+  }
   try {
     for (const operation of plan.operations) {
       if (operation.type !== "create_note") continue;
@@ -54,7 +65,7 @@ export function applyAiPlan(plan: AiPlan, store: DiornaAiStore): AiChangeSet {
         store,
         operation.title,
         operation.bodyMarkdown,
-        operation.tags,
+        [...operation.tags, ...(mapTagsByNoteOperation.get(operation.id) ?? [])],
         changes,
       );
       createdNotes.set(operation.id, note);
@@ -137,11 +148,12 @@ function createMap(
   changes: AiChangeSet,
 ): CanvasMap {
   const implicitNotes = new Map<string, Note>();
+  const groupTag = mapGroupTag(operation.name);
   for (const node of operation.nodes) {
     if (node.kind !== "note" || node.noteOperationId || node.mentionedNoteId) continue;
     implicitNotes.set(
       node.id,
-      createNote(store, node.title, node.body ?? `# ${node.title}\n`, [], changes),
+      createNote(store, node.title, node.body ?? `# ${node.title}\n`, [groupTag], changes),
     );
   }
   const positions = layoutMap(operation);
@@ -275,6 +287,17 @@ function connectionSides(
   return deltaY >= 0
     ? { fromSide: "bottom", toSide: "top" }
     : { fromSide: "top", toSide: "bottom" };
+}
+
+function mapGroupTag(mapName: string): string {
+  const slug = mapName
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 54);
+  return `map/${slug || "generated"}`;
 }
 
 function resolveCategory(store: DiornaAiStore, requested: string): string {

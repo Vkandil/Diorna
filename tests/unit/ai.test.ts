@@ -253,6 +253,39 @@ describe("Diorna AI planning and execution", () => {
     });
   });
 
+  it("aborts a provider request after its configured usage timeout", async () => {
+    const fetchMock = vi.fn().mockImplementation((_url: string, init: RequestInit) => {
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("The operation was aborted.", "AbortError")),
+          { once: true },
+        );
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      requestAiPlan(
+        {
+          endpoint: "https://openrouter.ai/api/v1",
+          model: "moonshotai/kimi-k2.6",
+          apiKey: "secret-test-key",
+          requestTimeoutMs: 10,
+        },
+        {
+          prompt: "Create a plan that never returns",
+          workspaceName: "Personal",
+          now: "2026-07-23T12:00:00+02:00",
+          timezone: "Europe/Brussels",
+          mentions: [],
+          notes: [],
+        },
+      ),
+    ).rejects.toThrow(/stopped the generation.*limit usage.*Nothing was created/);
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
   it("repairs a missing provider plan once and reports progress", async () => {
     const fetchMock = vi
       .fn()
@@ -505,13 +538,16 @@ describe("Diorna AI planning and execution", () => {
     expect(created.notes.find((note) => note.id === changes.notes[0])).toMatchObject({
       workspaceId: "workspace-personal",
       title: "Kernel process",
-      tags: ["systems"],
+      tags: ["systems", "map/adaptogenic-coffee-business"],
     });
     expect(created.maps.find((map) => map.id === changes.maps[0])).toMatchObject({
       workspaceId: "workspace-personal",
       name: "Adaptogenic coffee business",
     });
     expect(created.maps.find((map) => map.id === changes.maps[0])?.nodes).toHaveLength(3);
+    expect(created.notes.find((note) => note.title === "Customer archetype")?.tags).toContain(
+      "map/adaptogenic-coffee-business",
+    );
     const createdMap = created.maps.find((map) => map.id === changes.maps[0])!;
     const centralNode = createdMap.nodes.find((node) => node.diorna?.locked);
     expect(centralNode).toMatchObject({ x: 0, y: 0 });

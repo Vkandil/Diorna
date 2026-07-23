@@ -19,7 +19,12 @@ export interface AiProviderConfig {
   endpoint: string;
   model: string;
   apiKey: string;
+  requestTimeoutMs?: number;
+  repairTimeoutMs?: number;
 }
+
+export const AI_REQUEST_TIMEOUT_MS = 60_000;
+export const AI_REPAIR_TIMEOUT_MS = 30_000;
 
 export type AiProgressPhase =
   | "preparing"
@@ -80,7 +85,14 @@ export async function requestAiPlan(
     { role: "user", content: payload },
   ];
   onProgress?.("requesting");
-  const first = await requestCompletion(url, config, baseMessages, signal);
+  const first = await requestCompletion(
+    url,
+    config,
+    baseMessages,
+    signal,
+    config.requestTimeoutMs ?? AI_REQUEST_TIMEOUT_MS,
+    "generation",
+  );
   onProgress?.("validating");
   try {
     return validateMentionedNoteReferences(parseAiPlan(first.content), context);
@@ -103,7 +115,14 @@ Every map must have one locked central concept. Organize all other nodes into me
 Do not return a bare array, commentary, markdown fences, or unsupported operations.`,
       },
     ];
-    const second = await requestCompletion(url, config, repairMessages, signal);
+    const second = await requestCompletion(
+      url,
+      config,
+      repairMessages,
+      signal,
+      config.repairTimeoutMs ?? AI_REPAIR_TIMEOUT_MS,
+      "repair",
+    );
     onProgress?.("revalidating");
     try {
       return validateMentionedNoteReferences(parseAiPlan(second.content), context);
@@ -128,47 +147,69 @@ async function requestCompletion(
   config: AiProviderConfig,
   messages: Array<{ role: string; content: string }>,
   signal?: AbortSignal,
+  timeoutMs = AI_REQUEST_TIMEOUT_MS,
+  phase: "generation" | "repair" = "generation",
 ): Promise<{ content: unknown; finishReason?: string | null }> {
-  const response = await fetch(url, {
-    method: "POST",
-    ...(signal ? { signal } : {}),
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-      "X-OpenRouter-Title": "Diorna",
-    },
-    body: JSON.stringify({
-      model: config.model,
-      temperature: 0.2,
-      max_tokens: 7500,
-      messages,
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: "diorna_action_plan", strict: true, schema: aiPlanJsonSchema },
+  const controller = new AbortController();
+  let timedOut = false;
+  const forwardAbort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) forwardAbort();
+  else signal?.addEventListener("abort", forwardAbort, { once: true });
+  const timeout = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        "X-OpenRouter-Title": "Diorna",
       },
-      provider: {
-        require_parameters: true,
-        data_collection: "deny",
-      },
-      plugins: [{ id: "response-healing" }],
-    }),
-  });
-  if (!response.ok) throw new Error(`OpenRouter returned ${response.status}`);
-  const body = (await response.json()) as {
-    choices?: Array<{
-      finish_reason?: string | null;
-      message?: { content?: unknown };
-      error?: { message?: string };
-    }>;
-  };
-  const choice = body.choices?.[0];
-  const content = choice?.message?.content;
-  if (content === null || content === undefined || content === "")
-    return {
-      content: undefined,
-      finishReason: choice?.finish_reason ?? (choice?.error?.message ? "error" : null),
+      body: JSON.stringify({
+        model: config.model,
+        temperature: 0.2,
+        max_tokens: 6500,
+        messages,
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "diorna_action_plan", strict: true, schema: aiPlanJsonSchema },
+        },
+        provider: {
+          require_parameters: true,
+          data_collection: "deny",
+        },
+        plugins: [{ id: "response-healing" }],
+      }),
+    });
+    if (!response.ok) throw new Error(`OpenRouter returned ${response.status}`);
+    const body = (await response.json()) as {
+      choices?: Array<{
+        finish_reason?: string | null;
+        message?: { content?: unknown };
+        error?: { message?: string };
+      }>;
     };
-  return { content, finishReason: choice?.finish_reason ?? null };
+    const choice = body.choices?.[0];
+    const content = choice?.message?.content;
+    if (content === null || content === undefined || content === "")
+      return {
+        content: undefined,
+        finishReason: choice?.finish_reason ?? (choice?.error?.message ? "error" : null),
+      };
+    return { content, finishReason: choice?.finish_reason ?? null };
+  } catch (error) {
+    if (timedOut)
+      throw new Error(
+        `Diorna stopped the ${phase} after ${Math.max(1, Math.round(timeoutMs / 1000))} seconds to limit usage. Nothing was created.`,
+      );
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+    signal?.removeEventListener("abort", forwardAbort);
+  }
 }
 
 function parseJsonValue(value: unknown): unknown {

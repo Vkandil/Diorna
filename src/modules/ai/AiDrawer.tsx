@@ -10,6 +10,7 @@ import {
   RotateCcw,
   Send,
   Sparkles,
+  Square,
   X,
 } from "lucide-react";
 import { loadNativeApiKey } from "@/core/native";
@@ -44,6 +45,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
   const [progress, setProgress] = useState<AiProgressPhase>();
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController>();
+  const stopReasonRef = useRef<"user">();
   const historyKey = `diorna-ai-history:${state.activeWorkspaceId}`;
   const workspaceNotes = useMemo(
     () =>
@@ -108,6 +110,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
     setChanges(undefined);
     const controller = new AbortController();
     abortRef.current = controller;
+    stopReasonRef.current = undefined;
     try {
       const apiKey = await loadNativeApiKey(recapSecretId(state.settings.recapEndpoint));
       if (!apiKey) throw new Error("Add an OpenRouter API key in Settings → Recap first.");
@@ -155,13 +158,22 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
         { id: `${Date.now()}-ai`, role: "assistant", text: nextPlan.summary },
       ]);
     } catch (caught) {
-      if ((caught as Error).name !== "AbortError")
+      if ((caught as Error).name === "AbortError" && stopReasonRef.current === "user")
+        setError("Generation stopped. Nothing was created.");
+      else if ((caught as Error).name !== "AbortError")
         setError(caught instanceof Error ? caught.message : "Diorna AI could not prepare a plan.");
     } finally {
       if (abortRef.current === controller) abortRef.current = undefined;
       setLoading(false);
       setProgress(undefined);
     }
+  };
+
+  const stopGeneration = () => {
+    if (!abortRef.current) return;
+    stopReasonRef.current = "user";
+    setError("Stopping generation…");
+    abortRef.current.abort();
   };
 
   const apply = () => {
@@ -342,12 +354,12 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
           <div className="ai-composer-actions">
             <small>Review required · Ctrl+Enter to send</small>
             <button
-              className="button primary"
-              disabled={!prompt.trim() || loading}
-              onClick={() => void generate()}
+              className={`button ${loading ? "" : "primary"}`}
+              disabled={!loading && !prompt.trim()}
+              onClick={() => (loading ? stopGeneration() : void generate())}
             >
-              {loading ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}
-              {loading ? "Working…" : "Plan"}
+              {loading ? <Square size={13} fill="currentColor" /> : <Send size={15} />}
+              {loading ? "Stop generation" : "Plan"}
             </button>
           </div>
         </footer>

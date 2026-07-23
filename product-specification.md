@@ -465,7 +465,8 @@ the remote payload; renamed or moved notes remain resolvable.
 out the graph deterministically around one fixed central concept, requires every other
 node to be reachable through a labeled semantic relationship, and places deeper
 sub-branches farther from the center. It resolves explicitly mentioned existing notes
-and note nodes created anywhere in the same plan.
+and note nodes created anywhere in the same plan. Notes created for the Map receive
+a shared `map/<map-name>` grouping tag.
 
 **REQ-AI-6** — Calendar dates are validated as ISO timestamps in the local timezone.
 Daily duration goals compile to quantity habits with a numeric target, unit, and active
@@ -481,6 +482,11 @@ cross-workspace references, unsupported operations, or a network failure, no ent
 created. Root arrays are normalized, invalid or empty successful responses receive one
 automatic corrective request, and validation progress is visible in the chat. Tests use
 mocked provider responses and never depend on a live model.
+
+**REQ-AI-9** — Generation is cancellable from the composer. The initial provider
+request stops after 60 seconds and its single corrective request stops after 30 seconds;
+aborting or reaching either deadline creates no partial entities and reports the outcome
+inside the chat.
 
 **REQ-RECAP-11** — A full recap page contains, in order:
 1. **Headline statistics** — four to six key numbers with month-over-month deltas and directional arrows

@@ -12,6 +12,10 @@ collection. Root arrays and common plan envelopes are normalized. If a response
 is empty or invalid, one corrective request is made and validated. The first remote
 request uses the same exact-payload consent mechanism as Recap.
 
+The first provider request is capped at 60 seconds and the corrective request at
+30 seconds. Both are aborted after their deadline, and the user can stop either
+request from the composer without applying a partial plan.
+
 `types.ts` is the trust boundary. It accepts create-only plans for notes, maps,
 calendar items, and habits. It rejects unknown actions, duplicate IDs, invalid
 map links, invalid dates, and incomplete quantity habits.
@@ -21,7 +25,9 @@ are computed locally from semantic nodes and edges. A map can link an explicitly
 mentioned existing note, and generated notes may appear anywhere in the plan.
 Generated maps require one locked central concept, labeled relationships, and a
 directed path from that center to every node. Branches are arranged radially
-around the center, with deeper sub-branches extending outward.
+around the center, with deeper sub-branches extending outward. Every note created
+for a map receives a stable `map/<map-name>` tag so the generated research remains
+filterable as one group.
 Created entities are
 recorded as one change set so the whole batch can be undone. Provider output is
 never executed as code and cannot select or cross a workspace boundary.
