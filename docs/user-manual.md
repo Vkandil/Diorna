@@ -37,8 +37,12 @@ editor position; Diorna copies them into the workspace `attachments` folder and
 keeps the note link portable. Hover a media block and drag its six-dot handle to
 move it like a Notion block (or focus the handle and press `Alt+↑` / `Alt+↓`).
 Selecting an image, video, or PDF exposes width and alignment controls. Use the
-download action to export the current note, folder, or course as Markdown or as
-a directly saved PDF; printing remains available separately.
+image itself to open a full-screen preview. PDF blocks provide page thumbnails,
+previous/next navigation, zoom controls, and a selectable text panel. Select a
+passage and choose **Quote into note** to insert a quote with a link back to its
+exact PDF page. Use the download action to export the current note, folder, or
+course as Markdown or as a directly saved PDF; printing remains available
+separately.
 
 ## Maps
 
@@ -95,6 +99,13 @@ API key, and press **Save key**. The key is stored per Windows user with DPAPI,
 outside the vault. Changing the endpoint or model remains possible for any
 OpenAI-compatible provider.
 
+With an OpenRouter key configured, **Diorna AI** appears directly above Settings.
+It can prepare notes, maps, calendar items, and Daily habits in the active
+workspace. Type `/` in its composer to attach a specific note as context. Diorna
+shows the exact outbound payload on first use and always displays the complete
+creation plan before anything is applied. Use **Undo this batch** to reverse the
+result.
+
 ## Data lifecycle
 
 Settings imports Obsidian or Notion into a dated folder without modifying the
@@ -107,8 +118,8 @@ to rebuild the index from Markdown and Canvas.
 ## Privacy and troubleshooting
 
 Diorna has no telemetry. The app works offline; only a requested remote recap,
-optional update check, and optional link preview need a network. API keys use
-Windows DPAPI and stay outside the vault. If a screen fails, copy diagnostics
-from the error view and inspect local rotating logs under `%APPDATA%\Diorna`.
-Never edit files simultaneously in two sync clients; Diorna reports hash/lock
-conflicts instead of choosing one silently.
+a confirmed Diorna AI request, optional update check, and optional link preview
+need a network. API keys use Windows DPAPI and stay outside the vault. If a
+screen fails, copy diagnostics from the error view and inspect local rotating
+logs under `%APPDATA%\Diorna`. Never edit files simultaneously in two sync
+clients; Diorna reports hash/lock conflicts instead of choosing one silently.

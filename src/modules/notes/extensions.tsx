@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Node, mergeAttributes, nodeInputRule } from "@tiptap/core";
 import CodeBlockLowlight from "@tiptap/extension-code-block-lowlight";
 import {
@@ -32,6 +33,7 @@ import {
   Layers3,
 } from "lucide-react";
 import "katex/dist/katex.min.css";
+import { PdfAttachmentViewer } from "./PdfAttachmentViewer";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -513,7 +515,16 @@ export const AttachmentBlock = Node.create({
 
 function AttachmentView({ node, updateAttributes, selected, editor, getPos }: NodeViewProps) {
   const kind = String(node.attrs.kind);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const dragHandle = useAttachmentPointerDrag({ editor, getPos, title: String(node.attrs.title) });
+  useEffect(() => {
+    if (!lightboxOpen) return;
+    const close = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLightboxOpen(false);
+    };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [lightboxOpen]);
   const Icon =
     kind === "image"
       ? FileImage
@@ -534,7 +545,50 @@ function AttachmentView({ node, updateAttributes, selected, editor, getPos }: No
         style={{ width: `${node.attrs.width}%` }}
       >
         <AttachmentDragHandle {...dragHandle} />
-        <img src={node.attrs.src} alt={node.attrs.caption || node.attrs.title} />
+        <button
+          type="button"
+          className="attachment-image-trigger"
+          aria-label={`Open ${node.attrs.title} full screen`}
+          contentEditable={false}
+          onClick={(event) => {
+            event.stopPropagation();
+            setLightboxOpen(true);
+          }}
+        >
+          <img
+            src={node.attrs.src}
+            alt={node.attrs.caption || node.attrs.title}
+            draggable={false}
+          />
+        </button>
+        {lightboxOpen &&
+          createPortal(
+            <div
+              className="attachment-lightbox"
+              role="dialog"
+              aria-modal="true"
+              aria-label={`${node.attrs.title} preview`}
+              onClick={() => setLightboxOpen(false)}
+            >
+              <button
+                type="button"
+                className="icon-button"
+                aria-label="Close image preview"
+                onClick={() => setLightboxOpen(false)}
+              >
+                ×
+              </button>
+              <img
+                src={node.attrs.src}
+                alt={node.attrs.caption || node.attrs.title}
+                onClick={(event) => event.stopPropagation()}
+              />
+              {(node.attrs.caption || node.attrs.title) && (
+                <p>{node.attrs.caption || node.attrs.title}</p>
+              )}
+            </div>,
+            document.body,
+          )}
         {selected && (
           <AttachmentControls
             kind="Image"
@@ -586,8 +640,14 @@ function AttachmentView({ node, updateAttributes, selected, editor, getPos }: No
         style={{ width: `${node.attrs.width}%` }}
       >
         <AttachmentDragHandle {...dragHandle} />
-        <iframe title={node.attrs.title} src={node.attrs.src} />
-        <span>PDF · Select text in the viewer to quote it into this note.</span>
+        <PdfAttachmentViewer
+          src={String(node.attrs.src)}
+          relativePath={String(node.attrs.relativePath)}
+          title={String(node.attrs.title)}
+          editor={editor}
+          getPos={() => (typeof getPos === "function" ? getPos() : undefined)}
+          nodeSize={node.nodeSize}
+        />
         {selected && (
           <AttachmentControls
             kind="PDF"

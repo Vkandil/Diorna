@@ -686,7 +686,7 @@ Measured on a reference machine — Intel i5 11th generation, 16 GB RAM, SSD —
 | **NFR-5** | Calendar view switch: < 100 ms. Daily Grid cell toggle: < 30 ms perceived, optimistic. |
 | **NFR-6** | Memory: **< 400 MB** idle with the reference vault; < 700 MB under heavy use. |
 | **NFR-7** | Installer size < 30 MB. Installed footprint < 150 MB excluding user data. |
-| **NFR-8** | Fully functional offline. The only outbound calls are recap generation (user-triggered), update checks (toggleable), and link-preview fetching (toggleable). |
+| **NFR-8** | Fully functional offline. The only outbound calls are user-triggered recap or confirmed Diorna AI generation, update checks (toggleable), and link-preview fetching (toggleable). |
 | **NFR-9** | **Zero telemetry.** No analytics, no crash reporting, no phone-home, not even anonymised, not even opt-out. Verifiable by inspecting the source. |
 | **NFR-10** | Data safety: atomic writes, no data loss on crash or forced termination, automatic backup before every migration, and a recovery path from a corrupted database that never loses note or map content. |
 | **NFR-11** | Accessibility: complete keyboard operation, visible focus indicators, ARIA labels on all controls, contrast ratio ≥ 4.5:1 in both themes, respects the Windows reduced-motion setting, and works at 200 % display scaling. |

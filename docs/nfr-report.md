@@ -4,23 +4,23 @@ This file is the reproducible acceptance record. Measurements must be repeated
 on the reference machine (11th-generation Intel i5, 16 GB RAM, SSD) and on clean
 Windows 10 1809 and Windows 11 systems before a signed public release.
 
-## Automated evidence — 2026-07-22
+## Automated evidence — 2026-07-23
 
-| Gate                      | Result                                                                             |
-| ------------------------- | ---------------------------------------------------------------------------------- |
-| TypeScript strict build   | Pass                                                                               |
-| ESLint, zero warnings     | Pass                                                                               |
-| Business-logic unit tests | 193/193 pass                                                                       |
-| Business-logic coverage   | 97.78% statements, 83.10% branches, 97.40% functions                               |
-| Parser corpus             | 63 cases pass                                                                      |
-| Workspace isolation       | 19 tests covering all 16 content entity classes                                    |
-| Rust tests                | 19/19 pass, including recovery, conflicts, attachments, trash, and XLSX            |
-| Playwright acceptance     | 13/13 pass, including custom workspaces, month drag/drop, attachments, and WCAG    |
-| Reference web performance | Pass at 5,000 notes, 50 maps, 3,000 items, and 730 days of habit history           |
-| npm production audit      | 0 known vulnerabilities                                                            |
-| Production web build      | Pass; shell entry about 472 kB minified / 153 kB gzip; feature modules lazy-loaded |
-| Native release compile    | Pass; optimized `diorna.exe` built from a clean Cargo target                       |
-| Windows bundles           | Pass; x64 EN/FR MSI and NSIS generated locally                                     |
+| Gate                      | Result                                                                                        |
+| ------------------------- | --------------------------------------------------------------------------------------------- |
+| TypeScript strict build   | Pass                                                                                          |
+| ESLint, zero warnings     | Pass                                                                                          |
+| Business-logic unit tests | 205/205 pass across 22 suites                                                                 |
+| Business-logic coverage   | 97.88% statements, 82.48% branches, 97.46% functions                                          |
+| Parser corpus             | 63 cases pass                                                                                 |
+| Workspace isolation       | 19 tests covering all 16 content entity classes                                               |
+| Rust tests                | 20/20 pass, including recovery, conflicts, attachments, trash, DPAPI, and XLSX                |
+| Playwright acceptance     | 19/19 pass, including AI plans, PDF quoting, month drag/drop, attachments, and WCAG           |
+| Reference web performance | Pass at 5,000 notes, 50 maps, 3,000 items, and 730 days of habit history                      |
+| npm production audit      | 0 known vulnerabilities                                                                       |
+| Production web build      | Pass; shell entry about 483 kB minified / 156 kB gzip; PDF.js and feature modules lazy-loaded |
+| Native release compile    | Pass; optimized `diorna.exe` built from a clean Cargo target                                  |
+| Windows bundles           | Pass; x64 EN/FR MSI and NSIS generated locally                                                |
 
 ## Design evidence
 

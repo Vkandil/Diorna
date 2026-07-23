@@ -4,7 +4,7 @@ async function onboard(page: Page) {
   await page.goto("/");
   await page.evaluate(() => localStorage.clear());
   await page.reload();
-  for (let step = 0; step < 3; step += 1)
+  for (let step = 0; step < 4; step += 1)
     await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Enter Diorna" }).click();
   await expect(page.locator(".app-shell")).toBeVisible();

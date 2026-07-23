@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { jsPDF } from "jspdf";
 
 async function completeOnboarding(page: Page, openRouterApiKey?: string) {
   await expect(page.getByRole("heading", { name: "Choose your vault" })).toBeVisible();
@@ -970,7 +971,13 @@ test("pastes a screenshot into a portable attachment block", async ({ page }) =>
   });
   const attachment = page.locator("figure.attachment-node.image");
   await expect(attachment.getByRole("img")).toBeVisible();
-  await attachment.getByRole("img").click();
+  await attachment.getByRole("button", { name: "Open screenshot.png full screen" }).click();
+  const imagePreview = page.getByRole("dialog", { name: "screenshot.png preview" });
+  await expect(imagePreview.getByRole("img", { name: "screenshot.png" })).toBeVisible();
+  await imagePreview.getByRole("button", { name: "Close image preview" }).click();
+  await expect(imagePreview).toHaveCount(0);
+  await attachment.click({ position: { x: 4, y: 4 } });
+  await expect(attachment.getByLabel("Image width")).toBeVisible();
   await attachment.getByLabel("Image width").evaluate((input) => {
     (input as HTMLInputElement).value = "60";
     input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -981,9 +988,16 @@ test("pastes a screenshot into a portable attachment block", async ({ page }) =>
   await expect(attachment).toHaveClass(/align-right/);
   await expect(attachment).toHaveAttribute("style", /width: 60%/);
 
-  await editor.evaluate((target) => {
+  const generatedPdf = new jsPDF();
+  generatedPdf.text("A page anchored acceptance quote", 20, 30);
+  generatedPdf.addPage();
+  generatedPdf.text("Second lecture page", 20, 30);
+  const pdfBytes = Array.from(new Uint8Array(generatedPdf.output("arraybuffer")));
+  await editor.evaluate((target, bytes) => {
     const transfer = new DataTransfer();
-    transfer.items.add(new File(["%PDF-1.7"], "reading.pdf", { type: "application/pdf" }));
+    transfer.items.add(
+      new File([Uint8Array.from(bytes)], "reading.pdf", { type: "application/pdf" }),
+    );
     transfer.items.add(new File(["video"], "lecture.mp4", { type: "video/mp4" }));
     const rect = target.getBoundingClientRect();
     target.dispatchEvent(
@@ -995,14 +1009,38 @@ test("pastes a screenshot into a portable attachment block", async ({ page }) =>
         dataTransfer: transfer,
       }),
     );
-  });
+  }, pdfBytes);
   const pdf = page.locator(".attachment-node.pdf");
   const video = page.locator(".attachment-node.video");
-  await expect(pdf.locator("iframe")).toBeVisible();
-  await expect(video.locator("video")).toBeVisible();
-  await pdf.locator("iframe").evaluate((element) => {
-    element.style.height = "120px";
+  await expect(pdf.getByRole("button", { name: "Next PDF page" })).toBeVisible();
+  await expect(pdf.getByText("A page anchored acceptance quote")).toBeVisible();
+  await expect(pdf.getByRole("button", { name: "Open PDF page 2" })).toBeVisible();
+  await pdf.getByRole("button", { name: "Next PDF page" }).click();
+  await expect(pdf.getByText("Second lecture page")).toBeVisible();
+  await pdf.getByRole("button", { name: "Previous PDF page" }).click();
+  await pdf.getByRole("button", { name: "Zoom PDF in" }).click();
+  await expect(pdf.getByText("120%")).toBeVisible();
+  const selectableText = pdf.getByLabel("Selectable text from page 1");
+  await selectableText.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
   });
+  await pdf.getByRole("button", { name: "Quote into note" }).click();
+  await expect(editor.locator("blockquote")).toContainText("A page anchored acceptance quote");
+  await expect(editor.getByRole("link", { name: "reading.pdf, page 1" })).toHaveAttribute(
+    "href",
+    "diorna-pdf:attachments%2Freading.pdf#page=1",
+  );
+  await pdf.getByRole("button", { name: "Next PDF page" }).click();
+  await expect(pdf.getByText("Second lecture page")).toBeVisible();
+  await editor.getByRole("link", { name: "reading.pdf, page 1" }).click();
+  await expect(pdf.getByLabel("PDF page number")).toHaveValue("1");
+  await expect(pdf.getByText("A page anchored acceptance quote")).toBeVisible();
+  await expect(video.locator("video")).toBeVisible();
   const handle = video.getByLabel("Move lecture.mp4 block");
   await handle.scrollIntoViewIfNeeded();
   const handleBox = await handle.boundingBox();

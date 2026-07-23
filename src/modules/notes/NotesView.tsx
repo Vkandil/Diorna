@@ -815,6 +815,7 @@ function Editor({ noteId }: { noteId: string }) {
       Highlight.configure({ multicolor: true }),
       Link.configure({
         openOnClick: false,
+        protocols: ["diorna-pdf"],
         HTMLAttributes: { rel: "noopener noreferrer" },
       }),
       Placeholder.configure({
@@ -965,6 +966,25 @@ function Editor({ noteId }: { noteId: string }) {
         return false;
       },
       handleClick: (view, position, event) => {
+        const pdfLink =
+          event.target instanceof Element
+            ? event.target.closest<HTMLAnchorElement>('a[href^="diorna-pdf:"]')
+            : null;
+        if (pdfLink) {
+          event.preventDefault();
+          const match = pdfLink.getAttribute("href")?.match(/^diorna-pdf:([^#]+)#page=(\d+)$/);
+          if (match?.[1] && match[2]) {
+            window.dispatchEvent(
+              new CustomEvent("diorna-open-pdf-page", {
+                detail: {
+                  relativePath: decodeURIComponent(match[1]),
+                  page: Number(match[2]),
+                },
+              }),
+            );
+          }
+          return true;
+        }
         const wikiLink =
           event.target instanceof Element
             ? event.target.closest<HTMLElement>('[data-type="wiki-link"]')
