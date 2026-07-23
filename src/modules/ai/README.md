@@ -19,6 +19,9 @@ map links, invalid dates, and incomplete quantity habits.
 `executor.ts` applies a confirmed plan to the active workspace. Map coordinates
 are computed locally from semantic nodes and edges. A map can link an explicitly
 mentioned existing note, and generated notes may appear anywhere in the plan.
+Generated maps require one locked central concept, labeled relationships, and a
+directed path from that center to every node. Branches are arranged radially
+around the center, with deeper sub-branches extending outward.
 Created entities are
 recorded as one change set so the whole batch can be undone. Provider output is
 never executed as code and cannot select or cross a workspace boundary.

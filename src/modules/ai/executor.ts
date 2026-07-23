@@ -178,17 +178,24 @@ function createMap(
     };
   });
   const nodeIds = new Map(operation.nodes.map((node, index) => [node.id, nodes[index]!.id]));
+  const nodePositions = new Map(operation.nodes.map((node, index) => [node.id, nodes[index]!]));
   const edges: CanvasEdge[] = operation.edges.flatMap((edge) => {
     const fromNode = nodeIds.get(edge.from);
     const toNode = nodeIds.get(edge.to);
+    const fromPosition = nodePositions.get(edge.from);
+    const toPosition = nodePositions.get(edge.to);
+    const sides =
+      fromPosition && toPosition
+        ? connectionSides(fromPosition.x, fromPosition.y, toPosition.x, toPosition.y)
+        : { fromSide: "right" as const, toSide: "left" as const };
     return fromNode && toNode
       ? [
           {
             id: createId("edge"),
             fromNode,
             toNode,
-            fromSide: "right" as const,
-            toSide: "left" as const,
+            fromSide: sides.fromSide,
+            toSide: sides.toSide,
             ...(edge.label ? { label: edge.label } : {}),
             diorna: { routing: "bezier" as const, arrowheads: "one-way" as const, width: 1.5 },
           },
@@ -205,6 +212,8 @@ function createMap(
 function layoutMap(operation: AiMapOperation): Map<string, { x: number; y: number }> {
   const root = operation.nodes.find((node) => node.locked) ?? operation.nodes[0]!;
   const levels = new Map<string, number>([[root.id, 0]]);
+  const branches = new Map<string, number>();
+  const parents = new Map<string, string>();
   const queue = [root.id];
   while (queue.length) {
     const current = queue.shift()!;
@@ -212,18 +221,60 @@ function layoutMap(operation: AiMapOperation): Map<string, { x: number; y: numbe
     for (const edge of operation.edges.filter((entry) => entry.from === current)) {
       if (levels.has(edge.to)) continue;
       levels.set(edge.to, level + 1);
+      parents.set(edge.to, current);
       queue.push(edge.to);
     }
   }
-  const rows = new Map<number, number>();
-  return new Map(
-    operation.nodes.map((node, index) => {
-      const level = levels.get(node.id) ?? Math.max(1, Math.ceil(index / 3));
-      const row = rows.get(level) ?? 0;
-      rows.set(level, row + 1);
-      return [node.id, { x: level * 400, y: row * 260 }];
-    }),
-  );
+  const rootChildren = operation.nodes.filter((node) => parents.get(node.id) === root.id);
+  rootChildren.forEach((node, index) => branches.set(node.id, index));
+  for (const node of operation.nodes) {
+    if (node.id === root.id || branches.has(node.id)) continue;
+    let ancestor = node.id;
+    while (parents.has(ancestor) && parents.get(ancestor) !== root.id)
+      ancestor = parents.get(ancestor)!;
+    branches.set(node.id, branches.get(ancestor) ?? 0);
+  }
+  const grouped = new Map<string, string[]>();
+  for (const node of operation.nodes) {
+    if (node.id === root.id) continue;
+    const key = `${branches.get(node.id) ?? 0}:${levels.get(node.id) ?? 1}`;
+    grouped.set(key, [...(grouped.get(key) ?? []), node.id]);
+  }
+  const branchCount = Math.max(1, rootChildren.length);
+  const positions = new Map<string, { x: number; y: number }>([[root.id, { x: 0, y: 0 }]]);
+  for (const node of operation.nodes) {
+    if (node.id === root.id) continue;
+    const level = levels.get(node.id) ?? 1;
+    const branch = branches.get(node.id) ?? 0;
+    const siblings = grouped.get(`${branch}:${level}`) ?? [node.id];
+    const siblingIndex = siblings.indexOf(node.id);
+    const baseAngle = -Math.PI / 2 + (branch * Math.PI * 2) / branchCount;
+    const angle = baseAngle + (siblingIndex - (siblings.length - 1) / 2) * 0.2;
+    const radiusX = 500 + (level - 1) * 400;
+    const radiusY = 340 + (level - 1) * 300;
+    positions.set(node.id, {
+      x: Math.round(Math.cos(angle) * radiusX),
+      y: Math.round(Math.sin(angle) * radiusY),
+    });
+  }
+  return positions;
+}
+
+function connectionSides(
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+): Required<Pick<CanvasEdge, "fromSide" | "toSide">> {
+  const deltaX = toX - fromX;
+  const deltaY = toY - fromY;
+  if (Math.abs(deltaX) >= Math.abs(deltaY))
+    return deltaX >= 0
+      ? { fromSide: "right", toSide: "left" }
+      : { fromSide: "left", toSide: "right" };
+  return deltaY >= 0
+    ? { fromSide: "bottom", toSide: "top" }
+    : { fromSide: "top", toSide: "bottom" };
 }
 
 function resolveCategory(store: DiornaAiStore, requested: string): string {

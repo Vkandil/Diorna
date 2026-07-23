@@ -141,6 +141,13 @@ export const aiPlanSchema = z
       operationIds.add(operation.id);
       if (operation.type !== "create_map") continue;
       const nodeIds = new Set(operation.nodes.map((node) => node.id));
+      const centralNodes = operation.nodes.filter((node) => node.locked);
+      if (centralNodes.length !== 1)
+        context.addIssue({
+          code: "custom",
+          message: `Map must have exactly one locked central node`,
+          path: ["operations"],
+        });
       for (const node of operation.nodes)
         if (node.noteOperationId && !noteOperationIds.has(node.noteOperationId))
           context.addIssue({
@@ -155,6 +162,34 @@ export const aiPlanSchema = z
             message: `Map edge references an unknown node`,
             path: ["operations"],
           });
+        else if (!edge.label?.trim())
+          context.addIssue({
+            code: "custom",
+            message: `Map edge ${edge.from} → ${edge.to} needs a relationship label`,
+            path: ["operations"],
+          });
+      if (operation.nodes.length > 1) {
+        const root = centralNodes[0] ?? operation.nodes[0]!;
+        const reachable = new Set<string>([root.id]);
+        const queue = [root.id];
+        while (queue.length) {
+          const current = queue.shift()!;
+          for (const edge of operation.edges) {
+            if (edge.from !== current || reachable.has(edge.to) || !nodeIds.has(edge.to)) continue;
+            reachable.add(edge.to);
+            queue.push(edge.to);
+          }
+        }
+        const disconnected = operation.nodes
+          .filter((node) => !reachable.has(node.id))
+          .map((node) => node.id);
+        if (disconnected.length)
+          context.addIssue({
+            code: "custom",
+            message: `Map nodes must be reachable from the central node: ${disconnected.join(", ")}`,
+            path: ["operations"],
+          });
+      }
     }
   });
 

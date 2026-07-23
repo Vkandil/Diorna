@@ -462,8 +462,10 @@ ID and rendered as a title chip. Only explicitly mentioned note bodies are inclu
 the remote payload; renamed or moved notes remain resolvable.
 
 **REQ-AI-5** — Map plans describe semantic nodes and edges, not coordinates. Diorna lays
-out the graph deterministically, keeps a requested central node fixed, resolves explicitly
-mentioned existing notes, and resolves note nodes created anywhere in the same plan.
+out the graph deterministically around one fixed central concept, requires every other
+node to be reachable through a labeled semantic relationship, and places deeper
+sub-branches farther from the center. It resolves explicitly mentioned existing notes
+and note nodes created anywhere in the same plan.
 
 **REQ-AI-6** — Calendar dates are validated as ISO timestamps in the local timezone.
 Daily duration goals compile to quantity habits with a numeric target, unit, and active

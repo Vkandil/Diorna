@@ -48,7 +48,7 @@ const fullPlan: AiPlan = {
         },
       ],
       edges: [
-        { from: "root", to: "research" },
+        { from: "root", to: "research", label: "informed by" },
         { from: "root", to: "customer", label: "audience" },
       ],
     },
@@ -116,6 +116,47 @@ describe("Diorna AI planning and execution", () => {
         operations: [{ id: "bad", type: "delete_note", noteId: "all" }],
       }),
     ).toThrow();
+  });
+
+  it("rejects flat maps with isolated nodes or unlabeled relationships", () => {
+    expect(() =>
+      aiPlanSchema.parse({
+        version: 1,
+        summary: "A disconnected map.",
+        assumptions: [],
+        operations: [
+          {
+            id: "map",
+            type: "create_map",
+            name: "Business",
+            nodes: [
+              { id: "root", kind: "text", title: "Business", locked: true },
+              { id: "offer", kind: "text", title: "Offer", locked: false },
+            ],
+            edges: [],
+          },
+        ],
+      }),
+    ).toThrow(/reachable from the central node/);
+    expect(() =>
+      aiPlanSchema.parse({
+        version: 1,
+        summary: "An unlabeled map.",
+        assumptions: [],
+        operations: [
+          {
+            id: "map",
+            type: "create_map",
+            name: "Business",
+            nodes: [
+              { id: "root", kind: "text", title: "Business", locked: true },
+              { id: "offer", kind: "text", title: "Offer", locked: false },
+            ],
+            edges: [{ from: "root", to: "offer" }],
+          },
+        ],
+      }),
+    ).toThrow(/needs a relationship label/);
   });
 
   it("normalizes a plan or an operation list returned as a root array", () => {
@@ -337,8 +378,78 @@ describe("Diorna AI planning and execution", () => {
     if (map?.type !== "create_map") throw new Error("Expected a map operation");
     expect(map.nodes.slice(1).every((node) => !node.noteOperationId && node.body)).toBe(true);
     expect(repaired.assumptions).toContain(
-      "Invalid generated note references were converted to standalone map notes.",
+      "Diorna repaired generated note references and connected isolated map branches to the central concept.",
     );
+  });
+
+  it("repairs an AI map that returns isolated notes into one centered connected graph", async () => {
+    const flatPlan = {
+      version: 1,
+      summary: "Explore the business.",
+      assumptions: [],
+      operations: [
+        {
+          id: "business-map",
+          type: "create_map",
+          name: "Adaptogenic coffee",
+          nodes: [
+            {
+              id: "root",
+              kind: "text",
+              title: "Adaptogenic coffee",
+              body: null,
+              noteOperationId: null,
+              mentionedNoteId: null,
+              locked: true,
+            },
+            {
+              id: "positioning",
+              kind: "note",
+              title: "Positioning",
+              body: "Find a defensible market twist.",
+              noteOperationId: null,
+              mentionedNoteId: null,
+              locked: false,
+            },
+          ],
+          edges: [],
+        },
+      ],
+    };
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ finish_reason: "stop", message: { content: JSON.stringify(flatPlan) } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const repaired = await requestAiPlan(
+      {
+        endpoint: "https://openrouter.ai/api/v1",
+        model: "moonshotai/kimi-k2.6",
+        apiKey: "secret-test-key",
+      },
+      {
+        prompt: "Create a structured business map",
+        workspaceName: "Personal",
+        now: "2026-07-23T12:00:00+02:00",
+        timezone: "Europe/Brussels",
+        mentions: [],
+        notes: [],
+      },
+    );
+    const map = repaired.operations[0];
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(map?.type).toBe("create_map");
+    if (map?.type !== "create_map") throw new Error("Expected a map operation");
+    expect(map.edges).toEqual([{ from: "root", to: "positioning", label: "explores" }]);
+    expect(map.nodes.filter((node) => node.locked).map((node) => node.id)).toEqual(["root"]);
   });
 
   it("links an explicitly mentioned existing note into a generated map", () => {
@@ -401,6 +512,12 @@ describe("Diorna AI planning and execution", () => {
       name: "Adaptogenic coffee business",
     });
     expect(created.maps.find((map) => map.id === changes.maps[0])?.nodes).toHaveLength(3);
+    const createdMap = created.maps.find((map) => map.id === changes.maps[0])!;
+    const centralNode = createdMap.nodes.find((node) => node.diorna?.locked);
+    expect(centralNode).toMatchObject({ x: 0, y: 0 });
+    expect(createdMap.edges).toHaveLength(2);
+    expect(createdMap.edges.every((edge) => edge.label)).toBe(true);
+    expect(createdMap.nodes.some((node) => node.x !== 0 || node.y !== 0)).toBe(true);
     expect(created.items.find((item) => item.id === changes.items[0])).toMatchObject({
       workspaceId: "workspace-personal",
       title: "Football",
