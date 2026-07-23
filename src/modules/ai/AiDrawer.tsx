@@ -22,6 +22,7 @@ import {
   resolveMentionedNotes,
   type AiMention,
   type AiPlanningContext,
+  type AiProgressPhase,
 } from "./planner";
 import type { AiOperation, AiPlan } from "./types";
 
@@ -40,6 +41,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
   const [changes, setChanges] = useState<AiChangeSet>();
   const [history, setHistory] = useState<ChatEntry[]>([]);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<AiProgressPhase>();
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController>();
   const historyKey = `diorna-ai-history:${state.activeWorkspaceId}`;
@@ -73,6 +75,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
     setPlan(undefined);
     setChanges(undefined);
     setError("");
+    setProgress(undefined);
   }, [historyKey]);
 
   useEffect(
@@ -99,6 +102,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
     const request = prompt.trim();
     if (!request || !workspace) return;
     setLoading(true);
+    setProgress("preparing");
     setError("");
     setPlan(undefined);
     setChanges(undefined);
@@ -130,6 +134,11 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
           recapConsentedProviders: [...state.settings.recapConsentedProviders, provider],
         });
       }
+      const submittedHistory: ChatEntry[] = [
+        ...history,
+        { id: `${Date.now()}-user`, role: "user", text: request },
+      ];
+      saveHistory(submittedHistory);
       const nextPlan = await requestAiPlan(
         {
           endpoint: state.settings.recapEndpoint,
@@ -138,11 +147,11 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
         },
         context,
         controller.signal,
+        setProgress,
       );
       setPlan(nextPlan);
       saveHistory([
-        ...history,
-        { id: `${Date.now()}-user`, role: "user", text: request },
+        ...submittedHistory,
         { id: `${Date.now()}-ai`, role: "assistant", text: nextPlan.summary },
       ]);
     } catch (caught) {
@@ -151,6 +160,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
     } finally {
       if (abortRef.current === controller) abortRef.current = undefined;
       setLoading(false);
+      setProgress(undefined);
     }
   };
 
@@ -188,7 +198,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
 
   if (!open) return null;
   return (
-    <aside className="ai-drawer" role="dialog" aria-modal="false" aria-label="Diorna AI">
+    <section className="ai-drawer" role="region" aria-label="Diorna AI">
       <header className="ai-drawer-header">
         <div>
           <span className="ai-eyebrow">
@@ -212,6 +222,8 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
             ))}
           </div>
         )}
+
+        {loading && progress && <AiProgress phase={progress} />}
 
         {plan && (
           <section className="ai-plan" aria-label="AI plan preview">
@@ -335,12 +347,55 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
               onClick={() => void generate()}
             >
               {loading ? <LoaderCircle className="spin" size={15} /> : <Send size={15} />}
-              {loading ? "Planning…" : "Plan"}
+              {loading ? "Working…" : "Plan"}
             </button>
           </div>
         </footer>
       )}
-    </aside>
+    </section>
+  );
+}
+
+const progressSteps: Array<{ phase: AiProgressPhase; label: string }> = [
+  { phase: "preparing", label: "Reading your request and selected notes" },
+  { phase: "requesting", label: "Asking Kimi K2.6 for a structured plan" },
+  { phase: "validating", label: "Checking actions and workspace references" },
+  { phase: "repairing", label: "Repairing an incomplete response" },
+  { phase: "revalidating", label: "Checking the repaired plan" },
+];
+
+function AiProgress({ phase }: { phase: AiProgressPhase }) {
+  const [elapsed, setElapsed] = useState(0);
+  const currentIndex = progressSteps.findIndex((step) => step.phase === phase);
+  useEffect(() => {
+    setElapsed(0);
+    const started = Date.now();
+    const timer = window.setInterval(
+      () => setElapsed(Math.floor((Date.now() - started) / 1000)),
+      1000,
+    );
+    return () => window.clearInterval(timer);
+  }, [phase]);
+  return (
+    <div className="ai-progress-message" role="status" aria-live="polite">
+      <div className="ai-progress-title">
+        <LoaderCircle className="spin" size={16} />
+        <strong>Building your plan</strong>
+        <span>{elapsed}s</span>
+      </div>
+      <ol>
+        {progressSteps.map((step, index) => {
+          const state =
+            index < currentIndex ? "complete" : index === currentIndex ? "active" : "waiting";
+          return (
+            <li className={state} key={step.phase}>
+              <span>{state === "complete" ? <Check size={11} /> : index + 1}</span>
+              {step.label}
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 

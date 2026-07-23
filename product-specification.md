@@ -442,8 +442,8 @@ At the close of each month, the application produces a **narrative report of wha
 ### 9.6 Diorna AI command center
 
 **REQ-AI-1** — When a remote OpenRouter key is configured, the left sidebar exposes a
-`Diorna AI` launcher directly above Settings. It opens a drawer beside the sidebar and
-becomes an overlay on narrow windows. Every conversation is local and scoped
+`Diorna AI` launcher directly above Settings. It replaces the navigation area inside
+the resizable left sidebar so the complete conversation remains in that rail. Every conversation is local and scoped
 to the active workspace.
 
 **REQ-AI-2** — A request never mutates data directly. The configured model returns a
@@ -462,8 +462,8 @@ ID and rendered as a title chip. Only explicitly mentioned note bodies are inclu
 the remote payload; renamed or moved notes remain resolvable.
 
 **REQ-AI-5** — Map plans describe semantic nodes and edges, not coordinates. Diorna lays
-out the graph deterministically, keeps a requested central node fixed, and resolves note
-nodes created by earlier operations in the same plan.
+out the graph deterministically, keeps a requested central node fixed, resolves explicitly
+mentioned existing notes, and resolves note nodes created anywhere in the same plan.
 
 **REQ-AI-6** — Calendar dates are validated as ISO timestamps in the local timezone.
 Daily duration goals compile to quantity habits with a numeric target, unit, and active
@@ -476,7 +476,9 @@ for structured outputs and denies providers that collect prompts where supported
 
 **REQ-AI-8** — The feature degrades safely: with no key, invalid JSON, a schema violation,
 cross-workspace references, unsupported operations, or a network failure, no entity is
-created. Tests use mocked provider responses and never depend on a live model.
+created. Root arrays are normalized, invalid or empty successful responses receive one
+automatic corrective request, and validation progress is visible in the chat. Tests use
+mocked provider responses and never depend on a live model.
 
 **REQ-RECAP-11** — A full recap page contains, in order:
 1. **Headline statistics** — four to six key numbers with month-over-month deltas and directional arrows

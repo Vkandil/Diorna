@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useDiornaStore } from "@/core/store";
 import { applyAiPlan, undoAiChangeSet } from "@/modules/ai/executor";
-import { buildAiPayload, requestAiPlan, resolveMentionedNotes } from "@/modules/ai/planner";
+import {
+  buildAiPayload,
+  parseAiPlan,
+  requestAiPlan,
+  resolveMentionedNotes,
+} from "@/modules/ai/planner";
 import { aiPlanSchema, type AiPlan } from "@/modules/ai/types";
 
 const fullPlan: AiPlan = {
@@ -102,7 +107,7 @@ describe("Diorna AI planning and execution", () => {
           },
         ],
       }),
-    ).toThrow(/Unknown prior note operation/);
+    ).toThrow(/Unknown note operation/);
     expect(() =>
       aiPlanSchema.parse({
         version: 1,
@@ -111,6 +116,28 @@ describe("Diorna AI planning and execution", () => {
         operations: [{ id: "bad", type: "delete_note", noteId: "all" }],
       }),
     ).toThrow();
+  });
+
+  it("normalizes a plan or an operation list returned as a root array", () => {
+    expect(parseAiPlan([fullPlan])).toEqual(fullPlan);
+    expect(parseAiPlan(fullPlan.operations)).toMatchObject({
+      version: 1,
+      operations: fullPlan.operations,
+      assumptions: ["The provider returned an operation list without plan metadata."],
+    });
+  });
+
+  it("accepts map note operations regardless of their order in the plan", () => {
+    const note = fullPlan.operations[0]!;
+    const map = fullPlan.operations[1]!;
+    expect(
+      aiPlanSchema.parse({
+        version: 1,
+        summary: "Map first, generated note second.",
+        assumptions: [],
+        operations: [map, note],
+      }),
+    ).toMatchObject({ operations: [map, note] });
   });
 
   it("sends only explicitly mentioned notes from the active workspace", () => {
@@ -181,7 +208,174 @@ describe("Diorna AI planning and execution", () => {
         json_schema: { strict: true },
       },
       provider: { require_parameters: true, data_collection: "deny" },
+      plugins: [{ id: "response-healing" }],
     });
+  });
+
+  it("repairs a missing provider plan once and reports progress", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ choices: [{ finish_reason: "stop", message: { content: null } }] }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            choices: [{ finish_reason: "stop", message: { content: JSON.stringify(fullPlan) } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const progress = vi.fn();
+
+    await expect(
+      requestAiPlan(
+        {
+          endpoint: "https://openrouter.ai/api/v1",
+          model: "moonshotai/kimi-k2.6",
+          apiKey: "secret-test-key",
+        },
+        {
+          prompt: "Create a detailed business map",
+          workspaceName: "Personal",
+          now: "2026-07-23T12:00:00+02:00",
+          timezone: "Europe/Brussels",
+          mentions: [],
+          notes: [],
+        },
+        undefined,
+        progress,
+      ),
+    ).resolves.toEqual(fullPlan);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(progress.mock.calls.flat()).toEqual([
+      "requesting",
+      "validating",
+      "repairing",
+      "revalidating",
+    ]);
+    const repairBody = JSON.parse(String(fetchMock.mock.calls[1]![1]?.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(repairBody.messages.at(-1)?.content).toContain("Repair the previous answer");
+  });
+
+  it("safely converts repeated unknown generated note references into standalone map notes", async () => {
+    const invalidPlan = {
+      version: 1,
+      summary: "Explore the business.",
+      assumptions: [],
+      operations: [
+        {
+          id: "business-map",
+          type: "create_map",
+          name: "Adaptogenic coffee",
+          nodes: [
+            {
+              id: "root",
+              kind: "text",
+              title: "Adaptogenic coffee",
+              body: null,
+              noteOperationId: null,
+              mentionedNoteId: null,
+              locked: true,
+            },
+            ...Array.from({ length: 10 }, (_, index) => ({
+              id: `branch-${index}`,
+              kind: "note",
+              title: `Business branch ${index}`,
+              body: null,
+              noteOperationId: `op_note_${index + 1}`,
+              mentionedNoteId: null,
+              locked: false,
+            })),
+          ],
+          edges: Array.from({ length: 10 }, (_, index) => ({
+            from: "root",
+            to: `branch-${index}`,
+            label: null,
+          })),
+        },
+      ],
+    };
+    const fetchMock = vi.fn().mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            choices: [{ finish_reason: "stop", message: { content: JSON.stringify(invalidPlan) } }],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const repaired = await requestAiPlan(
+      {
+        endpoint: "https://openrouter.ai/api/v1",
+        model: "moonshotai/kimi-k2.6",
+        apiKey: "secret-test-key",
+      },
+      {
+        prompt: "Create a detailed business map",
+        workspaceName: "Personal",
+        now: "2026-07-23T12:00:00+02:00",
+        timezone: "Europe/Brussels",
+        mentions: [],
+        notes: [],
+      },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const map = repaired.operations[0];
+    expect(map?.type).toBe("create_map");
+    if (map?.type !== "create_map") throw new Error("Expected a map operation");
+    expect(map.nodes.slice(1).every((node) => !node.noteOperationId && node.body)).toBe(true);
+    expect(repaired.assumptions).toContain(
+      "Invalid generated note references were converted to standalone map notes.",
+    );
+  });
+
+  it("links an explicitly mentioned existing note into a generated map", () => {
+    useDiornaStore.getState().setWorkspace("workspace-personal");
+    const state = useDiornaStore.getState();
+    const source = state.notes.find(
+      (note) => note.workspaceId === "workspace-personal" && !note.trashedAt,
+    )!;
+    const plan = aiPlanSchema.parse({
+      version: 1,
+      summary: "Create a map from the selected note.",
+      assumptions: [],
+      operations: [
+        {
+          id: "map",
+          type: "create_map",
+          name: "Referenced business",
+          nodes: [
+            {
+              id: "source",
+              kind: "note",
+              title: source.title,
+              body: null,
+              noteOperationId: null,
+              mentionedNoteId: source.id,
+              locked: true,
+            },
+          ],
+          edges: [],
+        },
+      ],
+    });
+    const changes = applyAiPlan(plan, state);
+    const createdMap = useDiornaStore.getState().maps.find((entry) => entry.id === changes.maps[0]);
+
+    expect(changes.notes).toHaveLength(0);
+    expect(createdMap?.nodes[0]).toMatchObject({ type: "file", file: source.path });
   });
 
   it("creates every supported entity in one workspace and undoes the whole batch", () => {

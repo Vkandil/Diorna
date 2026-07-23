@@ -82,6 +82,7 @@ test("plans, previews, creates, and undoes workspace content with Diorna AI", as
     expect(body.model).toBe("moonshotai/kimi-k2.6");
     expect(body.response_format.json_schema.strict).toBe(true);
     expect(body.provider.data_collection).toBe("deny");
+    await new Promise((resolve) => setTimeout(resolve, 250));
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -163,7 +164,8 @@ test("plans, previews, creates, and undoes workspace content with Diorna AI", as
   const launcher = page.getByRole("button", { name: "Diorna AI" });
   await expect(launcher).toBeVisible();
   await launcher.click();
-  const drawer = page.getByRole("dialog", { name: "Diorna AI" });
+  const drawer = page.getByRole("region", { name: "Diorna AI" });
+  await expect(page.locator(".sidebar").getByRole("region", { name: "Diorna AI" })).toBeVisible();
   await expect(drawer.getByRole("heading", { name: "Diorna AI" })).toBeVisible();
   const composer = drawer.getByLabel("Ask Diorna AI");
   await composer.fill("Create a useful project from /");
@@ -175,6 +177,8 @@ test("plans, previews, creates, and undoes workspace content with Diorna AI", as
     `${await composer.inputValue()} plus a football event and a 20 minute stretching habit`,
   );
   await drawer.getByRole("button", { name: "Plan", exact: true }).click();
+  await expect(drawer.getByText("Building your plan")).toBeVisible();
+  await expect(drawer.getByText("Asking Kimi K2.6 for a structured plan")).toBeVisible();
 
   const preview = drawer.getByLabel("AI plan preview");
   await expect(preview).toBeVisible();

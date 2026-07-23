@@ -29,6 +29,10 @@ export const aiMapNodeSchema = z
       .nullable()
       .optional()
       .transform((value) => value ?? undefined),
+    mentionedNoteId: operationId
+      .nullable()
+      .optional()
+      .transform((value) => value ?? undefined),
     locked: z.boolean().default(false),
   })
   .strict();
@@ -122,6 +126,11 @@ export const aiPlanSchema = z
   .strict()
   .superRefine((plan, context) => {
     const operationIds = new Set<string>();
+    const noteOperationIds = new Set(
+      plan.operations
+        .filter((operation) => operation.type === "create_note")
+        .map((operation) => operation.id),
+    );
     for (const operation of plan.operations) {
       if (operationIds.has(operation.id))
         context.addIssue({
@@ -133,10 +142,10 @@ export const aiPlanSchema = z
       if (operation.type !== "create_map") continue;
       const nodeIds = new Set(operation.nodes.map((node) => node.id));
       for (const node of operation.nodes)
-        if (node.noteOperationId && !operationIds.has(node.noteOperationId))
+        if (node.noteOperationId && !noteOperationIds.has(node.noteOperationId))
           context.addIssue({
             code: "custom",
-            message: `Unknown prior note operation: ${node.noteOperationId}`,
+            message: `Unknown note operation: ${node.noteOperationId}`,
             path: ["operations"],
           });
       for (const edge of operation.edges)
@@ -192,13 +201,22 @@ export const aiPlanJsonSchema = {
                 items: {
                   type: "object",
                   additionalProperties: false,
-                  required: ["id", "kind", "title", "body", "noteOperationId", "locked"],
+                  required: [
+                    "id",
+                    "kind",
+                    "title",
+                    "body",
+                    "noteOperationId",
+                    "mentionedNoteId",
+                    "locked",
+                  ],
                   properties: {
                     id: { type: "string" },
                     kind: { enum: ["text", "note"] },
                     title: { type: "string" },
                     body: { type: ["string", "null"] },
                     noteOperationId: { type: ["string", "null"] },
+                    mentionedNoteId: { type: ["string", "null"] },
                     locked: { type: "boolean" },
                   },
                 },

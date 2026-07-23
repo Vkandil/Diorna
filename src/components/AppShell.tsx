@@ -336,39 +336,56 @@ export function AppShell() {
           </select>
           <ChevronDown size={14} />
         </div>
-        <nav className="module-rail" aria-label="Modules">
-          <button
-            className={state.activeModule === "home" ? "active" : ""}
-            onClick={() => state.setModule("home")}
-          >
-            <Home size={17} />
-            <span>{t("Home")}</span>
-          </button>
-          {modules.map(({ id, label, icon: Icon }) => (
-            <button
-              key={id}
-              className={state.activeModule === id ? "active" : ""}
-              onClick={() => state.setModule(id)}
-            >
-              <Icon size={17} />
-              <span>{t(label)}</span>
-              <kbd>{(state.settings.keymap[id] ?? "").replaceAll("+", " ")}</kbd>
-            </button>
-          ))}
-        </nav>
-        <ContextSidebar module={state.activeModule} />
+        {aiOpen ? (
+          <Suspense fallback={<div className="module-loading">Loading Diorna AI…</div>}>
+            <AiDrawer open onClose={() => setAiOpen(false)} />
+          </Suspense>
+        ) : (
+          <>
+            <nav className="module-rail" aria-label="Modules">
+              <button
+                className={state.activeModule === "home" ? "active" : ""}
+                onClick={() => state.setModule("home")}
+              >
+                <Home size={17} />
+                <span>{t("Home")}</span>
+              </button>
+              {modules.map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  className={state.activeModule === id ? "active" : ""}
+                  onClick={() => state.setModule(id)}
+                >
+                  <Icon size={17} />
+                  <span>{t(label)}</span>
+                  <kbd>{(state.settings.keymap[id] ?? "").replaceAll("+", " ")}</kbd>
+                </button>
+              ))}
+            </nav>
+            <ContextSidebar module={state.activeModule} />
+          </>
+        )}
         <div className="sidebar-bottom">
           {aiAvailable && (
             <button
               className={aiOpen ? "active" : ""}
               aria-pressed={aiOpen}
-              onClick={() => setAiOpen((current) => !current)}
+              onClick={() => {
+                const next = !aiOpen;
+                if (next && state.sidebarWidth < 360) state.setSidebarWidth(360);
+                setAiOpen(next);
+              }}
             >
               <Sparkles size={16} />
               <span>Diorna AI</span>
             </button>
           )}
-          <button onClick={() => state.setModule("settings")}>
+          <button
+            onClick={() => {
+              setAiOpen(false);
+              state.setModule("settings");
+            }}
+          >
             <Settings size={16} />
             <span>{t("Settings")}</span>
           </button>
@@ -450,11 +467,6 @@ export function AppShell() {
       <aside className="right-panel">
         <RightPanel module={state.activeModule} />
       </aside>
-      {aiOpen && (
-        <Suspense fallback={null}>
-          <AiDrawer open onClose={() => setAiOpen(false)} />
-        </Suspense>
-      )}
       {state.commandPaletteOpen && <CommandPalette />}
       {captureOpen && <QuickCapture onClose={() => setCaptureOpen(false)} />}
       {toast && (

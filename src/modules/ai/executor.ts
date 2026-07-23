@@ -49,15 +49,19 @@ export function applyAiPlan(plan: AiPlan, store: DiornaAiStore): AiChangeSet {
   const createdNotes = new Map<string, Note>();
   try {
     for (const operation of plan.operations) {
+      if (operation.type !== "create_note") continue;
+      const note = createNote(
+        store,
+        operation.title,
+        operation.bodyMarkdown,
+        operation.tags,
+        changes,
+      );
+      createdNotes.set(operation.id, note);
+    }
+    for (const operation of plan.operations) {
       if (operation.type === "create_note") {
-        const note = createNote(
-          store,
-          operation.title,
-          operation.bodyMarkdown,
-          operation.tags,
-          changes,
-        );
-        createdNotes.set(operation.id, note);
+        continue;
       } else if (operation.type === "create_map") {
         createMap(store, operation, createdNotes, changes);
       } else if (operation.type === "create_calendar_item") {
@@ -134,7 +138,7 @@ function createMap(
 ): CanvasMap {
   const implicitNotes = new Map<string, Note>();
   for (const node of operation.nodes) {
-    if (node.kind !== "note" || node.noteOperationId) continue;
+    if (node.kind !== "note" || node.noteOperationId || node.mentionedNoteId) continue;
     implicitNotes.set(
       node.id,
       createNote(store, node.title, node.body ?? `# ${node.title}\n`, [], changes),
@@ -148,7 +152,14 @@ function createMap(
     };
     const linkedNote = node.noteOperationId
       ? createdNotes.get(node.noteOperationId)
-      : implicitNotes.get(node.id);
+      : node.mentionedNoteId
+        ? store.notes.find(
+            (note) =>
+              note.id === node.mentionedNoteId &&
+              note.workspaceId === store.activeWorkspaceId &&
+              !note.trashedAt,
+          )
+        : implicitNotes.get(node.id);
     return {
       id: createId("node"),
       type: linkedNote ? "file" : "text",
