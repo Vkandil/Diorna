@@ -484,7 +484,7 @@ automatic corrective request, and validation progress is visible in the chat. Te
 mocked provider responses and never depend on a live model.
 
 **REQ-AI-9** — Generation is cancellable from the composer. The initial provider
-request stops after 60 seconds and its single corrective request stops after 30 seconds;
+request stops after 120 seconds and its single corrective request stops after 60 seconds;
 aborting or reaching either deadline creates no partial entities and reports the outcome
 inside the chat.
 

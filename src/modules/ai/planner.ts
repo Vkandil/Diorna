@@ -23,8 +23,8 @@ export interface AiProviderConfig {
   repairTimeoutMs?: number;
 }
 
-export const AI_REQUEST_TIMEOUT_MS = 60_000;
-export const AI_REPAIR_TIMEOUT_MS = 30_000;
+export const AI_REQUEST_TIMEOUT_MS = 120_000;
+export const AI_REPAIR_TIMEOUT_MS = 60_000;
 
 export type AiProgressPhase =
   | "preparing"

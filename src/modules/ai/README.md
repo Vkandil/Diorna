@@ -12,8 +12,8 @@ collection. Root arrays and common plan envelopes are normalized. If a response
 is empty or invalid, one corrective request is made and validated. The first remote
 request uses the same exact-payload consent mechanism as Recap.
 
-The first provider request is capped at 60 seconds and the corrective request at
-30 seconds. Both are aborted after their deadline, and the user can stop either
+The first provider request is capped at 120 seconds and the corrective request at
+60 seconds. Both are aborted after their deadline, and the user can stop either
 request from the composer without applying a partial plan.
 
 `types.ts` is the trust boundary. It accepts create-only plans for notes, maps,
