@@ -106,7 +106,7 @@ jobs:
       - name: Checksums
         shell: pwsh
         run: Get-FileHash -Algorithm SHA256 (Get-ChildItem -Recurse src-tauri/target/${{ matrix.target }}/release/bundle/*/*,Diorna-${{ matrix.arch }}-portable.zip -File) | ForEach-Object { "$($_.Hash.ToLower())  $($_.Path | Split-Path -Leaf)" } | Set-Content "SHA256-${{ matrix.arch }}.txt"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: windows-${{ matrix.arch }}
           path: |
