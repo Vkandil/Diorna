@@ -114,6 +114,117 @@ const base: RecapInput = {
 };
 
 describe("recap aggregation and factual validation", () => {
+  it("includes project delivery, milestones and linked task completion", () => {
+    const project = {
+      id: "project-launch",
+      workspaceId: "personal",
+      name: "Product launch",
+      outcome: "The product is live.",
+      description: "",
+      kind: "work" as const,
+      status: "completed" as const,
+      health: "on-track" as const,
+      color: "#1D518A",
+      nextAction: "",
+      stakeholders: [],
+      tags: [],
+      progressMode: "automatic" as const,
+      manualProgress: 0,
+      milestones: [
+        {
+          id: "milestone-launch",
+          title: "Go live",
+          completedAt: "2026-09-20T12:00:00Z",
+          notes: "",
+          sortOrder: 0,
+        },
+      ],
+      updates: [],
+      linkedNoteIds: [],
+      linkedMapIds: [],
+      linkedHabitIds: [],
+      linkedTrainingActivityIds: [],
+      favorite: false,
+      archived: false,
+      createdAt: "2026-08-01T12:00:00Z",
+      updatedAt: "2026-09-20T12:00:00Z",
+      completedAt: "2026-09-20T12:00:00Z",
+    };
+    const stats = aggregateRecap({
+      ...base,
+      projects: [project],
+      items: base.items.map((item, index) =>
+        index === 0 ? { ...item, projectId: project.id } : item,
+      ),
+    });
+    expect(stats.projects).toMatchObject({
+      completed: 1,
+      previousCompleted: 0,
+      milestonesCompleted: 1,
+      tasksCompleted: 1,
+      taskCompletionRate: 100,
+      completedNames: ["Product launch"],
+    });
+    expect(buildTemplateNarrative(stats, "Personal")).toContain("**Projects.**");
+    expect(recapTransmissionPayload(stats, true).projects?.completedNames).toEqual([]);
+  });
+
+  it("aggregates planned and actual Focus evidence", () => {
+    const session = {
+      id: "focus-1",
+      workspaceId: "personal",
+      title: "Write proposal",
+      intention: "Finish a reviewable draft.",
+      mode: "deep-work" as const,
+      status: "completed" as const,
+      sourceType: "project" as const,
+      sourceId: "project-1",
+      plannedMinutes: 50,
+      elapsedSeconds: 3_000,
+      pauseCount: 1,
+      distractionShield: ["Silence chat"],
+      distractions: [
+        {
+          id: "distraction-1",
+          kind: "message" as const,
+          note: "Reply later",
+          capturedAt: "2026-09-12T09:15:00Z",
+          handled: false,
+        },
+      ],
+      review: {
+        focusRating: 4,
+        energyBefore: 3,
+        energyAfter: 4,
+        outcome: "Draft complete.",
+        wins: "Single-tasked.",
+        blockers: "",
+        nextAction: "Send for review.",
+        sourceCompleted: false,
+      },
+      tags: [],
+      startedAt: "2026-09-12T09:00:00Z",
+      endedAt: "2026-09-12T09:50:00Z",
+      createdAt: "2026-09-12T08:55:00Z",
+      updatedAt: "2026-09-12T09:50:00Z",
+    };
+    const stats = aggregateRecap({ ...base, focusSessions: [session] });
+    expect(stats.focus).toEqual({
+      sessions: 1,
+      previousSessions: 0,
+      plannedMinutes: 50,
+      actualMinutes: 50,
+      previousActualMinutes: 0,
+      completedAsPlanned: 1,
+      focusRating: 4,
+      distractions: 1,
+      byMode: { "deep-work": 50 },
+    });
+    expect(buildTemplateNarrative(stats, "Personal")).toContain(
+      "**Focus.** You protected 50 minutes",
+    );
+  });
+
   it("computes metric change and personal record", () => {
     const stats = aggregateRecap(base);
     expect(stats.metrics[0]).toMatchObject({
@@ -188,6 +299,162 @@ describe("recap aggregation and factual validation", () => {
     expect(stats.events).toEqual({ attended: 1, byCategory: { Sport: 1 } });
     expect(stats.notes.tags).toEqual({ project: 1, launch: 1 });
     expect(stats.notes.courses).toEqual({ Systems: 1 });
+  });
+  it("includes completed Training sessions and personal records", () => {
+    const stats = aggregateRecap({
+      ...base,
+      trainingActivities: [
+        {
+          id: "strength",
+          workspaceId: "personal",
+          name: "Strength",
+          kind: "strength",
+          color: "#1D518A",
+          icon: "Dumbbell",
+          archived: false,
+          sortOrder: 0,
+          createdAt: "2026-08-01T00:00:00Z",
+          updatedAt: "2026-08-01T00:00:00Z",
+        },
+      ],
+      trainingSessions: [
+        {
+          id: "training-1",
+          workspaceId: "personal",
+          activityId: "strength",
+          title: "Leg day",
+          status: "completed",
+          startedAt: "2026-09-12T18:00:00Z",
+          endedAt: "2026-09-12T19:00:00Z",
+          results: [
+            {
+              id: "result-1",
+              exerciseId: "leg-curl",
+              name: "Leg curl",
+              measureType: "sets",
+              loadUnit: "kg",
+              distanceUnit: "km",
+              sets: [{ id: "set-1", load: 25, reps: 20, completed: true }],
+              notes: "",
+            },
+          ],
+          notes: "",
+          createdAt: "2026-09-12T18:00:00Z",
+          updatedAt: "2026-09-12T19:00:00Z",
+        },
+      ],
+    });
+    expect(stats.training).toEqual({
+      sessions: 1,
+      previousSessions: 0,
+      durationMinutes: 60,
+      previousDurationMinutes: 0,
+      volume: 500,
+      distanceByUnit: {},
+      byActivity: { Strength: 1 },
+      personalRecords: 1,
+    });
+    expect(buildTemplateNarrative(stats, "Personal")).toContain("Training");
+  });
+  it("compares Training periods, distances, activities, and existing records", () => {
+    const activity = {
+      id: "strength",
+      workspaceId: "personal",
+      name: "Strength",
+      kind: "strength" as const,
+      color: "#1D518A",
+      icon: "Dumbbell",
+      archived: false,
+      sortOrder: 0,
+      createdAt: "2026-08-01T00:00:00Z",
+      updatedAt: "2026-08-01T00:00:00Z",
+    };
+    const makeResult = (id: string, load: number, reps: number) => ({
+      id: `result-${id}`,
+      exerciseId: id,
+      name: id,
+      measureType: "sets" as const,
+      loadUnit: "kg" as const,
+      distanceUnit: "km" as const,
+      sets: [{ id: `set-${id}`, load, reps, completed: true }],
+      notes: "",
+    });
+    const stats = aggregateRecap({
+      ...base,
+      trainingActivities: [activity],
+      trainingSessions: [
+        {
+          id: "training-previous",
+          workspaceId: "personal",
+          activityId: "strength",
+          title: "Previous strength",
+          status: "completed",
+          startedAt: "2026-08-12T18:00:00Z",
+          endedAt: "2026-08-12T18:30:00Z",
+          results: [makeResult("leg-curl", 30, 10)],
+          notes: "",
+          createdAt: "2026-08-12T18:00:00Z",
+          updatedAt: "2026-08-12T18:30:00Z",
+        },
+        {
+          id: "training-current-run",
+          workspaceId: "personal",
+          activityId: "unknown-activity",
+          title: "Outdoor run",
+          status: "completed",
+          startedAt: "2026-09-10T18:00:00Z",
+          endedAt: "2026-09-10T18:45:00Z",
+          results: [
+            makeResult("leg-curl", 25, 10),
+            {
+              ...makeResult("run", 0, 0),
+              measureType: "distance" as const,
+              sets: [
+                {
+                  id: "set-run",
+                  distance: 5,
+                  durationSeconds: 2_400,
+                  completed: true,
+                },
+              ],
+            },
+          ],
+          notes: "",
+          createdAt: "2026-09-10T18:00:00Z",
+          updatedAt: "2026-09-10T18:45:00Z",
+        },
+        {
+          id: "training-current-strength",
+          workspaceId: "personal",
+          activityId: "strength",
+          title: "Strength",
+          status: "completed",
+          startedAt: "2026-09-20T18:00:00Z",
+          endedAt: "2026-09-20T18:20:00Z",
+          results: [makeResult("bench", 10, 5), makeResult("row", 15, 2)],
+          notes: "",
+          createdAt: "2026-09-20T18:00:00Z",
+          updatedAt: "2026-09-20T18:20:00Z",
+        },
+      ],
+    });
+
+    expect(stats.training).toMatchObject({
+      sessions: 2,
+      previousSessions: 1,
+      durationMinutes: 65,
+      previousDurationMinutes: 30,
+      distanceByUnit: { km: 5 },
+      byActivity: { Training: 1, Strength: 1 },
+      personalRecords: 2,
+    });
+    const narrative = buildTemplateNarrative(stats, "Personal");
+    expect(narrative).toContain("2 sessions");
+    expect(narrative).toContain("2 exercise records improved");
+    expect(recapTransmissionPayload(stats, true).training?.byActivity).toEqual({
+      "Activity 1": 1,
+      "Activity 2": 1,
+    });
   });
   it("redacts note titles from aggregate-only transmission payloads", () => {
     const stats = aggregateRecap(base);

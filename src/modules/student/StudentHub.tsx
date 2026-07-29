@@ -230,7 +230,7 @@ function CourseForm({ course, onDone }: { course?: Course; onDone: (course: Cour
   const [instructor, setInstructor] = useState(course?.instructor ?? "");
   const [credits, setCredits] = useState(course?.credits ?? 5);
   const [schedule, setSchedule] = useState(course?.schedule ?? "");
-  const [color, setColor] = useState(course?.color ?? "#5b5bd6");
+  const [color, setColor] = useState(course?.color ?? "#1D518A");
   return (
     <form
       className="course-form"

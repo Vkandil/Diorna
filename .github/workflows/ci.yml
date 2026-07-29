@@ -36,7 +36,7 @@ jobs:
       - run: npm audit --audit-level=high
       - run: cargo install cargo-audit --locked
       - run: cargo audit --file src-tauri/Cargo.lock
-      - run: npm run tauri build -- --no-bundle
+      - run: npm run tauri -- build --no-bundle
 
   cla:
     if: github.event_name == 'pull_request'

@@ -42,7 +42,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi", "nsis"],
+    "targets": ["nsis"],
     "category": "Productivity",
     "copyright": "Copyright © 2026 Diorna Contributors",
     "shortDescription": "Local-first knowledge and productivity suite",

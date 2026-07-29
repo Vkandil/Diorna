@@ -518,6 +518,123 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn imports_and_undoes_a_large_nested_obsidian_vault() {
+        let vault_directory = tempfile::tempdir().unwrap();
+        let source_directory = tempfile::tempdir().unwrap();
+        let vault = Vault::open(vault_directory.path().to_path_buf())
+            .await
+            .unwrap();
+        let source = source_directory.path();
+        fs::create_dir_all(source.join("Areas/Research")).unwrap();
+        fs::create_dir_all(source.join("Assets")).unwrap();
+        fs::create_dir_all(source.join(".obsidian/plugins")).unwrap();
+        for index in 0..250 {
+            fs::write(
+                source.join(format!("Areas/Research/Note {index}.md")),
+                format!(
+                    "---\ntags: [research, import]\n---\n# Note {index}\n\nLinks to [[Note {}]].\n",
+                    (index + 1) % 250
+                ),
+            )
+            .unwrap();
+        }
+        fs::write(source.join("Assets/diagram.png"), b"representative-binary").unwrap();
+        fs::write(
+            source.join("Strategy.canvas"),
+            br#"{"nodes":[{"id":"one","type":"text","x":0,"y":0,"width":300,"height":120,"text":"Strategy"}],"edges":[]}"#,
+        )
+        .unwrap();
+        fs::write(source.join(".obsidian/workspace.json"), "{}").unwrap();
+
+        let report = import_obsidian(&vault, source, "workspace-student")
+            .await
+            .unwrap();
+        assert_eq!(report.imported, 252);
+        assert_eq!(report.skipped, 1);
+        assert!(report.warnings.is_empty());
+        assert!(
+            vault_directory
+                .path()
+                .join(format!(
+                    "Student/notes/{}/Areas/Research/Note 249.md",
+                    report.destination
+                ))
+                .is_file()
+        );
+        assert!(
+            vault_directory
+                .path()
+                .join(format!(
+                    "Student/maps/{}/Strategy.canvas",
+                    report.destination
+                ))
+                .is_file()
+        );
+        assert!(
+            vault_directory
+                .path()
+                .join(format!(
+                    "Student/attachments/{}/Assets/diagram.png",
+                    report.destination
+                ))
+                .is_file()
+        );
+
+        assert_eq!(
+            undo_import(&vault, &report.operation_id).await.unwrap(),
+            report.imported
+        );
+    }
+
+    #[tokio::test]
+    async fn imports_mixed_notion_exports_and_converts_databases() {
+        let vault_directory = tempfile::tempdir().unwrap();
+        let source_directory = tempfile::tempdir().unwrap();
+        let vault = Vault::open(vault_directory.path().to_path_buf())
+            .await
+            .unwrap();
+        let source = source_directory.path();
+        fs::create_dir_all(source.join("Workspace/Assets")).unwrap();
+        fs::write(
+            source.join("Workspace/Projects.csv"),
+            "Name,Status,Summary\nDiorna,Active,\"Local-first, private\"\nCoffee,Idea,\"Taste | ritual\"\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("Workspace/Project brief.md"),
+            "# Project brief\n\n[Projects](Projects.csv)\n",
+        )
+        .unwrap();
+        fs::write(
+            source.join("Workspace/Assets/cover.jpg"),
+            b"representative-image",
+        )
+        .unwrap();
+
+        let report = import_notion(&vault, source, "workspace-personal")
+            .await
+            .unwrap();
+        assert_eq!(report.imported, 3);
+        assert_eq!(report.skipped, 0);
+        let database = vault_directory.path().join(format!(
+            "Personal/notes/{}/Workspace/Projects.md",
+            report.destination
+        ));
+        let markdown = fs::read_to_string(database).unwrap();
+        assert!(markdown.contains("| Diorna | Active | Local-first, private |"));
+        assert!(markdown.contains("Taste \\| ritual"));
+        assert!(
+            vault_directory
+                .path()
+                .join(format!(
+                    "Personal/attachments/{}/Workspace/Assets/cover.jpg",
+                    report.destination
+                ))
+                .is_file()
+        );
+    }
+
+    #[tokio::test]
     async fn trashes_lists_restores_and_purges_files() {
         let directory = tempfile::tempdir().unwrap();
         let vault = Vault::open(directory.path().to_path_buf()).await.unwrap();

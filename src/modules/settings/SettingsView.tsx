@@ -53,6 +53,12 @@ import releaseNotes from "../../../CHANGELOG.md?raw";
 import { listOllamaModels } from "@/modules/recap/summarizer";
 import { checkAndDownloadUpdate, isPortableBuild, type UpdateState } from "@/core/updater";
 import { OPENROUTER_ENDPOINT, OPENROUTER_MODEL, recapSecretId } from "@/shared/recapConfig";
+import {
+  AI_MAX_TOKENS_RANGE,
+  AI_REPAIR_TIMEOUT_RANGE,
+  AI_REQUEST_TIMEOUT_RANGE,
+  type AiMapNoteOrganization,
+} from "@/shared/aiConfig";
 
 const sections = [
   ["general", "General", UserRound],
@@ -75,7 +81,7 @@ const sectionKeywords: Record<string, string> = {
   appearance: "theme accent font size line width density",
   vault: "location move explorer re-index storage usage",
   workspaces: "create rename color reorder delete dashboard layout",
-  editor: "spell check language brackets tab folder template",
+  editor: "spell check language brackets tab folder template link preview bookmark metadata",
   categories: "name color icon order",
   calendar: "week start visible hours duration reminder",
   daily: "window future check-in week start",
@@ -95,6 +101,7 @@ const dashboardLabels: Record<string, string> = {
   streaks: "Current streaks",
   recent: "Recently edited",
   recap: "Monthly recap",
+  focus: "Focus today",
 };
 
 export function SettingsView() {
@@ -203,13 +210,14 @@ function renderSection(
       >
         <Field label="Theme">
           <div className="segmented">
-            {(["light", "dark", "system"] as const).map((theme) => (
+            {(["diorna", "light", "dark", "system"] as const).map((theme) => (
               <button
                 key={theme}
+                aria-label={`${theme === "diorna" ? "Diorna" : theme} theme`}
                 className={state.settings.theme === theme ? "active" : ""}
                 onClick={() => state.updateSettings({ theme })}
               >
-                {theme}
+                {theme === "diorna" ? "Diorna" : theme}
               </button>
             ))}
           </div>
@@ -223,7 +231,7 @@ function renderSection(
               style={{ background: "AccentColor" }}
               onClick={() => state.updateSettings({ accentColor: "system" })}
             />
-            {["#5b5bd6", "#3f70b5", "#168a68", "#b47619", "#c0445c", "#795ac8"].map((color) => (
+            {["#1D518A", "#3F6495", "#C66542", "#7C8E58", "#DAA343"].map((color) => (
               <button
                 key={color}
                 aria-label={`Use accent color ${color}`}
@@ -375,7 +383,7 @@ function renderSection(
           <button
             className="button icon-text"
             onClick={() =>
-              state.addWorkspace(`Workspace ${state.workspaces.length + 1}`, "#657287")
+              state.addWorkspace(`Workspace ${state.workspaces.length + 1}`, "#3F6495")
             }
           >
             <Plus /> New workspace
@@ -510,6 +518,22 @@ function renderSection(
             />
           </div>
         </Field>
+        <Field label="Hour spacing">
+          <div className="range-fields">
+            <input
+              type="range"
+              min={40}
+              max={120}
+              step={4}
+              aria-label="Calendar hour height"
+              value={state.settings.calendarHourHeight}
+              onChange={(event) =>
+                state.updateSettings({ calendarHourHeight: Number(event.target.value) })
+              }
+            />
+            <span>{state.settings.calendarHourHeight}px</span>
+          </div>
+        </Field>
         <Field label="Default reminder">
           <select
             value={state.settings.defaultReminderMinutes}
@@ -574,6 +598,12 @@ function renderSection(
           checked={state.settings.autoPairBrackets}
           onChange={(autoPairBrackets) => state.updateSettings({ autoPairBrackets })}
         />
+        <Field label="Rich link previews">
+          <p className="muted">
+            Always on. Public links become visual cards and their metadata is cached in your vault
+            for offline use.
+          </p>
+        </Field>
         <Field label="Tab key">
           <select
             value={state.settings.tabBehavior}
@@ -752,6 +782,74 @@ function renderSection(
             checked={state.settings.recapAggregatesOnly}
             onChange={(checked) => state.updateSettings({ recapAggregatesOnly: checked })}
           />
+        </SettingsGroup>
+        <SettingsGroup
+          title="Diorna AI limits"
+          description="Control how long creation plans may run and how generated Map notes are grouped."
+        >
+          <Field label="Initial request timeout">
+            <input
+              type="number"
+              min={AI_REQUEST_TIMEOUT_RANGE.min}
+              max={AI_REQUEST_TIMEOUT_RANGE.max}
+              step="5"
+              value={state.settings.aiRequestTimeoutSeconds}
+              onChange={(event) =>
+                state.updateSettings({ aiRequestTimeoutSeconds: Number(event.target.value) })
+              }
+            />
+            <small>Seconds before the first AI request is stopped.</small>
+          </Field>
+          <Field label="Repair timeout">
+            <input
+              type="number"
+              min={AI_REPAIR_TIMEOUT_RANGE.min}
+              max={AI_REPAIR_TIMEOUT_RANGE.max}
+              step="5"
+              value={state.settings.aiRepairTimeoutSeconds}
+              onChange={(event) =>
+                state.updateSettings({ aiRepairTimeoutSeconds: Number(event.target.value) })
+              }
+            />
+            <small>Used only once when the first structured response is incomplete.</small>
+          </Field>
+          <Field label="AI maximum output tokens">
+            <input
+              type="number"
+              min={AI_MAX_TOKENS_RANGE.min}
+              max={AI_MAX_TOKENS_RANGE.max}
+              step="250"
+              value={state.settings.aiMaxTokens}
+              onChange={(event) =>
+                state.updateSettings({ aiMaxTokens: Number(event.target.value) })
+              }
+            />
+            <small>The repair call uses the same limit. Diorna never retries more than once.</small>
+          </Field>
+          <Field label="Generated Map notes">
+            <select
+              value={state.settings.aiMapNoteOrganization}
+              onChange={(event) =>
+                state.updateSettings({
+                  aiMapNoteOrganization: event.target.value as AiMapNoteOrganization,
+                })
+              }
+            >
+              <option value="tags">Group with tags</option>
+              <option value="folder">Group in a folder</option>
+              <option value="both">Use tags and a folder</option>
+            </select>
+          </Field>
+          {state.settings.aiMapNoteOrganization !== "tags" && (
+            <Field label="Generated Map folder">
+              <input
+                value={state.settings.aiMapFolderRoot}
+                placeholder="AI Maps"
+                onChange={(event) => state.updateSettings({ aiMapFolderRoot: event.target.value })}
+              />
+              <small>Each generated Map receives its own subfolder.</small>
+            </Field>
+          )}
         </SettingsGroup>
         <SettingsGroup title="Automatic generation">
           <Toggle
@@ -1489,7 +1587,9 @@ function defaultKeymap(): Record<string, string> {
     maps: "Ctrl+2",
     calendar: "Ctrl+3",
     daily: "Ctrl+4",
-    recap: "Ctrl+5",
+    training: "Ctrl+5",
+    recap: "Ctrl+6",
+    projects: "Ctrl+7",
     home: "Ctrl+0",
     settings: "Ctrl+,",
     newNote: "Ctrl+N",
@@ -1535,7 +1635,10 @@ function shortcutLabel(command: string): string {
     maps: "Open Maps",
     calendar: "Open Calendar",
     daily: "Open Daily",
+    training: "Open Training",
     recap: "Open Recap",
+    projects: "Open Projects",
+    focus: "Open Focus",
     home: "Open Home",
     settings: "Open Settings",
     newNote: "New note",

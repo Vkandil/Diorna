@@ -105,6 +105,9 @@ export interface CalendarItem {
   subtasks: Array<{ id: Id; title: string; done: boolean }>;
   noteId?: Id;
   courseId?: Id;
+  projectId?: Id | undefined;
+  trainingTemplateId?: Id;
+  trainingSessionId?: Id;
   sourceNoteLine?: number;
   rrule?: string;
   rruleExceptions: ISODateTime[];
@@ -156,6 +159,283 @@ export interface MetricEntry {
   metricId: Id;
   date: ISODate;
   value: number;
+}
+
+export type TrainingActivityKind =
+  | "strength"
+  | "running"
+  | "cycling"
+  | "swimming"
+  | "team"
+  | "mobility"
+  | "custom";
+
+export type TrainingMeasureType = "sets" | "duration" | "distance" | "mixed";
+
+export type TrainingLoadMode = "external" | "bodyweight" | "bodyweight-plus" | "assisted" | "none";
+
+export interface TrainingActivity {
+  id: Id;
+  workspaceId: Id;
+  name: string;
+  kind: TrainingActivityKind;
+  color: string;
+  icon: string;
+  dailyHabitId?: Id;
+  archived: boolean;
+  sortOrder: number;
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+}
+
+export interface TrainingExercise {
+  id: Id;
+  workspaceId: Id;
+  activityId: Id;
+  name: string;
+  measureType: TrainingMeasureType;
+  loadMode?: TrainingLoadMode;
+  loadUnit: "kg" | "lb";
+  distanceUnit: "m" | "km" | "mi";
+  notes: string;
+  archived: boolean;
+  sortOrder: number;
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+}
+
+export interface TrainingSet {
+  id: Id;
+  reps?: number | undefined;
+  load?: number | undefined;
+  durationSeconds?: number | undefined;
+  distance?: number | undefined;
+  completed: boolean;
+}
+
+export interface TrainingExerciseResult {
+  id: Id;
+  exerciseId: Id;
+  name: string;
+  measureType: TrainingMeasureType;
+  loadMode?: TrainingLoadMode;
+  loadUnit: "kg" | "lb";
+  distanceUnit: "m" | "km" | "mi";
+  sets: TrainingSet[];
+  notes: string;
+}
+
+export interface TrainingTemplateExercise {
+  id: Id;
+  exerciseId: Id;
+  name: string;
+  measureType: TrainingMeasureType;
+  loadMode?: TrainingLoadMode;
+  loadUnit: "kg" | "lb";
+  distanceUnit: "m" | "km" | "mi";
+  plannedSets: number;
+  defaultReps?: number;
+  defaultLoad?: number;
+  defaultDurationSeconds?: number;
+  defaultDistance?: number;
+}
+
+export interface TrainingTemplate {
+  id: Id;
+  workspaceId: Id;
+  activityId: Id;
+  name: string;
+  exercises: TrainingTemplateExercise[];
+  notes: string;
+  archived: boolean;
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+}
+
+export interface TrainingSession {
+  id: Id;
+  workspaceId: Id;
+  activityId: Id;
+  templateId?: Id;
+  calendarItemId?: Id;
+  title: string;
+  status: "in-progress" | "completed";
+  startedAt: ISODateTime;
+  endedAt?: ISODateTime;
+  results: TrainingExerciseResult[];
+  notes: string;
+  importedFromNoteId?: Id;
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+}
+
+export interface TrainingImportSession {
+  date: ISODate;
+  title: string;
+  exercises: Array<{
+    name: string;
+    measureType: TrainingMeasureType;
+    sets: Array<Omit<TrainingSet, "id">>;
+  }>;
+}
+
+export type ProjectKind = "work" | "study" | "personal" | "health" | "custom";
+export type ProjectStatus = "idea" | "planned" | "active" | "on-hold" | "completed" | "cancelled";
+export type ProjectHealth = "on-track" | "at-risk" | "blocked";
+export type ProjectProgressMode = "automatic" | "manual" | "metric";
+
+export interface ProjectMilestone {
+  id: Id;
+  title: string;
+  dueDate?: ISODate | undefined;
+  completedAt?: ISODateTime | undefined;
+  notes: string;
+  sortOrder: number;
+}
+
+export interface ProjectUpdate {
+  id: Id;
+  createdAt: ISODateTime;
+  summary: string;
+  wins: string;
+  blockers: string;
+  nextSteps: string;
+}
+
+export interface Project {
+  id: Id;
+  workspaceId: Id;
+  name: string;
+  outcome: string;
+  description: string;
+  kind: ProjectKind;
+  status: ProjectStatus;
+  health: ProjectHealth;
+  color: string;
+  categoryId?: Id | undefined;
+  goalId?: Id | undefined;
+  startDate?: ISODate | undefined;
+  targetDate?: ISODate | undefined;
+  nextAction: string;
+  stakeholders: string[];
+  tags: string[];
+  progressMode: ProjectProgressMode;
+  manualProgress: number;
+  metricId?: Id | undefined;
+  metricStartValue?: number | undefined;
+  metricTargetValue?: number | undefined;
+  milestones: ProjectMilestone[];
+  updates: ProjectUpdate[];
+  linkedNoteIds: Id[];
+  linkedMapIds: Id[];
+  linkedHabitIds: Id[];
+  linkedTrainingActivityIds: Id[];
+  favorite: boolean;
+  archived: boolean;
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+  completedAt?: ISODateTime | undefined;
+}
+
+export type GoalStatus = "active" | "paused" | "completed" | "cancelled";
+export type GoalHorizon = "month" | "quarter" | "year" | "multi-year" | "custom";
+export type GoalProgressMode = "projects" | "manual" | "metric";
+
+export interface Goal {
+  id: Id;
+  workspaceId: Id;
+  title: string;
+  purpose: string;
+  successDefinition: string;
+  status: GoalStatus;
+  horizon: GoalHorizon;
+  color: string;
+  targetDate?: ISODate | undefined;
+  progressMode: GoalProgressMode;
+  manualProgress: number;
+  metricId?: Id | undefined;
+  metricStartValue?: number | undefined;
+  metricTargetValue?: number | undefined;
+  linkedHabitIds: Id[];
+  tags: string[];
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+  completedAt?: ISODateTime | undefined;
+}
+
+export type FocusMode = "deep-work" | "study" | "creative" | "admin" | "meeting-prep" | "personal";
+
+export type FocusSourceType =
+  | "calendar"
+  | "project"
+  | "goal"
+  | "note"
+  | "map"
+  | "habit"
+  | "training"
+  | "custom";
+
+export interface FocusPriority {
+  id: Id;
+  workspaceId: Id;
+  date: ISODate;
+  title: string;
+  sourceType: FocusSourceType;
+  sourceId?: Id | undefined;
+  plannedMinutes: number;
+  sortOrder: number;
+  completedAt?: ISODateTime | undefined;
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
+}
+
+export type FocusDistractionKind = "thought" | "message" | "task" | "environment" | "other";
+
+export interface FocusDistraction {
+  id: Id;
+  kind: FocusDistractionKind;
+  note: string;
+  capturedAt: ISODateTime;
+  handled: boolean;
+}
+
+export interface FocusReview {
+  focusRating: number;
+  energyBefore: number;
+  energyAfter: number;
+  outcome: string;
+  wins: string;
+  blockers: string;
+  nextAction: string;
+  sourceCompleted: boolean;
+}
+
+export type FocusSessionStatus = "planned" | "running" | "paused" | "completed" | "cancelled";
+
+export interface FocusSession {
+  id: Id;
+  workspaceId: Id;
+  title: string;
+  intention: string;
+  mode: FocusMode;
+  status: FocusSessionStatus;
+  sourceType: FocusSourceType;
+  sourceId?: Id | undefined;
+  priorityId?: Id | undefined;
+  calendarItemId?: Id | undefined;
+  scheduledAt?: ISODateTime | undefined;
+  plannedMinutes: number;
+  elapsedSeconds: number;
+  timerStartedAt?: ISODateTime | undefined;
+  startedAt?: ISODateTime | undefined;
+  endedAt?: ISODateTime | undefined;
+  pauseCount: number;
+  distractionShield: string[];
+  distractions: FocusDistraction[];
+  review?: FocusReview | undefined;
+  tags: string[];
+  createdAt: ISODateTime;
+  updatedAt: ISODateTime;
 }
 
 export interface Flashcard {
@@ -218,8 +498,13 @@ export interface CanvasNode {
     presentationOrder?: number;
     linkTitle?: string;
     linkDescription?: string;
+    linkSiteName?: string;
+    linkImage?: string;
+    linkImageFile?: string;
     favicon?: string;
+    faviconFile?: string;
     linkFetchedAt?: ISODateTime;
+    textStyle?: "body" | "title" | "subtitle" | "label" | "quote";
   };
 }
 
@@ -305,6 +590,38 @@ export interface RecapStatistics {
     streak: number;
     courses: string[];
   };
+  training?: {
+    sessions: number;
+    previousSessions: number;
+    durationMinutes: number;
+    previousDurationMinutes: number;
+    volume: number;
+    distanceByUnit: Record<string, number>;
+    byActivity: Record<string, number>;
+    personalRecords: number;
+  };
+  projects?: {
+    active: number;
+    completed: number;
+    previousCompleted: number;
+    atRisk: number;
+    milestonesCompleted: number;
+    tasksCompleted: number;
+    taskCompletionRate: number | null;
+    byKind: Record<string, number>;
+    completedNames: string[];
+  };
+  focus?: {
+    sessions: number;
+    previousSessions: number;
+    plannedMinutes: number;
+    actualMinutes: number;
+    previousActualMinutes: number;
+    completedAsPlanned: number;
+    focusRating: number | null;
+    distractions: number;
+    byMode: Record<string, number>;
+  };
   dailyScores: Array<{ date: ISODate; score: number | null }>;
   monthlyRecaps?: Array<{
     periodStart: ISODate;
@@ -332,15 +649,18 @@ export type ModuleId =
   | "home"
   | "notes"
   | "maps"
+  | "projects"
+  | "focus"
   | "calendar"
   | "daily"
+  | "training"
   | "recap"
   | "settings"
   | "components";
 
 export interface AppSettings {
   language: "en" | "fr";
-  theme: "light" | "dark" | "system";
+  theme: "diorna" | "light" | "dark" | "system";
   accentColor: string;
   density: "compact" | "comfortable";
   interfaceFont: string;
@@ -355,6 +675,7 @@ export interface AppSettings {
   weekStartsOn: 0 | 1;
   calendarVisibleStart: number;
   calendarVisibleEnd: number;
+  calendarHourHeight: number;
   defaultEventDurationMinutes: number;
   defaultReminderMinutes: number;
   dailyWindow: "plus-minus-3" | "7" | "14" | "30" | "week" | "month" | "custom";
@@ -375,12 +696,19 @@ export interface AppSettings {
   recapAutoMonthly: boolean;
   recapAutoYearly: boolean;
   recapConsentedProviders: string[];
+  aiRequestTimeoutSeconds: number;
+  aiRepairTimeoutSeconds: number;
+  aiMaxTokens: number;
+  aiMapNoteOrganization: "tags" | "folder" | "both";
+  aiMapFolderRoot: string;
   linkPreviewEnabled: boolean;
+  linkPreviewSettingsVersion: number;
   updateEnabled: boolean;
   backupLocation: string;
   backupFrequency: "daily" | "weekly" | "launch";
   backupRetention: number;
   dashboardWidgetOrder: Record<Id, string[]>;
   dashboardHiddenWidgets: Record<Id, string[]>;
+  rightPanelWidth: number;
   keymap: Record<string, string>;
 }

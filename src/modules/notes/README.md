@@ -16,7 +16,11 @@ media into the workspace, render it through Tauri's scoped asset protocol, and
 expose pointer/keyboard block reordering plus media sizing and alignment. Images
 open in an accessible full-screen lightbox. `PdfAttachmentViewer.tsx` uses
 PDF.js for page thumbnails, navigation, zoom, selectable page text, and
-page-anchored quote insertion. Native saves preserve stable IDs and metadata,
+page-anchored quote insertion. Public URLs can be inserted, pasted, or dropped as
+rich bookmark blocks with Open Graph/Twitter metadata, cached workspace images,
+manual refresh, conversion to text links, block movement, and portable export.
+The native fetch boundary rejects private-network destinations and bounds
+redirects and response sizes. Native saves preserve stable IDs and metadata,
 move renamed files, index tags/properties, and retain the newest 50 revisions
 plus every revision from the last 30 days.
 

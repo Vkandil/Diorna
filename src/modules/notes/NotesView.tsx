@@ -41,6 +41,7 @@ import {
   ListOrdered,
   MoreHorizontal,
   Network,
+  Plus,
   Brain,
   Quote,
   Redo2,
@@ -61,6 +62,7 @@ import {
   CalloutBlock,
   CodeBlock,
   FlashcardBlock,
+  LinkPreviewBlock,
   MathBlock,
   MathInline,
   MermaidBlock,
@@ -71,10 +73,17 @@ import { RevisionPanel } from "./RevisionPanel";
 import { NoteExportDialog } from "./NoteExportDialog";
 import { StudentHub, type StudentView } from "@/modules/student/StudentHub";
 import { ReferenceListBlock } from "@/modules/student/ReferenceListBlock";
-import { importNativeAttachmentBytes, importNativeAttachmentFile } from "@/core/native";
+import {
+  importNativeAttachmentBytes,
+  importNativeAttachmentFile,
+  openExternalUrl,
+} from "@/core/native";
+import { isStandaloneUrl, normalizeExternalUrl, safeHost } from "@/core/linkPreview";
+import { createId } from "@/shared/id";
 
 export function NotesView({ tabId }: { tabId?: string | undefined } = {}) {
   const state = useDiornaStore();
+  const isActiveView = (tabId ?? state.activeTabId) === state.activeTabId;
   const allNotes = useMemo(
     () => selectWorkspace(state.notes, state.activeWorkspaceId).filter((note) => !note.trashedAt),
     [state.notes, state.activeWorkspaceId],
@@ -90,6 +99,9 @@ export function NotesView({ tabId }: { tabId?: string | undefined } = {}) {
   const [replaceWith, setReplaceWith] = useState("");
   const [replacementUndo, setReplacementUndo] = useState<Array<{ id: string; body: string }>>([]);
   const [newFolder, setNewFolder] = useState("");
+  const [newTag, setNewTag] = useState("");
+  const newFolderRef = useRef<HTMLInputElement>(null);
+  const newTagRef = useRef<HTMLInputElement>(null);
   const savedKey = `diorna-saved-searches-${state.activeWorkspaceId}`;
   const [savedSearches, setSavedSearches] = useState<
     Array<{ id: string; name: string; query: string }>
@@ -128,10 +140,33 @@ export function NotesView({ tabId }: { tabId?: string | undefined } = {}) {
   const studentWorkspace =
     state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId)?.kind ===
     "student";
-  const [selectedId, setSelectedId] = useState(activeTab?.entityId ?? notes[0]?.id);
+  const lastNoteKey = `diorna-last-note-${state.activeWorkspaceId}`;
+  const [selectedId, setSelectedId] = useState(
+    () =>
+      activeTab?.entityId ??
+      (allNotes.some((entry) => entry.id === localStorage.getItem(lastNoteKey))
+        ? (localStorage.getItem(lastNoteKey) ?? undefined)
+        : undefined) ??
+      notes[0]?.id,
+  );
   useEffect(() => {
     if (activeTab?.entityId) setSelectedId(activeTab.entityId);
   }, [activeTab?.entityId]);
+  useEffect(() => {
+    if (selectedId && allNotes.some((entry) => entry.id === selectedId))
+      localStorage.setItem(lastNoteKey, selectedId);
+  }, [allNotes, lastNoteKey, selectedId]);
+  useEffect(() => {
+    if (!isActiveView) return;
+    window.dispatchEvent(
+      new CustomEvent("diorna-note-context", { detail: { noteId: selectedId } }),
+    );
+  }, [isActiveView, selectedId]);
+  useEffect(() => {
+    if (allNotes.some((entry) => entry.id === selectedId)) return;
+    const saved = localStorage.getItem(lastNoteKey);
+    setSelectedId(allNotes.find((entry) => entry.id === saved)?.id ?? notes[0]?.id);
+  }, [allNotes, lastNoteKey, notes, selectedId]);
   const note = allNotes.find((entry) => entry.id === selectedId);
   const create = (folder = "") => {
     const created = state.addNote();
@@ -248,6 +283,14 @@ export function NotesView({ tabId }: { tabId?: string | undefined } = {}) {
             <summary>
               <Folder size={13} /> Folders
             </summary>
+            <button
+              className="section-add"
+              aria-label="Create folder"
+              title="Create folder"
+              onClick={() => newFolderRef.current?.focus()}
+            >
+              <Plus size={12} />
+            </button>
             <button onClick={() => setFilter("")}>
               All notes <small>{allNotes.length}</small>
             </button>
@@ -296,6 +339,7 @@ export function NotesView({ tabId }: { tabId?: string | undefined } = {}) {
             >
               <FolderPlus size={13} />
               <input
+                ref={newFolderRef}
                 aria-label="New folder name"
                 placeholder="New folder + note"
                 value={newFolder}
@@ -303,18 +347,45 @@ export function NotesView({ tabId }: { tabId?: string | undefined } = {}) {
               />
             </form>
           </details>
-          {!!tagCounts.length && (
-            <details>
-              <summary>
-                <Hash size={13} /> Tags
-              </summary>
-              {tagCounts.map(([tag, count]) => (
-                <button key={tag} onClick={() => setFilter(`tag:${tag}`)}>
-                  #{tag} <small>{count}</small>
-                </button>
-              ))}
-            </details>
-          )}
+          <details>
+            <summary>
+              <Hash size={13} /> Tags
+            </summary>
+            <button
+              className="section-add"
+              aria-label="Add tag"
+              title="Add tag to the current note"
+              disabled={!note}
+              onClick={() => newTagRef.current?.focus()}
+            >
+              <Plus size={12} />
+            </button>
+            {tagCounts.map(([tag, count]) => (
+              <button key={tag} onClick={() => setFilter(`tag:${tag}`)}>
+                #{tag} <small>{count}</small>
+              </button>
+            ))}
+            <form
+              className="new-folder-row"
+              onSubmit={(event) => {
+                event.preventDefault();
+                const tag = newTag.trim().replace(/^#/, "");
+                if (!note || !tag || note.tags.includes(tag)) return;
+                state.updateNote(note.id, { tags: [...note.tags, tag] });
+                setNewTag("");
+              }}
+            >
+              <Hash size={13} />
+              <input
+                ref={newTagRef}
+                aria-label="Quick tag for current note"
+                placeholder={note ? "Add tag to current note" : "Select a note first"}
+                disabled={!note}
+                value={newTag}
+                onChange={(event) => setNewTag(event.target.value)}
+              />
+            </form>
+          </details>
           {!!savedSearches.length && (
             <details open>
               <summary>
@@ -737,7 +808,7 @@ function DeferredEditor({ note }: { note: Note }) {
         </article>
       )}
       <div className="note-editor-live" hidden={transitioning}>
-        <MemoEditor noteId={editorNoteId} />
+        <MemoEditor key={editorNoteId} noteId={editorNoteId} />
       </div>
     </div>
   );
@@ -760,6 +831,9 @@ function Editor({ noteId }: { noteId: string }) {
   const [moreOpen, setMoreOpen] = useState(false);
   const [mathPickerOpen, setMathPickerOpen] = useState(false);
   const [mathSearch, setMathSearch] = useState("");
+  const [linkMenuOpen, setLinkMenuOpen] = useState(false);
+  const [linkInput, setLinkInput] = useState("https://");
+  const [linkError, setLinkError] = useState("");
   const [focusMode, setFocusMode] = useState(false);
   const [typewriter, setTypewriter] = useState(false);
   const [nativeDropActive, setNativeDropActive] = useState(false);
@@ -831,6 +905,7 @@ function Editor({ noteId }: { noteId: string }) {
       TextAlign.configure({ types: ["heading", "paragraph", "image"] }),
       UnderlineExtension,
       WikiLink,
+      LinkPreviewBlock,
       MathBlock,
       MathInline,
       CodeBlock,
@@ -883,28 +958,63 @@ function Editor({ noteId }: { noteId: string }) {
         const file = [...(event.clipboardData?.files ?? [])].find((entry) =>
           entry.type.startsWith("image/"),
         );
-        if (!file) return false;
-        event.preventDefault();
-        void importNativeAttachmentBytes(note.workspaceId, file)
-          .then((attachment) => {
-            const node = view.state.schema.nodes.attachmentBlock?.create({
-              kind: attachmentKind(attachment.name),
-              src: attachment.displayUrl,
-              relativePath: attachment.relativePath,
-              workspaceId: note.workspaceId,
-              title: attachment.name,
-              size: humanFileSize(attachment.size),
-            });
-            if (node) view.dispatch(view.state.tr.replaceSelectionWith(node));
-          })
-          .catch((error: unknown) => window.alert(`Unable to paste image: ${String(error)}`));
-        return true;
+        if (file) {
+          event.preventDefault();
+          void importNativeAttachmentBytes(note.workspaceId, file)
+            .then((attachment) => {
+              const node = view.state.schema.nodes.attachmentBlock?.create({
+                kind: attachmentKind(attachment.name),
+                src: attachment.displayUrl,
+                relativePath: attachment.relativePath,
+                workspaceId: note.workspaceId,
+                title: attachment.name,
+                size: humanFileSize(attachment.size),
+              });
+              if (node) view.dispatch(view.state.tr.replaceSelectionWith(node));
+            })
+            .catch((error: unknown) => window.alert(`Unable to paste image: ${String(error)}`));
+          return true;
+        }
+        const pasted = event.clipboardData?.getData("text/plain").trim() ?? "";
+        const { $from, empty } = view.state.selection;
+        if (empty && !$from.parent.textContent.trim() && isStandaloneUrl(pasted)) {
+          event.preventDefault();
+          const node = view.state.schema.nodes.linkPreviewBlock?.create({
+            previewId: createId("link"),
+            workspaceId: note.workspaceId,
+            url: normalizeExternalUrl(pasted),
+            autoFetch: true,
+          });
+          if (node) view.dispatch(view.state.tr.replaceSelectionWith(node));
+          return true;
+        }
+        return false;
       },
       handleDrop: (view, event) => {
         const files = [...(event.dataTransfer?.files ?? [])];
-        if (!files.length) return false;
-        event.preventDefault();
         const position = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
+        if (!files.length) {
+          const dropped =
+            (event.dataTransfer?.getData("text/uri-list") ?? "")
+              .split(/\r?\n/)
+              .find((line) => line && !line.startsWith("#")) ??
+            event.dataTransfer?.getData("text/plain") ??
+            "";
+          if (isStandaloneUrl(dropped)) {
+            event.preventDefault();
+            const node = view.state.schema.nodes.linkPreviewBlock?.create({
+              previewId: createId("link"),
+              workspaceId: note.workspaceId,
+              url: normalizeExternalUrl(dropped),
+              autoFetch: true,
+            });
+            if (node)
+              view.dispatch(view.state.tr.insert(position ?? view.state.selection.from, node));
+            return true;
+          }
+          return false;
+        }
+        event.preventDefault();
         void Promise.all(files.map((file) => importNativeAttachmentBytes(note.workspaceId, file)))
           .then((attachments) => {
             let insertAt = position ?? view.state.selection.from;
@@ -962,6 +1072,7 @@ function Editor({ noteId }: { noteId: string }) {
           setSlashOpen(false);
           setWikiQuery(undefined);
           setCitationQuery(undefined);
+          setLinkMenuOpen(false);
         }
         return false;
       },
@@ -983,6 +1094,15 @@ function Editor({ noteId }: { noteId: string }) {
               }),
             );
           }
+          return true;
+        }
+        const externalLink =
+          event.target instanceof Element
+            ? event.target.closest<HTMLAnchorElement>('a[href^="http://"], a[href^="https://"]')
+            : null;
+        if (externalLink?.href) {
+          event.preventDefault();
+          void openExternalUrl(externalLink.href);
           return true;
         }
         const wikiLink =
@@ -1347,11 +1467,11 @@ function Editor({ noteId }: { noteId: string }) {
     [
       "Web bookmark",
       "Structure",
-      () =>
-        editor.commands.insertContent({
-          type: "attachmentBlock",
-          attrs: { kind: "bookmark", title: "Web bookmark" },
-        }),
+      () => {
+        setLinkInput("https://");
+        setLinkError("");
+        setLinkMenuOpen(true);
+      },
     ],
     [
       "Table of contents",
@@ -1373,6 +1493,53 @@ function Editor({ noteId }: { noteId: string }) {
   };
   const currentTab = state.tabs.find((tab) => tab.module === "notes" && tab.entityId === note.id);
   const previousNote = workspaceNotes.find((entry) => entry.id === currentTab?.previousNoteId);
+  const openLinkMenu = () => {
+    const href = String(editor.getAttributes("link").href ?? "");
+    setLinkInput(href || "https://");
+    setLinkError("");
+    setLinkMenuOpen(true);
+  };
+  const normalizedLink = () => {
+    const url = normalizeExternalUrl(linkInput);
+    if (!url) setLinkError("Enter a public http:// or https:// URL.");
+    return url;
+  };
+  const insertInlineLink = () => {
+    const url = normalizedLink();
+    if (!url) return;
+    if (editor.state.selection.empty) {
+      editor
+        .chain()
+        .focus()
+        .insertContent({
+          type: "text",
+          text: safeHost(url) || url,
+          marks: [{ type: "link", attrs: { href: url, rel: "noopener noreferrer" } }],
+        })
+        .run();
+    } else {
+      editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+    }
+    setLinkMenuOpen(false);
+  };
+  const insertLinkPreview = () => {
+    const url = normalizedLink();
+    if (!url) return;
+    editor
+      .chain()
+      .focus()
+      .insertContent({
+        type: "linkPreviewBlock",
+        attrs: {
+          previewId: createId("link"),
+          workspaceId: note.workspaceId,
+          url,
+          autoFetch: true,
+        },
+      })
+      .run();
+    setLinkMenuOpen(false);
+  };
   return (
     <article
       className={`note-editor line-${lineWidth} ${typewriter ? "typewriter-mode" : ""} ${nativeDropActive ? "native-drop-active" : ""}`}
@@ -1413,7 +1580,12 @@ function Editor({ noteId }: { noteId: string }) {
           </button>
         ))}
         <span className="toolbar-divider" />
-        <button title="Insert link">
+        <button
+          title="Insert link"
+          aria-label="Insert link"
+          className={linkMenuOpen ? "active" : ""}
+          onClick={openLinkMenu}
+        >
           <Link2 size={15} />
         </button>
         <button
@@ -1450,6 +1622,36 @@ function Editor({ noteId }: { noteId: string }) {
         >
           <MoreHorizontal size={16} />
         </button>
+        {linkMenuOpen && (
+          <div className="link-insert-popover" role="dialog" aria-label="Insert link">
+            <label>
+              <span>Web address</span>
+              <input
+                autoFocus
+                aria-label="Web address"
+                value={linkInput}
+                onChange={(event) => {
+                  setLinkInput(event.target.value);
+                  setLinkError("");
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") insertLinkPreview();
+                  if (event.key === "Escape") setLinkMenuOpen(false);
+                }}
+              />
+            </label>
+            {linkError && <small className="danger">{linkError}</small>}
+            <div>
+              <button className="button primary" onClick={insertLinkPreview}>
+                Preview card
+              </button>
+              <button className="button" onClick={insertInlineLink}>
+                Text link
+              </button>
+            </div>
+            <small>Standalone URLs pasted or dropped on an empty line become previews.</small>
+          </div>
+        )}
         {moreOpen && (
           <div className="editor-options-popover">
             <label>

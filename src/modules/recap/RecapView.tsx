@@ -16,8 +16,11 @@ import {
   ArrowRight,
   ArrowUpRight,
   Download,
+  CheckCircle2,
+  FolderKanban,
   RefreshCw,
   Sparkles,
+  Timer,
   Trophy,
 } from "lucide-react";
 import {
@@ -121,6 +124,10 @@ export function RecapView() {
         flashcards: inScope(state.flashcards),
         reviewLogs: inScope(state.reviewLogs),
         courses: inScope(state.courses),
+        trainingActivities: inScope(state.trainingActivities),
+        trainingSessions: inScope(state.trainingSessions),
+        projects: inScope(state.projects),
+        focusSessions: inScope(state.focusSessions),
         categoryNames: Object.fromEntries(
           categories.map((category) => [
             category.id,
@@ -586,6 +593,40 @@ function RecapDetail({
           <DeltaStat label="Cards reviewed" value={String(stats.flashcards.reviewed)} />
           <DeltaStat label="Events attended" value={String(stats.events?.attended ?? 0)} />
           <DeltaStat
+            label="Training sessions"
+            value={String(stats.training?.sessions ?? 0)}
+            delta={
+              stats.training ? stats.training.sessions - stats.training.previousSessions : null
+            }
+          />
+          <DeltaStat
+            label="Projects completed"
+            value={String(stats.projects?.completed ?? 0)}
+            delta={
+              stats.projects ? stats.projects.completed - stats.projects.previousCompleted : null
+            }
+          />
+          <DeltaStat
+            label="Project milestones"
+            value={String(stats.projects?.milestonesCompleted ?? 0)}
+          />
+          <DeltaStat
+            label="Focus time"
+            value={`${stats.focus?.actualMinutes ?? 0} min`}
+            delta={
+              stats.focus ? stats.focus.actualMinutes - stats.focus.previousActualMinutes : null
+            }
+          />
+          <DeltaStat
+            label="Training time"
+            value={`${stats.training?.durationMinutes ?? 0} min`}
+            delta={
+              stats.training
+                ? stats.training.durationMinutes - stats.training.previousDurationMinutes
+                : null
+            }
+          />
+          <DeltaStat
             label="Flashcard retention"
             value={
               stats.flashcards.retentionRate === null ? "—" : `${stats.flashcards.retentionRate}%`
@@ -594,6 +635,87 @@ function RecapDetail({
           <DeltaStat label="Review streak" value={`${stats.flashcards.streak} days`} />
         </div>
         <Narrative narrative={recap.narrative} />
+        {stats.projects && (
+          <section>
+            <h2>Projects & goals</h2>
+            <div className="highlight-list">
+              <div>
+                <FolderKanban />
+                <span>
+                  <strong>{stats.projects.active} active projects</strong>
+                  <small>{stats.projects.atRisk} need attention</small>
+                </span>
+              </div>
+              <div>
+                <CheckCircle2 />
+                <span>
+                  <strong>{stats.projects.tasksCompleted} linked tasks completed</strong>
+                  <small>
+                    {stats.projects.taskCompletionRate === null
+                      ? "No project deadlines in this period"
+                      : `${stats.projects.taskCompletionRate}% completion rate`}
+                  </small>
+                </span>
+              </div>
+            </div>
+          </section>
+        )}
+        {(stats.focus?.sessions ?? 0) > 0 && (
+          <section>
+            <h2>Focus</h2>
+            <div className="highlight-list">
+              <div>
+                <Timer />
+                <span>
+                  <strong>{stats.focus?.actualMinutes} protected minutes</strong>
+                  <small>
+                    {stats.focus?.sessions} completed sessions · {stats.focus?.plannedMinutes} min
+                    planned
+                  </small>
+                </span>
+              </div>
+              <div>
+                <Sparkles />
+                <span>
+                  <strong>
+                    {stats.focus?.focusRating === null
+                      ? "No focus rating yet"
+                      : `${stats.focus?.focusRating}/5 average focus`}
+                  </strong>
+                  <small>{stats.focus?.distractions} distractions captured</small>
+                </span>
+              </div>
+            </div>
+          </section>
+        )}
+        {(stats.training?.sessions ?? 0) > 0 && (
+          <section>
+            <h2>Training</h2>
+            <div className="highlight-list">
+              {Object.entries(stats.training?.byActivity ?? {}).map(([activity, count]) => (
+                <div key={activity}>
+                  <Trophy />
+                  <span>
+                    <strong>{activity}</strong>
+                    <small>
+                      {count} session{count === 1 ? "" : "s"}
+                    </small>
+                  </span>
+                </div>
+              ))}
+              <div>
+                <Sparkles />
+                <span>
+                  <strong>Measured progress</strong>
+                  <small>
+                    {stats.training?.volume.toLocaleString()} strength volume ·{" "}
+                    {stats.training?.personalRecords} personal records
+                  </small>
+                </span>
+              </div>
+            </div>
+          </section>
+        )}
         <section>
           <h2>Progress in numbers</h2>
           <div className="chart-grid">
@@ -671,7 +793,7 @@ function RecapDetail({
                       {taskData.map((_, index) => (
                         <Cell
                           key={index}
-                          fill={["#5b5bd6", "#168a68", "#bd6b28", "#c0445c"][index % 4]!}
+                          fill={["#1D518A", "#7C8E58", "#DAA343", "#C66542"][index % 4]!}
                         />
                       ))}
                     </Pie>

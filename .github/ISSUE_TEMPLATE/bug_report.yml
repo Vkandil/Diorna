@@ -1,0 +1,64 @@
+name: Bug report
+description: Report a reproducible Diorna problem without sharing private vault data.
+title: "[Bug]: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for helping improve Diorna. Remove note content, API keys, usernames, and local paths from screenshots or diagnostics.
+  - type: input
+    id: version
+    attributes:
+      label: Diorna version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: dropdown
+    id: build
+    attributes:
+      label: Build
+      options:
+        - Installer (x64)
+        - Installer (ARM64)
+        - Portable (x64)
+        - Portable (ARM64)
+        - Development
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2, OS build 26100
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Open…
+        2. Drag…
+        3. Observe…
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual result
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Sanitised diagnostics
+      description: Paste diagnostics only after removing personal content and secrets.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety check
+      options:
+        - label: I removed API keys, private note content, usernames, and identifying file paths.
+          required: true

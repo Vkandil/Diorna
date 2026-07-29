@@ -5,17 +5,20 @@ import {
   Check,
   Clock3,
   FileText,
+  FolderKanban,
   LoaderCircle,
-  Map,
+  Map as MapIcon,
   RotateCcw,
   Send,
   Sparkles,
   Square,
+  Timer,
   X,
 } from "lucide-react";
 import { loadNativeApiKey } from "@/core/native";
 import { useDiornaStore } from "@/core/store";
 import { OPENROUTER_MODEL, recapSecretId } from "@/shared/recapConfig";
+import type { CanvasMap, Note } from "@/shared/models";
 import { applyAiPlan, undoAiChangeSet, type AiChangeSet } from "./executor";
 import {
   buildAiPayload,
@@ -24,6 +27,8 @@ import {
   type AiMention,
   type AiPlanningContext,
   type AiProgressPhase,
+  type AiTargetMapContext,
+  type AiUsage,
 } from "./planner";
 import type { AiOperation, AiPlan } from "./types";
 
@@ -33,9 +38,26 @@ interface ChatEntry {
   text: string;
 }
 
-export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function AiDrawer({
+  open,
+  initialPrompt = "",
+  onClose,
+}: {
+  open: boolean;
+  initialPrompt?: string;
+  onClose: () => void;
+}) {
   const state = useDiornaStore();
   const workspace = state.workspaces.find((entry) => entry.id === state.activeWorkspaceId);
+  const currentMap =
+    state.activeModule === "maps"
+      ? state.maps.find(
+          (entry) =>
+            entry.id === state.selectedMapId &&
+            entry.workspaceId === state.activeWorkspaceId &&
+            !entry.trashedAt,
+        )
+      : undefined;
   const [prompt, setPrompt] = useState("");
   const [mentions, setMentions] = useState<AiMention[]>([]);
   const [plan, setPlan] = useState<AiPlan>();
@@ -43,6 +65,8 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
   const [history, setHistory] = useState<ChatEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState<AiProgressPhase>();
+  const [usage, setUsage] = useState<AiUsage>();
+  const [targetMapId, setTargetMapId] = useState<string>();
   const [error, setError] = useState("");
   const abortRef = useRef<AbortController>();
   const stopReasonRef = useRef<"user">();
@@ -72,13 +96,15 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
     } catch {
       setHistory([]);
     }
-    setPrompt("");
+    setPrompt(initialPrompt);
     setMentions([]);
     setPlan(undefined);
     setChanges(undefined);
     setError("");
     setProgress(undefined);
-  }, [historyKey]);
+    setUsage(undefined);
+    setTargetMapId(undefined);
+  }, [historyKey, initialPrompt]);
 
   useEffect(
     () => () => {
@@ -108,6 +134,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
     setError("");
     setPlan(undefined);
     setChanges(undefined);
+    setUsage(undefined);
     const controller = new AbortController();
     abortRef.current = controller;
     stopReasonRef.current = undefined;
@@ -115,6 +142,14 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
       const apiKey = await loadNativeApiKey(recapSecretId(state.settings.recapEndpoint));
       if (!apiKey) throw new Error("Add an OpenRouter API key in Settings → Recap first.");
       const notes = resolveMentionedNotes(mentions, state.notes, state.activeWorkspaceId);
+      const targetMap = targetMapId
+        ? state.maps.find(
+            (entry) =>
+              entry.id === targetMapId &&
+              entry.workspaceId === state.activeWorkspaceId &&
+              !entry.trashedAt,
+          )
+        : undefined;
       const context: AiPlanningContext = {
         prompt: request,
         workspaceName: workspace.name,
@@ -122,6 +157,34 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
         timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
         mentions,
         notes,
+        projects: state.projects.filter(
+          (project) => project.workspaceId === state.activeWorkspaceId && !project.archived,
+        ),
+        goals: state.goals.filter(
+          (goal) => goal.workspaceId === state.activeWorkspaceId && goal.status !== "cancelled",
+        ),
+        calendarItems: state.items.filter(
+          (item) => item.workspaceId === state.activeWorkspaceId && !item.trashedAt,
+        ),
+        resourceNotes: state.notes.filter(
+          (note) => note.workspaceId === state.activeWorkspaceId && !note.trashedAt,
+        ),
+        maps: state.maps.filter(
+          (map) => map.workspaceId === state.activeWorkspaceId && !map.trashedAt,
+        ),
+        habits: state.habits.filter(
+          (habit) => habit.workspaceId === state.activeWorkspaceId && !habit.archived,
+        ),
+        trainingActivities: state.trainingActivities.filter(
+          (activity) => activity.workspaceId === state.activeWorkspaceId && !activity.archived,
+        ),
+        focusPriorities: state.focusPriorities
+          .filter((priority) => priority.workspaceId === state.activeWorkspaceId)
+          .sort((left, right) => right.date.localeCompare(left.date)),
+        focusSessions: state.focusSessions
+          .filter((session) => session.workspaceId === state.activeWorkspaceId)
+          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)),
+        ...(targetMap ? { targetMap: buildTargetMapContext(targetMap, state.notes) } : {}),
       };
       const provider = providerHost(state.settings.recapEndpoint);
       if (!state.settings.recapConsentedProviders.includes(provider)) {
@@ -147,10 +210,14 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
           endpoint: state.settings.recapEndpoint,
           model: state.settings.recapModel || OPENROUTER_MODEL,
           apiKey,
+          requestTimeoutMs: safeNumber(state.settings.aiRequestTimeoutSeconds, 30, 300, 120) * 1000,
+          repairTimeoutMs: safeNumber(state.settings.aiRepairTimeoutSeconds, 15, 180, 60) * 1000,
+          maxTokens: safeNumber(state.settings.aiMaxTokens, 1000, 12_000, 6500),
         },
         context,
         controller.signal,
         setProgress,
+        setUsage,
       );
       setPlan(nextPlan);
       saveHistory([
@@ -180,11 +247,16 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
     if (!plan) return;
     setError("");
     try {
-      const nextChanges = applyAiPlan(plan, useDiornaStore.getState());
+      const nextChanges = applyAiPlan(plan, useDiornaStore.getState(), {
+        mapNoteOrganization: state.settings.aiMapNoteOrganization,
+        mapFolderRoot: state.settings.aiMapFolderRoot,
+        ...(targetMapId ? { targetMapId } : {}),
+      });
       setChanges(nextChanges);
       setPlan(undefined);
       setPrompt("");
       setMentions([]);
+      setTargetMapId(undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The plan could not be applied.");
     }
@@ -198,7 +270,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
 
   const openCreated = (entry: AiChangeSet["created"][number]) => {
     const current = useDiornaStore.getState();
-    if (entry.module === "notes" || entry.module === "maps") {
+    if (entry.module === "notes" || entry.module === "maps" || entry.module === "projects") {
       current.openTab({ module: entry.module, title: entry.title, entityId: entry.id });
     } else {
       current.setModule(entry.module);
@@ -236,10 +308,15 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
         )}
 
         {loading && progress && <AiProgress phase={progress} />}
+        {usage && usage.calls > 0 && (
+          <AiUsageSummary usage={usage} maxTokens={state.settings.aiMaxTokens} />
+        )}
 
         {plan && (
           <section className="ai-plan" aria-label="AI plan preview">
-            <span className="ai-eyebrow">Review before creating</span>
+            <span className="ai-eyebrow">
+              {targetMapId ? "Review before updating" : "Review before creating"}
+            </span>
             <h3>{plan.summary}</h3>
             {plan.assumptions.length > 0 && (
               <div className="ai-assumptions">
@@ -272,9 +349,11 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
           <section className="ai-success" role="status">
             <Check size={22} />
             <div>
-              <h3>Created in {workspace?.name}</h3>
+              <h3>
+                {changes.updatedMaps.length ? "Updated" : "Created"} in {workspace?.name}
+              </h3>
               <p>
-                {changes.created.length} item(s) were added. You can open them or undo this batch.
+                {changes.created.length} item(s) were applied. You can open them or undo this batch.
               </p>
             </div>
             <div className="ai-created-list">
@@ -289,7 +368,13 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
               <button className="button" onClick={undo}>
                 <RotateCcw size={14} /> Undo this batch
               </button>
-              <button className="button primary" onClick={() => setChanges(undefined)}>
+              <button
+                className="button primary"
+                onClick={() => {
+                  setChanges(undefined);
+                  setUsage(undefined);
+                }}
+              >
                 New request
               </button>
             </div>
@@ -305,6 +390,21 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
 
       {!plan && !changes && (
         <footer className="ai-composer">
+          {currentMap && (
+            <button
+              className={`ai-target-toggle ${targetMapId === currentMap.id ? "active" : ""}`}
+              aria-pressed={targetMapId === currentMap.id}
+              onClick={() =>
+                setTargetMapId((current) => (current === currentMap.id ? undefined : currentMap.id))
+              }
+            >
+              <MapIcon size={14} />
+              <span>
+                <strong>Restructure current Map</strong>
+                <small>{currentMap.name} · attachments stay in place</small>
+              </span>
+            </button>
+          )}
           {mentions.length > 0 && (
             <div className="ai-mention-chips" aria-label="Referenced notes">
               {mentions.map((mention) => (
@@ -343,7 +443,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
           )}
           <textarea
             aria-label="Ask Diorna AI"
-            placeholder="Create a note, map, calendar event or daily habit… Use / to reference a note."
+            placeholder="Create a project, note, map, calendar event or daily habit… Use / to reference a note."
             value={prompt}
             disabled={loading}
             onChange={(event) => setPrompt(event.target.value)}
@@ -411,6 +511,27 @@ function AiProgress({ phase }: { phase: AiProgressPhase }) {
   );
 }
 
+function AiUsageSummary({ usage, maxTokens }: { usage: AiUsage; maxTokens: number }) {
+  const tokenText =
+    usage.totalTokens > 0 ? `${usage.totalTokens.toLocaleString()} tokens` : "awaiting usage";
+  const costText =
+    usage.costUsd === undefined
+      ? "cost pending"
+      : `$${usage.costUsd < 0.01 ? usage.costUsd.toFixed(4) : usage.costUsd.toFixed(2)}`;
+  return (
+    <div className="ai-usage" aria-label="AI request usage">
+      <span>
+        {usage.calls} provider call{usage.calls === 1 ? "" : "s"}
+      </span>
+      <span>{tokenText}</span>
+      <span>{costText}</span>
+      <small>
+        Limit: {safeNumber(maxTokens, 1000, 12_000, 6500).toLocaleString()} output tokens/call
+      </small>
+    </div>
+  );
+}
+
 function OperationPreview({ operation }: { operation: AiOperation }) {
   const presentation = operationPresentation(operation);
   const Icon = presentation.icon;
@@ -436,7 +557,7 @@ function operationPresentation(operation: AiOperation) {
     };
   if (operation.type === "create_map")
     return {
-      icon: Map,
+      icon: MapIcon,
       type: "Map",
       title: operation.name,
       detail: `${operation.nodes.length} nodes · ${operation.edges.length} links`,
@@ -451,14 +572,35 @@ function operationPresentation(operation: AiOperation) {
         timeStyle: operation.allDay ? undefined : "short",
       }).format(new Date(operation.startAt)),
     };
+  if (operation.type === "upsert_project")
+    return {
+      icon: FolderKanban,
+      type: operation.existingProjectId ? "Project update" : "Project",
+      title: operation.name,
+      detail: `${operation.milestoneTitles.length} milestones · ${operation.linkedOperationIds.length} connections`,
+    };
+  if (operation.type === "create_habit")
+    return {
+      icon: Clock3,
+      type: "Daily habit",
+      title: operation.name,
+      detail:
+        operation.tracking === "quantity"
+          ? `${operation.target} ${operation.unit}`
+          : `${operation.activeWeekdays.length} days/week`,
+    };
+  if (operation.type === "create_focus_block")
+    return {
+      icon: Timer,
+      type: operation.scheduledAt ? "Scheduled focus block" : "Focus block",
+      title: operation.title,
+      detail: `${operation.plannedMinutes} min · ${operation.mode.replace("-", " ")}${operation.priorityDate ? " · daily priority" : ""}`,
+    };
   return {
-    icon: Clock3,
-    type: "Daily habit",
-    title: operation.name,
-    detail:
-      operation.tracking === "quantity"
-        ? `${operation.target} ${operation.unit}`
-        : `${operation.activeWeekdays.length} days/week`,
+    icon: Sparkles,
+    type: "Action",
+    title: "Workspace action",
+    detail: "",
   };
 }
 
@@ -479,4 +621,51 @@ function localIsoDateTime(date: Date): string {
   )}:${two(date.getMinutes())}:${two(date.getSeconds())}${sign}${two(
     Math.floor(Math.abs(offset) / 60),
   )}:${two(Math.abs(offset) % 60)}`;
+}
+
+function safeNumber(value: number, min: number, max: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(value)));
+}
+
+function buildTargetMapContext(map: CanvasMap, notes: Note[]): AiTargetMapContext {
+  const linkedNotes = new Map<string, { id: string; title: string; path: string }>();
+  const nodes = map.nodes.map((node) => {
+    const note = node.file
+      ? notes.find(
+          (entry) =>
+            entry.workspaceId === map.workspaceId && !entry.trashedAt && entry.path === node.file,
+        )
+      : undefined;
+    if (note) linkedNotes.set(note.id, { id: note.id, title: note.title, path: note.path });
+    const title =
+      note?.title ||
+      node.label ||
+      node.text?.trim().slice(0, 2000) ||
+      node.file?.split(/[\\/]/).at(-1) ||
+      node.url ||
+      "Attachment";
+    return {
+      id: node.id,
+      kind: note
+        ? ("note" as const)
+        : node.type === "text"
+          ? ("text" as const)
+          : ("attachment" as const),
+      title,
+      ...(note ? { mentionedNoteId: note.id } : {}),
+      locked: Boolean(node.diorna?.locked),
+    };
+  });
+  return {
+    id: map.id,
+    name: map.name,
+    nodes,
+    edges: map.edges.map((edge) => ({
+      from: edge.fromNode,
+      to: edge.toNode,
+      ...(edge.label ? { label: edge.label } : {}),
+    })),
+    linkedNotes: [...linkedNotes.values()],
+  };
 }

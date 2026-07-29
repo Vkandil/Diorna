@@ -299,6 +299,46 @@ function renderExportHtml(html: string, references: ReferenceRecord[]): string {
       element.append(legend);
     }
   });
+  document.querySelectorAll<HTMLElement>('figure[data-type="link-preview"]').forEach((element) => {
+    const url = element.dataset.finalUrl || element.dataset.url || "";
+    const title = element.dataset.title || url || "External link";
+    const description = element.dataset.description || "";
+    const site = element.dataset.siteName || "";
+    const imageSource = element.dataset.imageUrl || element.dataset.imageRelativePath || "";
+    const card = document.createElement(url ? "a" : "div");
+    card.className = "print-link-preview";
+    if (card instanceof HTMLAnchorElement) {
+      card.href = url;
+      card.rel = "noreferrer";
+    }
+    if (imageSource) {
+      const image = document.createElement("img");
+      image.src = imageSource;
+      image.alt = "";
+      card.append(image);
+    }
+    const copy = document.createElement("span");
+    if (site) {
+      const source = document.createElement("small");
+      source.textContent = site;
+      copy.append(source);
+    }
+    const heading = document.createElement("strong");
+    heading.textContent = title;
+    copy.append(heading);
+    if (description) {
+      const summary = document.createElement("span");
+      summary.textContent = description;
+      copy.append(summary);
+    }
+    if (url) {
+      const address = document.createElement("small");
+      address.textContent = url;
+      copy.append(address);
+    }
+    card.append(copy);
+    element.replaceWith(card);
+  });
   const keys = citationKeys(document.body.textContent ?? "");
   const cited = references.filter((reference) => keys.has(reference.citationKey.toLowerCase()));
   document.querySelectorAll<HTMLElement>('[data-type="reference-list"]').forEach((element) => {

@@ -5,6 +5,7 @@ import {
   ChevronRight,
   Database,
   KeyRound,
+  Monitor,
   Moon,
   Palette,
   Plus,
@@ -25,17 +26,18 @@ import {
   storeNativeApiKey,
 } from "@/core/native";
 import { OPENROUTER_ENDPOINT, OPENROUTER_MODEL, recapSecretId } from "@/shared/recapConfig";
+import { BrandLogo } from "./BrandLogo";
 
 export function Onboarding() {
   const finish = useDiornaStore((state) => state.finishOnboarding);
   const updateSettings = useDiornaStore((state) => state.updateSettings);
   const [step, setStep] = useState(0);
-  const [theme, setTheme] = useState<AppSettings["theme"]>("system");
+  const [theme, setTheme] = useState<AppSettings["theme"]>("diorna");
   const [workspaces, setWorkspaces] = useState<Workspace[]>([
     {
       id: "workspace-student",
       name: "Student",
-      color: "#5b5bd6",
+      color: "#1D518A",
       folderName: "Student",
       sortOrder: 0,
       kind: "student",
@@ -44,7 +46,7 @@ export function Onboarding() {
     {
       id: "workspace-personal",
       name: "Personal",
-      color: "#168a68",
+      color: "#7C8E58",
       folderName: "Personal",
       sortOrder: 1,
       kind: "personal",
@@ -113,13 +115,21 @@ export function Onboarding() {
       <h1>Make it comfortable</h1>
       <p>You can change this any time in Appearance.</p>
       <div className="choice-grid">
-        {(["light", "dark", "system"] as const).map((value) => (
+        {(["diorna", "light", "dark", "system"] as const).map((value) => (
           <button
             key={value}
-            className={`choice ${theme === value ? "selected" : ""}`}
+            className={`choice theme-${value} ${theme === value ? "selected" : ""}`}
             onClick={() => setTheme(value)}
           >
-            {value === "light" ? <Sun /> : value === "dark" ? <Moon /> : <Palette />}
+            {value === "diorna" ? (
+              <Palette />
+            ) : value === "light" ? (
+              <Sun />
+            ) : value === "dark" ? (
+              <Moon />
+            ) : (
+              <Monitor />
+            )}
             <strong>{value[0]!.toUpperCase() + value.slice(1)}</strong>
             {theme === value && <Check size={16} />}
           </button>
@@ -210,7 +220,7 @@ export function Onboarding() {
             {
               id: createId("workspace"),
               name,
-              color: "#657287",
+              color: "#3F6495",
               folderName: name,
               sortOrder: current.length,
               kind: "custom",
@@ -287,7 +297,7 @@ export function Onboarding() {
   return (
     <main className="onboarding">
       <div className="onboarding-brand">
-        <div className="brand-mark">D</div>
+        <BrandLogo className="onboarding-logo" />
         <strong>Diorna</strong>
         <p>Your daily register.</p>
       </div>

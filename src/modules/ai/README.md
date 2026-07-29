@@ -16,9 +16,10 @@ The first provider request is capped at 120 seconds and the corrective request a
 60 seconds. Both are aborted after their deadline, and the user can stop either
 request from the composer without applying a partial plan.
 
-`types.ts` is the trust boundary. It accepts create-only plans for notes, maps,
-calendar items, and habits. It rejects unknown actions, duplicate IDs, invalid
-map links, invalid dates, and incomplete quantity habits.
+`types.ts` is the trust boundary. It accepts reviewed plans for notes, maps,
+calendar items, habits, projects, and Focus blocks. It rejects unknown actions,
+duplicate IDs, invalid map links, invented source IDs, invalid dates, and
+incomplete quantity habits.
 
 `executor.ts` applies a confirmed plan to the active workspace. Map coordinates
 are computed locally from semantic nodes and edges. A map can link an explicitly
@@ -31,6 +32,11 @@ filterable as one group.
 Created entities are
 recorded as one change set so the whole batch can be undone. Provider output is
 never executed as code and cannot select or cross a workspace boundary.
+
+Focus planning receives compact summaries of exact resources, priorities and
+recent session evidence. It can add a priority and reserve Calendar time, but
+never starts a timer. The user still explicitly chooses when protected work
+begins.
 
 The chat occupies the left sidebar, keeps a short conversation history locally
 per workspace, and displays request, provider, validation, and repair progress.

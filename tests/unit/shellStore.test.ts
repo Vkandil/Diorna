@@ -4,6 +4,15 @@ import { useDiornaStore } from "@/core/store";
 describe("shell layout store", () => {
   beforeEach(() => useDiornaStore.getState().resetAll());
 
+  it("starts with the Diorna brand theme and cobalt accent", () => {
+    expect(useDiornaStore.getState().settings).toMatchObject({
+      theme: "diorna",
+      accentColor: "#1D518A",
+      linkPreviewEnabled: true,
+      linkPreviewSettingsVersion: 1,
+    });
+  });
+
   it("creates mixed persisted splits, caps them at four, and closes panes", () => {
     useDiornaStore.getState().setModule("notes");
     useDiornaStore.getState().splitPane("horizontal");

@@ -30,6 +30,21 @@ jobs:
           toolchain: 1.97.1
           targets: ${{ matrix.target }}
       - run: npm ci
+      - name: Verify release version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tagVersion = '${{ github.ref_name }}'.TrimStart('v')
+          $packageVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $tauriVersion = (Get-Content src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $cargoVersion = [regex]::Match(
+            (Get-Content src-tauri/Cargo.toml -Raw),
+            '(?m)^version\s*=\s*"([^"]+)"'
+          ).Groups[1].Value
+          $versions = @($packageVersion, $tauriVersion, $cargoVersion) | Select-Object -Unique
+          if ($versions.Count -ne 1 -or $versions[0] -ne $tagVersion) {
+            throw "Tag v$tagVersion does not match package/Tauri/Cargo versions: $($versions -join ', ')"
+          }
       - name: Import Authenticode certificate
         shell: pwsh
         env:
@@ -62,7 +77,7 @@ jobs:
             bundle = @{ createUpdaterArtifacts = $true; windows = $windows }
             plugins = @{ updater = @{
               pubkey = $env:TAURI_UPDATER_PUBLIC_KEY
-              endpoints = @('https://github.com/diorna-app/diorna/releases/latest/download/{{target}}.json')
+              endpoints = @('https://github.com/${{ github.repository }}/releases/latest/download/{{target}}.json')
             } }
           }
           $config | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $env:RUNNER_TEMP 'release-config.json')
@@ -70,7 +85,7 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_UPDATER_PRIVATE_KEY_PASSWORD }}
-        run: npm run tauri build -- --config "$env:RUNNER_TEMP/release-config.json" --target ${{ matrix.target }} --bundles msi,nsis
+        run: npm run tauri -- build --config "$env:RUNNER_TEMP/release-config.json" --target ${{ matrix.target }} --bundles msi,nsis
       - name: Create portable archive
         shell: pwsh
         run: |
@@ -123,6 +138,7 @@ jobs:
         with:
           draft: true
           prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
           files: |
             release/**/*
             *.json

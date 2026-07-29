@@ -25,6 +25,7 @@ import {
   ChevronRight,
   Copy,
   Download,
+  ExternalLink,
   FileAudio,
   Frame,
   Image,
@@ -37,6 +38,7 @@ import {
   Paperclip,
   Presentation,
   Redo2,
+  RefreshCw,
   Search,
   SlidersHorizontal,
   StickyNote,
@@ -49,26 +51,34 @@ import DOMPurify from "dompurify";
 import {
   importNativeAttachmentBytes,
   importNativeAttachmentFile,
+  openExternalUrl,
   type ImportedAttachment,
 } from "@/core/native";
+import {
+  isStandaloneUrl,
+  loadLinkPreview,
+  normalizeExternalUrl,
+  safeHost,
+} from "@/core/linkPreview";
 import { selectWorkspace, useDiornaStore } from "@/core/store";
 import { createId } from "@/shared/id";
 import type { CanvasEdge, CanvasMap, CanvasNode, Note as DiornaNote } from "@/shared/models";
 import { expandLinkedNoteTree } from "./linkedNotes";
+import { connectionSides } from "./connection";
 
 const palette = [
-  "#b9d6ff",
-  "#ffd3a8",
-  "#d6c9ff",
-  "#bce7d7",
-  "#ffd0db",
-  "#e3e7ee",
-  "#fff0a8",
-  "#c8ecff",
-  "#d8f0b7",
-  "#f0c8ff",
-  "#ffd9c8",
-  "#ffffff",
+  "#d8e3ef",
+  "#dce3ec",
+  "#efd7ce",
+  "#dfe4d2",
+  "#f3e2bc",
+  "#f3efe0",
+  "#c4d4e5",
+  "#cbd5e2",
+  "#e7c3b6",
+  "#cfd8bc",
+  "#ecd297",
+  "#fbf8ee",
 ];
 
 type LinkedNotePreview = Pick<DiornaNote, "id" | "title" | "body" | "updatedAt">;
@@ -93,14 +103,33 @@ const nodeTypes = { diorna: CanvasCardNode };
 
 export function MapsView({ tabId }: { tabId?: string | undefined } = {}) {
   const state = useDiornaStore();
+  const { selectMap } = state;
   const maps = selectWorkspace(state.maps, state.activeWorkspaceId).filter((map) => !map.trashedAt);
   const activeTab = state.tabs.find((tab) => tab.id === (tabId ?? state.activeTabId));
-  const [mapId, setMapId] = useState(activeTab?.entityId ?? maps[0]?.id);
+  const isActiveView = (tabId ?? state.activeTabId) === state.activeTabId;
+  const [mapId, setMapId] = useState(
+    () =>
+      (activeTab?.module === "maps" && maps.some((entry) => entry.id === activeTab.entityId)
+        ? activeTab.entityId
+        : undefined) ??
+      (maps.some((entry) => entry.id === state.selectedMapId) ? state.selectedMapId : undefined) ??
+      [...maps].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id,
+  );
   const map = maps.find((entry) => entry.id === mapId);
   useEffect(() => {
     if (activeTab?.module === "maps" && maps.some((entry) => entry.id === activeTab.entityId))
       setMapId(activeTab.entityId);
   }, [activeTab?.entityId, activeTab?.module, maps]);
+  useEffect(() => {
+    if (map || !maps.length) return;
+    setMapId(
+      (maps.some((entry) => entry.id === state.selectedMapId) ? state.selectedMapId : undefined) ??
+        [...maps].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]?.id,
+    );
+  }, [map, maps, state.selectedMapId]);
+  useEffect(() => {
+    if (isActiveView) selectMap(map?.id);
+  }, [isActiveView, map?.id, selectMap]);
   const createMap = (parentMapId?: string) => {
     const created = state.addMap(parentMapId ? "Untitled sub-map" : "Untitled map");
     if (parentMapId) state.updateMap(created.id, { parentMapId });
@@ -134,7 +163,7 @@ export function MapsView({ tabId }: { tabId?: string | undefined } = {}) {
         state.openTab({ module: "maps", title: next.name, entityId: next.id });
       }}
       onCreateMap={createMap}
-      inspectorActive={(tabId ?? state.activeTabId) === state.activeTabId}
+      inspectorActive={isActiveView}
     />
   );
 }
@@ -217,39 +246,23 @@ function CanvasEditor({
     setInspectorHost(document.getElementById("map-inspector-panel"));
   }, [inspectorActive]);
   useEffect(() => {
-    setNodes((current) =>
-      current.map((flowNode) => {
-        const canvasNode = map.nodes.find((entry) => entry.id === flowNode.id);
-        if (!canvasNode) return flowNode;
-        if (canvasNode.diorna?.nodeType !== "note") {
-          if (flowNode.data.node === canvasNode) return flowNode;
-          return { ...flowNode, data: { ...flowNode.data, node: canvasNode } };
-        }
-        const note = notes.find((entry) => entry.path === canvasNode.file);
-        const linked = note ? linkedNotePreview(note) : undefined;
-        if (
-          flowNode.data.node === canvasNode &&
-          flowNode.data.note?.id === linked?.id &&
-          flowNode.data.note?.title === linked?.title &&
-          flowNode.data.note?.body === linked?.body &&
-          flowNode.data.note?.updatedAt === linked?.updatedAt
-        )
-          return flowNode;
-        const { note: _previousNote, ...data } = flowNode.data;
-        return {
-          ...flowNode,
-          data: {
-            ...data,
-            node: canvasNode,
-            ...(linked ? { note: linked } : {}),
-          },
-        };
-      }),
+    setNodes(
+      toFlowNodes(map.nodes, notes).map((node) => ({
+        ...node,
+        selected: selectedNodesRef.current.includes(node.id),
+      })),
     );
-  }, [map.nodes, notes, setNodes]);
+    setEdges(
+      map.edges.map((edge) => ({
+        ...toFlowEdge(edge),
+        selected: selectedEdgesRef.current.includes(edge.id),
+      })),
+    );
+  }, [map.edges, map.nodes, notes, setEdges, setNodes]);
 
   const persist = useCallback(
     (canvasNodes: CanvasNode[], canvasEdges: CanvasEdge[], record = true) => {
+      const uniqueEdges = dedupeCanvasEdges(canvasEdges);
       setNodes(
         toFlowNodes(canvasNodes, notes).map((node) => ({
           ...node,
@@ -257,15 +270,15 @@ function CanvasEditor({
         })),
       );
       setEdges(
-        canvasEdges.map((edge) => ({
+        uniqueEdges.map((edge) => ({
           ...toFlowEdge(edge),
           selected: selectedEdgesRef.current.includes(edge.id),
         })),
       );
-      state.updateMap(map.id, { nodes: canvasNodes, edges: canvasEdges });
+      state.updateMap(map.id, { nodes: canvasNodes, edges: uniqueEdges });
       if (!record) return;
       history.current = history.current.slice(0, historyIndex.current + 1);
-      history.current.push({ nodes: canvasNodes, edges: canvasEdges });
+      history.current.push({ nodes: canvasNodes, edges: uniqueEdges });
       if (history.current.length > 101) history.current.shift();
       historyIndex.current = history.current.length - 1;
     },
@@ -342,6 +355,39 @@ function CanvasEditor({
     },
     [map.edges, map.nodes, persist],
   );
+  useEffect(() => {
+    const createConnectedNode = (event: Event) => {
+      const detail = (
+        event as CustomEvent<{
+          sourceId: string;
+          handleId: string;
+          clientX: number;
+          clientY: number;
+        }>
+      ).detail;
+      if (!map.nodes.some((node) => node.id === detail.sourceId)) return;
+      const created = addNode(
+        "text",
+        flowRef.current?.screenToFlowPosition({ x: detail.clientX, y: detail.clientY }),
+      );
+      persist(
+        [...map.nodes, created],
+        [
+          ...map.edges,
+          {
+            id: createId("edge"),
+            fromNode: detail.sourceId,
+            toNode: created.id,
+            ...connectionSides(detail.handleId),
+            diorna: { routing: "bezier", arrowheads: "one-way" },
+          },
+        ],
+      );
+    };
+    window.addEventListener("diorna:create-connected-map-node", createConnectedNode);
+    return () =>
+      window.removeEventListener("diorna:create-connected-map-node", createConnectedNode);
+  }, [addNode, map.edges, map.nodes, persist]);
 
   const addAttachments = useCallback(
     (attachments: ImportedAttachment[], position?: { x: number; y: number }) => {
@@ -933,6 +979,8 @@ function CanvasEditor({
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={(connection: Connection) => {
+            if (!connection.source || !connection.target || connection.source === connection.target)
+              return;
             const next = addEdge(
               {
                 ...connection,
@@ -945,15 +993,14 @@ function CanvasEditor({
             commitFlow(nodesRef.current, next);
           }}
           onConnectEnd={(event, connectionState) => {
-            if (connectionState.toNode || !connectionState.fromNode) return;
-            const pointer =
-              "clientX" in event
-                ? { x: event.clientX, y: event.clientY }
-                : {
-                    x: event.changedTouches[0]?.clientX ?? 0,
-                    y: event.changedTouches[0]?.clientY ?? 0,
-                  };
+            if (connectionState.toNode || !connectionState.fromNode || !("changedTouches" in event))
+              return;
+            const pointer = {
+              x: event.changedTouches[0]?.clientX ?? 0,
+              y: event.changedTouches[0]?.clientY ?? 0,
+            };
             const created = addNode("text", flowRef.current?.screenToFlowPosition(pointer));
+            const sides = connectionSides(connectionState.fromHandle?.id);
             persist(
               [...map.nodes, created],
               [
@@ -962,6 +1009,7 @@ function CanvasEditor({
                   id: createId("edge"),
                   fromNode: connectionState.fromNode.id,
                   toNode: created.id,
+                  ...sides,
                   diorna: { routing: "bezier", arrowheads: "one-way" },
                 },
               ],
@@ -972,6 +1020,17 @@ function CanvasEditor({
             const edgeIds = chosenEdges.map((edge) => edge.id);
             setSelectedNodes((current) => (sameIds(current, nodeIds) ? current : nodeIds));
             setSelectedEdges((current) => (sameIds(current, edgeIds) ? current : edgeIds));
+          }}
+          onEdgeClick={(event, edge) => {
+            event.stopPropagation();
+            window.setTimeout(() => {
+              setSelectedNodes([]);
+              setSelectedEdges([edge.id]);
+              setNodes((current) => current.map((entry) => ({ ...entry, selected: false })));
+              setEdges((current) =>
+                current.map((entry) => ({ ...entry, selected: entry.id === edge.id })),
+              );
+            }, 0);
           }}
           onNodeDrag={(_, node) => {
             const others = nodesRef.current.filter((entry) => entry.id !== node.id);
@@ -1063,6 +1122,9 @@ function CanvasEditor({
                 if (!event.ctrlKey && !state.rightPanelOpen) state.toggleRightPanel();
                 state.openTab({ module: "notes", title: note.title, entityId: note.id });
               }
+            } else if (node?.diorna?.nodeType === "link" && node.url) {
+              const target = normalizeExternalUrl(node.url);
+              if (target) void openExternalUrl(target);
             }
           }}
           onDragOver={(event) => {
@@ -1084,16 +1146,50 @@ function CanvasEditor({
             }
             const noteId = event.dataTransfer.getData("text/diorna-note");
             const note = notes.find((entry) => entry.id === noteId);
-            if (note) addNode("note", position, { file: note.path, text: note.title });
+            if (note) {
+              addNode("note", position, { file: note.path, text: note.title });
+              return;
+            }
+            const droppedUrl =
+              event.dataTransfer
+                .getData("text/uri-list")
+                .split(/\r?\n/)
+                .find((line) => line && !line.startsWith("#")) ??
+              event.dataTransfer.getData("text/plain");
+            if (!isStandaloneUrl(droppedUrl)) return;
+            const url = normalizeExternalUrl(droppedUrl);
+            if (!url) return;
+            const created = addNode("link", position, {
+              type: "link",
+              url,
+              text: safeHost(url),
+            });
+            void loadMapLinkPreview(url, map.workspaceId)
+              .then((preview) =>
+                updateNode(created.id, {
+                  text: preview.title,
+                  diorna: {
+                    linkTitle: preview.title,
+                    linkDescription: preview.description,
+                    linkSiteName: preview.siteName,
+                    linkImage: preview.imageUrl,
+                    linkImageFile: preview.imageRelativePath,
+                    favicon: preview.faviconUrl,
+                    faviconFile: preview.faviconRelativePath,
+                    linkFetchedAt: preview.fetchedAt,
+                  },
+                }),
+              )
+              .catch(() => undefined);
           }}
           fitView
           minZoom={0.1}
           maxZoom={4}
           snapToGrid={snap}
           snapGrid={[gridSize, gridSize]}
-          selectionOnDrag
+          selectionOnDrag={false}
           panOnScroll
-          panOnDrag={[1, 2]}
+          panOnDrag={[0, 1, 2]}
           panActivationKeyCode="Space"
           zoomActivationKeyCode="Control"
           zoomOnScroll={false}
@@ -1134,7 +1230,8 @@ function CanvasEditor({
               {...(selectedNode ? { node: selectedNode } : {})}
               {...(selectedEdge ? { edge: selectedEdge } : {})}
               notes={notes}
-              linkPreviewEnabled={state.settings.linkPreviewEnabled}
+              workspaceId={map.workspaceId}
+              linkPreviewEnabled
               onUpdateNode={updateNode}
               onUpdateEdge={(id, changes) =>
                 persist(
@@ -1218,6 +1315,7 @@ function MapInspector({
   node,
   edge,
   notes,
+  workspaceId,
   linkPreviewEnabled,
   onUpdateNode,
   onUpdateEdge,
@@ -1231,6 +1329,7 @@ function MapInspector({
   node?: CanvasNode;
   edge?: CanvasEdge;
   notes: DiornaNote[];
+  workspaceId: string;
   linkPreviewEnabled: boolean;
   onUpdateNode: (id: string, changes: Partial<CanvasNode>) => void;
   onUpdateEdge: (id: string, changes: Partial<CanvasEdge>) => void;
@@ -1241,6 +1340,43 @@ function MapInspector({
   onFit: () => void;
   onDelete: () => void;
 }) {
+  const [previewStatus, setPreviewStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [previewError, setPreviewError] = useState("");
+
+  const refreshLinkPreview = async (force = false, candidate = node?.url ?? "") => {
+    if (!node || !candidate) return;
+    const url = normalizeExternalUrl(candidate);
+    if (!url) {
+      setPreviewStatus("error");
+      setPreviewError("Enter a valid public http(s) URL.");
+      return;
+    }
+    setPreviewStatus("loading");
+    setPreviewError("");
+    try {
+      const preview = await loadMapLinkPreview(url, workspaceId, force);
+      onUpdateNode(node.id, {
+        type: "link",
+        url,
+        text: preview.title,
+        diorna: {
+          linkTitle: preview.title,
+          linkDescription: preview.description,
+          linkSiteName: preview.siteName,
+          linkImage: preview.imageUrl,
+          linkImageFile: preview.imageRelativePath,
+          favicon: preview.faviconUrl,
+          faviconFile: preview.faviconRelativePath,
+          linkFetchedAt: preview.fetchedAt,
+        },
+      });
+      setPreviewStatus("idle");
+    } catch (error) {
+      setPreviewStatus("error");
+      setPreviewError(error instanceof Error ? error.message : "Preview unavailable.");
+    }
+  };
+
   if (edge && !node)
     return (
       <aside className="map-inspector edge-inspector" aria-label="Edge inspector">
@@ -1254,7 +1390,7 @@ function MapInspector({
         <input
           aria-label="Edge color"
           type="color"
-          value={edge.color ?? "#7a8090"}
+          value={edge.color ?? "#3F6495"}
           onChange={(event) => onUpdateEdge(edge.id, { color: event.target.value })}
         />
         <input
@@ -1402,31 +1538,97 @@ function MapInspector({
           onChange={(event) => onUpdateNode(node.id, { url: event.target.value })}
         />
       ) : nodeType === "link" ? (
-        <input
-          aria-label="Link URL"
-          placeholder="https://"
-          value={node.url ?? ""}
-          onChange={(event) =>
-            onUpdateNode(node.id, {
-              type: "link",
-              url: event.target.value,
-              diorna: {
-                linkTitle: "",
-                linkDescription: "",
-                favicon: "",
-                linkFetchedAt: "",
-              },
-            })
-          }
-          onBlur={(event) => {
-            if (!linkPreviewEnabled || !event.target.value || node.diorna?.linkFetchedAt) return;
-            void loadLinkPreview(event.target.value).then((preview) =>
+        <div className="map-link-editor">
+          <input
+            aria-label="Link URL"
+            placeholder="https://"
+            value={node.url ?? ""}
+            onChange={(event) =>
               onUpdateNode(node.id, {
-                diorna: { ...preview, linkFetchedAt: new Date().toISOString() },
-              }),
-            );
-          }}
-        />
+                type: "link",
+                url: event.target.value,
+                diorna: {
+                  linkTitle: "",
+                  linkDescription: "",
+                  linkSiteName: "",
+                  linkImage: "",
+                  linkImageFile: "",
+                  favicon: "",
+                  faviconFile: "",
+                  linkFetchedAt: "",
+                },
+              })
+            }
+            onBlur={(event) => {
+              if (!linkPreviewEnabled || !event.currentTarget.value || node.diorna?.linkFetchedAt)
+                return;
+              void refreshLinkPreview(false, event.currentTarget.value);
+            }}
+          />
+          <div className="map-link-actions">
+            <button
+              className="button"
+              disabled={!node.url}
+              onClick={() => {
+                const target = normalizeExternalUrl(node.url ?? "");
+                if (target) void openExternalUrl(target);
+              }}
+            >
+              <ExternalLink /> Open
+            </button>
+            <button
+              className="button"
+              disabled={!node.url}
+              onClick={() => node.url && void navigator.clipboard.writeText(node.url)}
+            >
+              <Copy /> Copy
+            </button>
+            <button
+              className="button"
+              disabled={!node.url || previewStatus === "loading"}
+              onClick={() => void refreshLinkPreview(true)}
+            >
+              <RefreshCw className={previewStatus === "loading" ? "spin" : ""} />
+              {previewStatus === "loading" ? "Loading" : "Refresh"}
+            </button>
+          </div>
+          {previewStatus === "error" && (
+            <small className="map-link-error" role="status">
+              {previewError}
+            </small>
+          )}
+          {!linkPreviewEnabled && (
+            <small className="map-link-hint">Automatic previews are disabled in Settings.</small>
+          )}
+        </div>
+      ) : nodeType === "text" ? (
+        <>
+          <select
+            aria-label="Text card style"
+            value={node.diorna?.textStyle ?? "body"}
+            onChange={(event) => {
+              const textStyle = event.target.value as NonNullable<
+                NonNullable<CanvasNode["diorna"]>["textStyle"]
+              >;
+              const size = textCardSize(textStyle);
+              onUpdateNode(node.id, {
+                ...size,
+                diorna: { textStyle },
+              });
+            }}
+          >
+            <option value="body">Body</option>
+            <option value="title">Title · oval</option>
+            <option value="subtitle">Subtitle</option>
+            <option value="label">Label · pill</option>
+            <option value="quote">Quote</option>
+          </select>
+          <textarea
+            aria-label="Node text"
+            value={node.text ?? node.label ?? ""}
+            onChange={(event) => onUpdateNode(node.id, { text: event.target.value })}
+          />
+        </>
       ) : (
         <textarea
           aria-label="Node text"
@@ -1463,7 +1665,7 @@ function MapInspector({
         <input
           aria-label="Node border color"
           type="color"
-          value={node.diorna?.borderColor ?? "#b8bbc2"}
+          value={node.diorna?.borderColor ?? "#B9AC8D"}
           onChange={(event) =>
             onUpdateNode(node.id, { diorna: { borderColor: event.target.value } })
           }
@@ -1558,9 +1760,18 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
         />
       ))}
       <div
-        className={`canvas-card type-${type} ${node.diorna?.collapsed ? "collapsed" : ""}`}
+        className={`canvas-card type-${type} ${type === "text" ? `text-style-${node.diorna?.textStyle ?? "body"}` : ""} ${node.diorna?.collapsed ? "collapsed" : ""}`}
         data-media-name={isMapMediaType(type) ? title : undefined}
       >
+        {!node.diorna?.collapsed && type === "link" && node.diorna?.linkImage && (
+          <img
+            className="canvas-link-image"
+            src={node.diorna.linkImage}
+            alt=""
+            draggable={false}
+            onDragStart={(event) => event.preventDefault()}
+          />
+        )}
         {type !== "image" && (
           <header>
             <span>
@@ -1570,7 +1781,12 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
                 (node.diorna?.icon ?? nodeIcon(type))
               )}
             </span>
-            <strong>{title}</strong>
+            <div className="canvas-card-title">
+              {type === "link" && node.diorna?.linkSiteName && (
+                <small>{node.diorna.linkSiteName}</small>
+              )}
+              <strong>{title}</strong>
+            </div>
           </header>
         )}
         {!node.diorna?.collapsed && type === "image" && mediaSource && (
@@ -1625,6 +1841,35 @@ function CanvasCardNode({ id, data, selected }: NodeProps<MapFlowNode>) {
           type="source"
           position={position}
           id={`source-${position}`}
+          onMouseDown={(event) => {
+            const startX = event.clientX;
+            const startY = event.clientY;
+            const handleUp = (upEvent: MouseEvent) => {
+              window.removeEventListener("mouseup", handleUp);
+              if (Math.hypot(upEvent.clientX - startX, upEvent.clientY - startY) < 4) return;
+              if (
+                !document
+                  .elementFromPoint(upEvent.clientX, upEvent.clientY)
+                  ?.classList.contains("react-flow__pane")
+              )
+                return;
+              window.setTimeout(
+                () =>
+                  window.dispatchEvent(
+                    new CustomEvent("diorna:create-connected-map-node", {
+                      detail: {
+                        sourceId: id,
+                        handleId: `source-${position}`,
+                        clientX: upEvent.clientX,
+                        clientY: upEvent.clientY,
+                      },
+                    }),
+                  ),
+                80,
+              );
+            };
+            window.addEventListener("mouseup", handleUp);
+          }}
         />
       ))}
     </>
@@ -1683,6 +1928,7 @@ function renderInlineMarkdown(value: string) {
 
 function toFlowNode(node: CanvasNode, notes: DiornaNote[]): MapFlowNode {
   const note = notes.find((entry) => entry.path === node.file);
+  const textStyle = node.diorna?.textStyle ?? "body";
   return {
     id: node.id,
     type: "diorna",
@@ -1693,7 +1939,12 @@ function toFlowNode(node: CanvasNode, notes: DiornaNote[]): MapFlowNode {
       height: node.diorna?.collapsed ? 44 : node.height,
       background: palette[Math.max(0, Number(node.color ?? "6") - 1)] ?? palette[5],
       border: `${node.diorna?.borderWidth ?? 1}px solid ${node.diorna?.borderColor ?? "rgba(40,45,60,.18)"}`,
-      borderRadius: node.diorna?.nodeType === "group" ? 5 : 10,
+      borderRadius:
+        node.diorna?.nodeType === "group"
+          ? 5
+          : node.diorna?.nodeType === "text" && (textStyle === "title" || textStyle === "label")
+            ? 999
+            : 10,
       padding: 0,
       overflow: "visible",
       zIndex: node.diorna?.nodeType === "group" ? -1 : 0,
@@ -1780,6 +2031,20 @@ function toFlowNodes(nodes: CanvasNode[], notes: DiornaNote[]): MapFlowNode[] {
     ),
   }));
 }
+function dedupeCanvasEdges(edges: CanvasEdge[]): CanvasEdge[] {
+  const signatures = new Set<string>();
+  return edges.filter((edge) => {
+    const signature = JSON.stringify({
+      fromNode: edge.fromNode,
+      toNode: edge.toNode,
+      label: edge.label,
+      color: edge.color,
+    });
+    if (signatures.has(signature)) return false;
+    signatures.add(signature);
+    return true;
+  });
+}
 
 function fromFlowNode(node: MapFlowNode, original?: CanvasNode): CanvasNode {
   return {
@@ -1805,6 +2070,9 @@ function toFlowEdge(edge: CanvasEdge): Edge {
         : edge.diorna?.routing === "orthogonal"
           ? "step"
           : "default",
+    interactionWidth: 24,
+    selectable: true,
+    focusable: true,
     ...(arrowheads === "bidirectional"
       ? {
           markerStart: {
@@ -1822,7 +2090,7 @@ function toFlowEdge(edge: CanvasEdge): Edge {
         }
       : {}),
     style: {
-      stroke: edge.color ?? "#7a8090",
+      stroke: edge.color ?? "#3F6495",
       strokeWidth: edge.diorna?.width ?? 1.5,
       strokeDasharray:
         edge.diorna?.lineStyle === "dashed"
@@ -1891,7 +2159,7 @@ function canvasToSvg(nodes: CanvasNode[], edges: CanvasEdge[], transparent: bool
       const to = byId.get(edge.toNode);
       return from && to
         ? [
-            `<line x1="${from.x + from.width / 2 - minX}" y1="${from.y + from.height / 2 - minY}" x2="${to.x + to.width / 2 - minX}" y2="${to.y + to.height / 2 - minY}" stroke="${escapeXml(edge.color ?? "#7a8090")}" stroke-width="${edge.diorna?.width ?? 1.5}"/>`,
+            `<line x1="${from.x + from.width / 2 - minX}" y1="${from.y + from.height / 2 - minY}" x2="${to.x + to.width / 2 - minX}" y2="${to.y + to.height / 2 - minY}" stroke="${escapeXml(edge.color ?? "#3F6495")}" stroke-width="${edge.diorna?.width ?? 1.5}"/>`,
           ]
         : [];
     })
@@ -1899,7 +2167,7 @@ function canvasToSvg(nodes: CanvasNode[], edges: CanvasEdge[], transparent: bool
   const cards = nodes
     .map(
       (node) =>
-        `<g transform="translate(${node.x - minX} ${node.y - minY})"><rect width="${node.width}" height="${node.height}" rx="10" fill="${palette[Math.max(0, Number(node.color ?? "6") - 1)] ?? "#e3e7ee"}" stroke="${escapeXml(node.diorna?.borderColor ?? "#b8bbc2")}"/><text x="14" y="27" font-family="Segoe UI, sans-serif" font-size="14" font-weight="600" fill="#24262b">${escapeXml((node.text ?? node.label ?? "Untitled").split("\n")[0]!)}</text><text x="14" y="51" font-family="Segoe UI, sans-serif" font-size="11" fill="#555a63">${escapeXml((node.text ?? "").split("\n").slice(1).join(" ").slice(0, 90))}</text></g>`,
+        `<g transform="translate(${node.x - minX} ${node.y - minY})"><rect width="${node.width}" height="${node.height}" rx="10" fill="${palette[Math.max(0, Number(node.color ?? "6") - 1)] ?? "#f3efe0"}" stroke="${escapeXml(node.diorna?.borderColor ?? "#b9ac8d")}"/><text x="14" y="27" font-family="Segoe UI, sans-serif" font-size="14" font-weight="600" fill="#3f6495">${escapeXml((node.text ?? node.label ?? "Untitled").split("\n")[0]!)}</text><text x="14" y="51" font-family="Segoe UI, sans-serif" font-size="11" fill="#536f91">${escapeXml((node.text ?? "").split("\n").slice(1).join(" ").slice(0, 90))}</text></g>`,
     )
     .join("");
   const background = transparent ? "" : '<rect width="100%" height="100%" fill="white"/>';
@@ -1944,6 +2212,17 @@ function defaultMapNodeSize(type: MapNodeType): { width: number; height: number 
   if (type === "pdf") return { width: 380, height: 360 };
   if (type === "audio") return { width: 320, height: 120 };
   if (type === "file") return { width: 260, height: 100 };
+  if (type === "link") return { width: 300, height: 230 };
+  return { width: 220, height: 110 };
+}
+function textCardSize(style: NonNullable<NonNullable<CanvasNode["diorna"]>["textStyle"]>): {
+  width: number;
+  height: number;
+} {
+  if (style === "title") return { width: 280, height: 72 };
+  if (style === "subtitle") return { width: 250, height: 86 };
+  if (style === "label") return { width: 170, height: 54 };
+  if (style === "quote") return { width: 280, height: 130 };
   return { width: 220, height: 110 };
 }
 function nodeIcon(type: MapNodeType) {
@@ -1956,36 +2235,6 @@ function nodeIcon(type: MapNodeType) {
   if (type === "link") return "🔗";
   if (type === "group") return "▣";
   return type === "submap" ? "↳" : "◆";
-}
-function safeHost(value: string) {
-  try {
-    return new URL(value).host;
-  } catch {
-    return value;
-  }
-}
-async function loadLinkPreview(url: string) {
-  try {
-    const response = await fetch(url, { headers: { Accept: "text/html" } });
-    if (!response.ok) throw new Error(String(response.status));
-    const html = await response.text();
-    const document = new DOMParser().parseFromString(html.slice(0, 500_000), "text/html");
-    const title =
-      document.querySelector('meta[property="og:title"]')?.getAttribute("content") ??
-      document.title;
-    const description =
-      document.querySelector('meta[property="og:description"]')?.getAttribute("content") ??
-      document.querySelector('meta[name="description"]')?.getAttribute("content") ??
-      "";
-    const icon = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.href;
-    return {
-      ...(title ? { linkTitle: title.slice(0, 160) } : {}),
-      ...(description ? { linkDescription: description.slice(0, 400) } : {}),
-      ...(icon ? { favicon: new URL(icon, url).href } : {}),
-    };
-  } catch {
-    return { linkTitle: safeHost(url), linkDescription: url };
-  }
 }
 function escapeXml(value: string) {
   return value.replace(
@@ -2000,4 +2249,12 @@ function downloadBlob(blob: Blob, name: string) {
   link.download = name;
   link.click();
   window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+async function loadMapLinkPreview(url: string, workspaceId: string, force = false) {
+  try {
+    return await loadLinkPreview(url, workspaceId, force);
+  } catch (error) {
+    if (force) throw error;
+    return loadLinkPreview(url, workspaceId, true);
+  }
 }

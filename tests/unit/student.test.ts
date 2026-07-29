@@ -74,7 +74,7 @@ describe("student authoring", () => {
   });
   it("imports BibTeX", () => {
     const refs = parseBibTeX(
-      "@article{smith2026,\n title={Local First},\n author={Smith, Jane and Doe, John},\n year={2026},\n journal={Tools}\n}",
+      "@article{smith2026,\n title={Local First},\n author={Smith, Jane and Doe, John},\n year={2026},\n journal={Tools},\n doi={10.1/local},\n url={https://example.test/local}\n}",
     );
     expect(refs[0]).toMatchObject({
       citationKey: "smith2026",
@@ -82,6 +82,8 @@ describe("student authoring", () => {
       authors: ["Smith, Jane", "Doe, John"],
       year: 2026,
       container: "Tools",
+      doi: "10.1/local",
+      url: "https://example.test/local",
     });
   });
   it("imports Zotero CSL JSON", () => {
@@ -120,6 +122,14 @@ describe("student authoring", () => {
     expect(text).toContain("Paper");
     expect(text).toContain("2026");
   });
+  it.each(["apa", "ieee", "harvard"] as const)(
+    "formats sparse %s references with explicit fallbacks",
+    (style) => {
+      expect(
+        formatReference({ id: "2", citationKey: "unknown", title: "Untitled", authors: [] }, style),
+      ).toContain("Unknown");
+    },
+  );
 });
 
 function cardsToNote() {

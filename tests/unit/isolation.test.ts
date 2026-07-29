@@ -17,6 +17,14 @@ const entityTypes = [
   "reference",
   "flashcard",
   "review-log",
+  "training-activity",
+  "training-exercise",
+  "training-template",
+  "training-session",
+  "project",
+  "goal",
+  "focus-priority",
+  "focus-session",
   "recap",
 ];
 

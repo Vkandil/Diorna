@@ -24,6 +24,8 @@ import yaml from "highlight.js/lib/languages/yaml";
 import latex from "highlight.js/lib/languages/latex";
 import {
   AlertCircle,
+  Copy,
+  ExternalLink,
   File,
   FileAudio,
   FileImage,
@@ -31,9 +33,14 @@ import {
   FileVideo,
   GripVertical,
   Layers3,
+  Link2,
+  RefreshCw,
+  Type,
 } from "lucide-react";
 import "katex/dist/katex.min.css";
 import { PdfAttachmentViewer } from "./PdfAttachmentViewer";
+import { loadLinkPreview, safeHost, type LinkPreviewData } from "@/core/linkPreview";
+import { openExternalUrl } from "@/core/native";
 
 mermaid.initialize({
   startOnLoad: false,
@@ -94,6 +101,186 @@ export const WikiLink = Node.create({
     ];
   },
 });
+
+export const LinkPreviewBlock = Node.create({
+  name: "linkPreviewBlock",
+  group: "block",
+  atom: true,
+  draggable: false,
+  addAttributes() {
+    const dataAttribute = (name: string, fallback = "") => ({
+      default: fallback,
+      parseHTML: (element: HTMLElement) => element.getAttribute(`data-${name}`) ?? fallback,
+      renderHTML: (attributes: Record<string, unknown>) => ({
+        [`data-${name}`]: String(attributes[toCamelCase(name)] ?? fallback),
+      }),
+    });
+    return {
+      previewId: dataAttribute("preview-id"),
+      workspaceId: dataAttribute("workspace-id"),
+      url: dataAttribute("url"),
+      finalUrl: dataAttribute("final-url"),
+      title: dataAttribute("title"),
+      description: dataAttribute("description"),
+      siteName: dataAttribute("site-name"),
+      imageUrl: dataAttribute("image-url"),
+      imageRelativePath: dataAttribute("image-relative-path"),
+      faviconUrl: dataAttribute("favicon-url"),
+      faviconRelativePath: dataAttribute("favicon-relative-path"),
+      fetchedAt: dataAttribute("fetched-at"),
+      autoFetch: {
+        default: true,
+        parseHTML: (element) => element.getAttribute("data-auto-fetch") !== "false",
+        renderHTML: (attributes) => ({ "data-auto-fetch": String(attributes.autoFetch !== false) }),
+      },
+    };
+  },
+  parseHTML() {
+    return [{ tag: 'figure[data-type="link-preview"]' }];
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ["figure", mergeAttributes(HTMLAttributes, { "data-type": "link-preview" })];
+  },
+  addNodeView() {
+    return ReactNodeViewRenderer(LinkPreviewView);
+  },
+});
+
+function LinkPreviewView({ node, updateAttributes, selected, editor, getPos }: NodeViewProps) {
+  const url = String(node.attrs.url ?? "");
+  const [status, setStatus] = useState<"idle" | "loading" | "error">("idle");
+  const [error, setError] = useState("");
+  const dragHandle = useAttachmentPointerDrag({
+    editor,
+    getPos,
+    title: String(node.attrs.title || safeHost(url) || "link"),
+  });
+  const apply = (preview: LinkPreviewData) =>
+    updateAttributes({
+      finalUrl: preview.finalUrl,
+      title: preview.title,
+      description: preview.description,
+      siteName: preview.siteName,
+      imageUrl: preview.imageUrl,
+      imageRelativePath: preview.imageRelativePath,
+      faviconUrl: preview.faviconUrl,
+      faviconRelativePath: preview.faviconRelativePath,
+      fetchedAt: preview.fetchedAt,
+    });
+  const refresh = (force = false) => {
+    if (!url) return;
+    setStatus("loading");
+    setError("");
+    void loadLinkPreview(url, String(node.attrs.workspaceId ?? ""), force)
+      .then((preview) => {
+        apply(preview);
+        setStatus("idle");
+      })
+      .catch((value: unknown) => {
+        setStatus("error");
+        setError(value instanceof Error ? value.message : "Preview unavailable");
+      });
+  };
+  useEffect(() => {
+    if (!url || node.attrs.fetchedAt || node.attrs.autoFetch === false) return;
+    refresh();
+    // Fetch once when a new card is inserted; updates are explicit after that.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+  const title = String(node.attrs.title || safeHost(url) || "External link");
+  const target = String(node.attrs.finalUrl || url);
+  const convertToText = () => {
+    if (typeof getPos !== "function") return;
+    const position = getPos();
+    if (typeof position !== "number") return;
+    const link = editor.schema.marks.link?.create({
+      href: target,
+      rel: "noopener noreferrer",
+    });
+    const paragraph = editor.schema.nodes.paragraph?.create(
+      null,
+      editor.schema.text(title, link ? [link] : undefined),
+    );
+    if (paragraph)
+      editor.view.dispatch(
+        editor.state.tr.replaceWith(position, position + node.nodeSize, paragraph).scrollIntoView(),
+      );
+  };
+  return (
+    <NodeViewWrapper
+      as="figure"
+      className={`attachment-node link-preview-node ${selected ? "selected" : ""}`}
+      data-status={status}
+    >
+      <AttachmentDragHandle {...dragHandle} />
+      {node.attrs.imageUrl ? (
+        <img className="link-preview-image" src={String(node.attrs.imageUrl)} alt="" />
+      ) : (
+        <div className="link-preview-image placeholder" aria-hidden="true">
+          <Link2 />
+        </div>
+      )}
+      <div className="link-preview-copy">
+        <small>
+          {node.attrs.faviconUrl && <img src={String(node.attrs.faviconUrl)} alt="" />}
+          {String(node.attrs.siteName || safeHost(target))}
+        </small>
+        <strong>{title}</strong>
+        {node.attrs.description && <p>{String(node.attrs.description)}</p>}
+        <span>{safeHost(target)}</span>
+      </div>
+      <div className="link-preview-actions" contentEditable={false}>
+        <button
+          type="button"
+          title="Open link"
+          aria-label={`Open ${title}`}
+          onClick={() => void openExternalUrl(target)}
+        >
+          <ExternalLink />
+        </button>
+        <button
+          type="button"
+          title="Copy link"
+          aria-label={`Copy ${title} link`}
+          onClick={() => void navigator.clipboard.writeText(target)}
+        >
+          <Copy />
+        </button>
+        <button
+          type="button"
+          title="Refresh preview"
+          aria-label={`Refresh ${title} preview`}
+          disabled={status === "loading"}
+          onClick={() => refresh(true)}
+        >
+          <RefreshCw className={status === "loading" ? "spin" : ""} />
+        </button>
+        <button
+          type="button"
+          title="Convert to text link"
+          aria-label={`Convert ${title} to a text link`}
+          onClick={convertToText}
+        >
+          <Type />
+        </button>
+      </div>
+      {status === "loading" && (
+        <span className="link-preview-status" role="status">
+          Loading preview…
+        </span>
+      )}
+      {status === "error" && (
+        <button className="link-preview-status error" onClick={() => refresh(true)}>
+          {error || "Preview unavailable"} · Retry
+        </button>
+      )}
+    </NodeViewWrapper>
+  );
+}
+
+function toCamelCase(value: string): string {
+  return value.replace(/-([a-z])/g, (_, character: string) => character.toUpperCase());
+}
 
 export const CodeBlock = CodeBlockLowlight.extend({
   addAttributes() {

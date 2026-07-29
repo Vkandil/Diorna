@@ -1,4 +1,5 @@
 use std::{
+    borrow::Cow,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -12,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{
     Row, SqlitePool,
+    migrate::{Migration, MigrationType, Migrator},
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
 use uuid::Uuid;
@@ -19,15 +21,13 @@ use walkdir::WalkDir;
 
 use crate::error::{DiornaError, Result};
 
-static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
-
 #[derive(Clone)]
 pub struct Vault {
     pub root: PathBuf,
     pub pool: SqlitePool,
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceRecord {
     pub id: String,
@@ -36,6 +36,19 @@ pub struct WorkspaceRecord {
     pub folder_name: String,
     pub sort_order: i64,
     pub created_at: String,
+}
+
+impl<'row> sqlx::FromRow<'row, sqlx::sqlite::SqliteRow> for WorkspaceRecord {
+    fn from_row(row: &'row sqlx::sqlite::SqliteRow) -> std::result::Result<Self, sqlx::Error> {
+        Ok(Self {
+            id: row.try_get("id")?,
+            name: row.try_get("name")?,
+            color: row.try_get("color")?,
+            folder_name: row.try_get("folder_name")?,
+            sort_order: row.try_get("sort_order")?,
+            created_at: row.try_get("created_at")?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -162,7 +175,7 @@ impl Vault {
                 "The SQLite index was corrupt and has been archived; rebuilding file-backed content"
             );
         }
-        MIGRATOR.run(&pool).await?;
+        embedded_migrator().run(&pool).await?;
         seed_defaults(&pool).await?;
         ensure_workspace_layout(&root, &pool).await?;
         let vault = Self { root, pool };
@@ -180,8 +193,8 @@ impl Vault {
                 &settings,
                 br##"{
   "language": "en",
-  "theme": "system",
-  "accentColor": "#5b5bd6",
+  "theme": "diorna",
+  "accentColor": "#1D518A",
   "minimizeToTray": true,
   "updateEnabled": true,
   "telemetry": false
@@ -802,6 +815,58 @@ impl Vault {
     }
 }
 
+fn embedded_migrator() -> Migrator {
+    Migrator {
+        migrations: Cow::Owned(vec![
+            Migration::new(
+                1,
+                Cow::Borrowed("initial"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0001_initial.sql")),
+                false,
+            ),
+            Migration::new(
+                2,
+                Cow::Borrowed("workspace kind"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0002_workspace_kind.sql")),
+                false,
+            ),
+            Migration::new(
+                3,
+                Cow::Borrowed("study templates"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0003_study_templates.sql")),
+                false,
+            ),
+            Migration::new(
+                4,
+                Cow::Borrowed("training"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0004_training.sql")),
+                false,
+            ),
+            Migration::new(
+                5,
+                Cow::Borrowed("projects"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0005_projects.sql")),
+                false,
+            ),
+            Migration::new(
+                6,
+                Cow::Borrowed("focus"),
+                MigrationType::Simple,
+                Cow::Borrowed(include_str!("../migrations/0006_focus.sql")),
+                false,
+            ),
+        ]),
+        ignore_missing: false,
+        locking: true,
+        no_tx: false,
+    }
+}
+
 async fn connect_database(path: &Path) -> Result<SqlitePool> {
     let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.to_string_lossy()))?
         .create_if_missing(true)
@@ -989,11 +1054,11 @@ async fn seed_defaults(pool: &SqlitePool) -> Result<()> {
     }
     let now = Utc::now().to_rfc3339();
     for (id, name, color, folder, order) in [
-        ("workspace-student", "Student", "#5b5bd6", "Student", 0_i64),
+        ("workspace-student", "Student", "#1D518A", "Student", 0_i64),
         (
             "workspace-personal",
             "Personal",
-            "#168a68",
+            "#7C8E58",
             "Personal",
             1_i64,
         ),
@@ -1011,8 +1076,15 @@ async fn seed_defaults(pool: &SqlitePool) -> Result<()> {
         ),
     ];
     for (workspace, names) in groups {
+        let colors: &[&str] = if workspace.ends_with("student") {
+            &["#1D518A", "#DAA343", "#C66542", "#3F6495", "#7C8E58"]
+        } else {
+            &[
+                "#3F6495", "#1D518A", "#7C8E58", "#7C8E58", "#C66542", "#DAA343",
+            ]
+        };
         for (index, name) in names.iter().enumerate() {
-            sqlx::query("INSERT OR IGNORE INTO category(id, workspace_id, name, color, icon, sort_order) VALUES(?, ?, ?, ?, 'Tag', ?)").bind(format!("{workspace}-{}", name.to_lowercase())).bind(workspace).bind(name).bind(if workspace.ends_with("student") { "#5b5bd6" } else { "#168a68" }).bind(index as i64).execute(pool).await?;
+            sqlx::query("INSERT OR IGNORE INTO category(id, workspace_id, name, color, icon, sort_order) VALUES(?, ?, ?, ?, 'Tag', ?)").bind(format!("{workspace}-{}", name.to_lowercase())).bind(workspace).bind(name).bind(colors[index]).bind(index as i64).execute(pool).await?;
         }
     }
     Ok(())

@@ -7,15 +7,23 @@ import type {
   Category,
   Course,
   Flashcard,
+  FocusPriority,
+  FocusSession,
   Habit,
   HabitEntry,
   Metric,
   MetricEntry,
   Note,
+  Goal,
+  Project,
   Recap,
   ReferenceRecord,
   ReviewLog,
   StudyTemplate,
+  TrainingActivity,
+  TrainingExercise,
+  TrainingSession,
+  TrainingTemplate,
   Workspace,
 } from "@/shared/models";
 
@@ -64,6 +72,41 @@ export interface ImportedAttachment {
   displayUrl: string;
   size: number;
   name: string;
+}
+
+interface NativeLinkPreview {
+  url: string;
+  finalUrl: string;
+  title: string;
+  description: string;
+  siteName: string;
+  imageUrl: string;
+  imageRelativePath: string;
+  imageAbsolutePath: string;
+  faviconUrl: string;
+  faviconRelativePath: string;
+  faviconAbsolutePath: string;
+  fetchedAt: string;
+}
+
+export async function fetchNativeLinkPreview(url: string, workspaceId: string) {
+  const preview = await invoke<NativeLinkPreview>("fetch_link_preview", { url, workspaceId });
+  return {
+    url: preview.url,
+    finalUrl: preview.finalUrl,
+    title: preview.title,
+    description: preview.description,
+    siteName: preview.siteName,
+    imageUrl: preview.imageAbsolutePath
+      ? convertFileSrc(preview.imageAbsolutePath)
+      : preview.imageUrl,
+    imageRelativePath: preview.imageRelativePath,
+    faviconUrl: preview.faviconAbsolutePath
+      ? convertFileSrc(preview.faviconAbsolutePath)
+      : preview.faviconUrl,
+    faviconRelativePath: preview.faviconRelativePath,
+    fetchedAt: preview.fetchedAt,
+  };
 }
 
 interface SavedAttachment {
@@ -266,6 +309,14 @@ export interface StructuredSnapshot {
   habitEntries: HabitEntry[];
   metrics: Metric[];
   metricEntries: MetricEntry[];
+  projects: Project[];
+  goals: Goal[];
+  focusPriorities: FocusPriority[];
+  focusSessions: FocusSession[];
+  trainingActivities: TrainingActivity[];
+  trainingExercises: TrainingExercise[];
+  trainingTemplates: TrainingTemplate[];
+  trainingSessions: TrainingSession[];
   recaps: Recap[];
 }
 
@@ -355,6 +406,20 @@ export async function readNativeFileContent(): Promise<
             convertFileSrc(`${vault.path}/${workspace.folderName}/${relative}`),
           );
         }
+        for (const preview of document.querySelectorAll<HTMLElement>(
+          "figure[data-type='link-preview']",
+        )) {
+          const imageRelativePath = preview.dataset.imageRelativePath ?? "";
+          const faviconRelativePath = preview.dataset.faviconRelativePath ?? "";
+          if (imageRelativePath.startsWith("attachments/"))
+            preview.dataset.imageUrl = convertFileSrc(
+              `${vault.path}/${workspace.folderName}/${imageRelativePath}`,
+            );
+          if (faviconRelativePath.startsWith("attachments/"))
+            preview.dataset.faviconUrl = convertFileSrc(
+              `${vault.path}/${workspace.folderName}/${faviconRelativePath}`,
+            );
+        }
       }
       return { ...note, body: document.body.innerHTML };
     }),
@@ -364,18 +429,28 @@ export async function readNativeFileContent(): Promise<
       if (!workspace || !vault) return map;
       return {
         ...map,
-        nodes: map.nodes.map((node) =>
-          node.type === "file" && node.file?.startsWith("attachments/")
-            ? {
-                ...node,
-                url: convertFileSrc(`${vault.path}/${workspace.folderName}/${node.file}`),
-                diorna: {
-                  ...node.diorna,
-                  nodeType: node.diorna?.nodeType ?? attachmentCanvasNodeType(node.file),
-                },
-              }
-            : node,
-        ),
+        nodes: map.nodes.map((node) => {
+          const hydrated =
+            node.type === "file" && node.file?.startsWith("attachments/")
+              ? {
+                  ...node,
+                  url: convertFileSrc(`${vault.path}/${workspace.folderName}/${node.file}`),
+                  diorna: {
+                    ...node.diorna,
+                    nodeType: node.diorna?.nodeType ?? attachmentCanvasNodeType(node.file),
+                  },
+                }
+              : { ...node, diorna: { ...node.diorna } };
+          if (node.diorna?.linkImageFile?.startsWith("attachments/"))
+            hydrated.diorna.linkImage = convertFileSrc(
+              `${vault.path}/${workspace.folderName}/${node.diorna.linkImageFile}`,
+            );
+          if (node.diorna?.faviconFile?.startsWith("attachments/"))
+            hydrated.diorna.favicon = convertFileSrc(
+              `${vault.path}/${workspace.folderName}/${node.diorna.faviconFile}`,
+            );
+          return hydrated;
+        }),
       };
     }),
   };
@@ -513,6 +588,14 @@ function portableNoteHtml(html: string): string {
   )) {
     if (media.dataset.relativePath) media.setAttribute("src", media.dataset.relativePath);
   }
+  for (const preview of document.querySelectorAll<HTMLElement>(
+    "figure[data-type='link-preview']",
+  )) {
+    if (preview.dataset.imageRelativePath)
+      preview.dataset.imageUrl = preview.dataset.imageRelativePath;
+    if (preview.dataset.faviconRelativePath)
+      preview.dataset.faviconUrl = preview.dataset.faviconRelativePath;
+  }
   return document.body.innerHTML;
 }
 
@@ -549,9 +632,13 @@ export async function persistNativeCanvas(map: CanvasMap): Promise<void> {
         relativePath: map.path.replace(/^maps[\\/]/, ""),
         canvasJson: JSON.stringify({
           nodes: map.nodes.map((node) => {
-            if (node.type !== "file" || !node.file?.startsWith("attachments/")) return node;
-            const portable = { ...node };
-            delete portable.url;
+            const portable = {
+              ...node,
+              ...(node.diorna ? { diorna: { ...node.diorna } } : {}),
+            };
+            if (node.type === "file" && node.file?.startsWith("attachments/")) delete portable.url;
+            if (portable.diorna?.linkImageFile) delete portable.diorna.linkImage;
+            if (portable.diorna?.faviconFile) delete portable.diorna.favicon;
             return portable;
           }),
           edges: map.edges,

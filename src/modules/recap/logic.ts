@@ -6,14 +6,20 @@ import type {
   CanvasMap,
   Course,
   Flashcard,
+  FocusSession,
   Habit,
   HabitEntry,
   Metric,
   MetricEntry,
   Note,
+  Project,
   RecapStatistics,
   ReviewLog,
+  TrainingActivity,
+  TrainingSession,
 } from "@/shared/models";
+import { sessionDistance, sessionDurationMinutes, sessionVolume } from "@/modules/training/logic";
+import { focusPeriodStats } from "@/modules/focus/logic";
 
 export interface RecapInput {
   workspaceId: string;
@@ -30,6 +36,10 @@ export interface RecapInput {
   flashcards: Flashcard[];
   reviewLogs: ReviewLog[];
   courses: Course[];
+  trainingActivities?: TrainingActivity[];
+  trainingSessions?: TrainingSession[];
+  projects?: Project[];
+  focusSessions?: FocusSession[];
   categoryNames: Record<string, string>;
 }
 
@@ -95,6 +105,27 @@ export function recapTransmissionPayload(
       courses: {},
     },
     flashcards: { ...stats.flashcards, courses: [] },
+    ...(stats.training
+      ? {
+          training: {
+            ...stats.training,
+            byActivity: Object.fromEntries(
+              Object.values(stats.training.byActivity).map((value, index) => [
+                `Activity ${index + 1}`,
+                value,
+              ]),
+            ),
+          },
+        }
+      : {}),
+    ...(stats.projects
+      ? {
+          projects: {
+            ...stats.projects,
+            completedNames: [],
+          },
+        }
+      : {}),
     ...(stats.monthlyRecaps
       ? {
           monthlyRecaps: stats.monthlyRecaps.map((month) => ({
@@ -235,6 +266,84 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
 
   const best = sorted[0];
   const worst = sorted.at(-1);
+  const allTrainingSessions = (input.trainingSessions ?? []).filter(
+    (session) => session.status === "completed",
+  );
+  const trainingSessions = allTrainingSessions.filter((session) =>
+    inRange(session.startedAt, input.periodStart, input.periodEnd),
+  );
+  const previousTrainingSessions = allTrainingSessions.filter((session) =>
+    inRange(session.startedAt, previousStart, previousEnd),
+  );
+  const activityNames = new Map(
+    (input.trainingActivities ?? []).map((activity) => [activity.id, activity.name]),
+  );
+  const trainingByActivity: Record<string, number> = {};
+  const distanceByUnit: Record<string, number> = {};
+  trainingSessions.forEach((session) => {
+    const name = activityNames.get(session.activityId) ?? "Training";
+    trainingByActivity[name] = (trainingByActivity[name] ?? 0) + 1;
+    Object.entries(sessionDistance(session)).forEach(([unit, distance]) => {
+      distanceByUnit[unit] = round((distanceByUnit[unit] ?? 0) + distance);
+    });
+  });
+  const previousExerciseBest = new Map<string, number>();
+  allTrainingSessions
+    .filter((session) => session.startedAt.slice(0, 10) < input.periodStart)
+    .forEach((session) =>
+      session.results.forEach((result) => {
+        const bestLoad =
+          result.loadMode === "assisted" ||
+          result.loadMode === "bodyweight" ||
+          result.loadMode === "none"
+            ? 0
+            : Math.max(0, ...result.sets.map((set) => set.load ?? 0));
+        previousExerciseBest.set(
+          result.exerciseId,
+          Math.max(previousExerciseBest.get(result.exerciseId) ?? 0, bestLoad),
+        );
+      }),
+    );
+  const currentExerciseBest = new Map<string, number>();
+  trainingSessions.forEach((session) =>
+    session.results.forEach((result) => {
+      const bestLoad =
+        result.loadMode === "assisted" ||
+        result.loadMode === "bodyweight" ||
+        result.loadMode === "none"
+          ? 0
+          : Math.max(0, ...result.sets.map((set) => set.load ?? 0));
+      currentExerciseBest.set(
+        result.exerciseId,
+        Math.max(currentExerciseBest.get(result.exerciseId) ?? 0, bestLoad),
+      );
+    }),
+  );
+  const projects = (input.projects ?? []).filter((project) => !project.archived);
+  const focus = focusPeriodStats(input.focusSessions ?? [], input.periodStart, input.periodEnd);
+  const previousFocus = focusPeriodStats(input.focusSessions ?? [], previousStart, previousEnd);
+  const completedProjects = projects.filter((project) =>
+    inRange(project.completedAt, input.periodStart, input.periodEnd),
+  );
+  const previousCompletedProjects = projects.filter((project) =>
+    inRange(project.completedAt, previousStart, previousEnd),
+  );
+  const activeProjects = projects.filter((project) =>
+    ["planned", "active", "on-hold"].includes(project.status),
+  );
+  const projectTasks = input.items.filter(
+    (item) =>
+      item.kind === "task" &&
+      Boolean(item.projectId) &&
+      !item.trashedAt &&
+      (inRange(item.completedAt, input.periodStart, input.periodEnd) ||
+        inRange(item.dueAt, input.periodStart, input.periodEnd)),
+  );
+  const completedProjectTasks = projectTasks.filter((item) => item.completedAt);
+  const projectKinds: Record<string, number> = {};
+  activeProjects.forEach((project) => {
+    projectKinds[project.kind] = (projectKinds[project.kind] ?? 0) + 1;
+  });
   const stats: RecapStatistics = {
     workspaceId: input.workspaceId,
     periodStart: input.periodStart,
@@ -313,6 +422,55 @@ export function aggregateRecap(input: RecapInput): RecapStatistics {
       streak: longestReviewStreak(reviewed.map((log) => log.reviewedAt)),
       courses: reviewedCourses,
     },
+    training: {
+      sessions: trainingSessions.length,
+      previousSessions: previousTrainingSessions.length,
+      durationMinutes: trainingSessions.reduce(
+        (sum, session) => sum + sessionDurationMinutes(session),
+        0,
+      ),
+      previousDurationMinutes: previousTrainingSessions.reduce(
+        (sum, session) => sum + sessionDurationMinutes(session),
+        0,
+      ),
+      volume: round(trainingSessions.reduce((sum, session) => sum + sessionVolume(session), 0)),
+      distanceByUnit,
+      byActivity: trainingByActivity,
+      personalRecords: [...currentExerciseBest].filter(
+        ([exerciseId, value]) => value > (previousExerciseBest.get(exerciseId) ?? 0),
+      ).length,
+    },
+    projects: {
+      active: activeProjects.length,
+      completed: completedProjects.length,
+      previousCompleted: previousCompletedProjects.length,
+      atRisk: activeProjects.filter((project) => project.health !== "on-track").length,
+      milestonesCompleted: projects.reduce(
+        (sum, project) =>
+          sum +
+          project.milestones.filter((milestone) =>
+            inRange(milestone.completedAt, input.periodStart, input.periodEnd),
+          ).length,
+        0,
+      ),
+      tasksCompleted: completedProjectTasks.length,
+      taskCompletionRate: projectTasks.length
+        ? Math.round((completedProjectTasks.length / projectTasks.length) * 100)
+        : null,
+      byKind: projectKinds,
+      completedNames: completedProjects.map((project) => project.name),
+    },
+    focus: {
+      sessions: focus.sessions,
+      previousSessions: previousFocus.sessions,
+      plannedMinutes: focus.plannedMinutes,
+      actualMinutes: focus.actualMinutes,
+      previousActualMinutes: previousFocus.actualMinutes,
+      completedAsPlanned: focus.completedAsPlanned,
+      focusRating: focus.averageRating,
+      distractions: focus.distractions,
+      byMode: focus.byMode,
+    },
     dailyScores,
   };
   void durationDays;
@@ -341,6 +499,15 @@ export function buildTemplateNarrative(stats: RecapStatistics, workspaceName: st
     stats.habits.overallRate === null
       ? "**Habits.** No applicable habits were tracked in this period."
       : `**Habits.** Overall completion was ${stats.habits.overallRate}%${habitDelta === null ? "" : habitDelta === 0 ? ", unchanged from the previous period" : `, ${habitDelta > 0 ? "up" : "down"} ${Math.abs(habitDelta)} points`}. ${stats.habits.best ? `Strongest: ${stats.habits.best.name} at ${stats.habits.best.rate}%.` : ""}${stats.habits.worst ? ` Weakest: ${stats.habits.worst.name} at ${stats.habits.worst.rate}%.` : ""}`;
+  const trainingLine = stats.training?.sessions
+    ? `**Training.** You completed ${stats.training.sessions} session${stats.training.sessions === 1 ? "" : "s"} over ${stats.training.durationMinutes} minutes${stats.training.volume ? `, with ${stats.training.volume} total strength volume` : ""}.${stats.training.personalRecords ? ` ${stats.training.personalRecords} exercise record${stats.training.personalRecords === 1 ? "" : "s"} improved.` : ""}`
+    : "**Training.** No completed training sessions were recorded in this period.";
+  const projectLine = stats.projects
+    ? `**Projects.** ${stats.projects.active} active, ${stats.projects.completed} completed and ${stats.projects.atRisk} needing attention. ${stats.projects.milestonesCompleted} milestone${stats.projects.milestonesCompleted === 1 ? "" : "s"} and ${stats.projects.tasksCompleted} linked task${stats.projects.tasksCompleted === 1 ? "" : "s"} were completed.${stats.projects.completedNames.length ? ` Finished: ${stats.projects.completedNames.join(", ")}.` : ""}`
+    : "";
+  const focusLine = stats.focus
+    ? `**Focus.** You protected ${stats.focus.actualMinutes} minutes across ${stats.focus.sessions} completed session${stats.focus.sessions === 1 ? "" : "s"}, compared with ${stats.focus.plannedMinutes} minutes planned.${stats.focus.focusRating === null ? "" : ` Average focus quality was ${stats.focus.focusRating}/5.`} ${stats.focus.distractions} distraction${stats.focus.distractions === 1 ? " was" : "s were"} captured rather than acted on immediately.`
+    : "";
   return [
     `# ${stats.periodStart} to ${stats.periodEnd} — ${workspaceName}`,
     `**Tasks.** You completed ${stats.tasks.completed} task${stats.tasks.completed === 1 ? "" : "s"}, ${Math.abs(taskDelta)} ${taskDelta >= 0 ? "more" : "fewer"} than the previous period. ${stats.tasks.onTime} were completed on time.`,
@@ -348,6 +515,9 @@ export function buildTemplateNarrative(stats: RecapStatistics, workspaceName: st
     ...eventLines,
     ...metricLines,
     habitLine,
+    ...(projectLine ? [projectLine] : []),
+    ...(focusLine ? [focusLine] : []),
+    trainingLine,
     `**Knowledge work.** You created ${stats.notes.created} notes, edited ${stats.notes.edited}, and added ${stats.notes.wordsWritten} words. You created ${stats.maps.created} maps containing ${stats.maps.nodesCreated} nodes.`,
     ...(stats.flashcards.reviewed
       ? [

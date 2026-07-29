@@ -4,6 +4,20 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool, Transaction};
 
 use crate::error::{DiornaError, Result};
 
+macro_rules! impl_sqlite_from_row {
+    ($record:ty { $($field:ident),+ $(,)? }) => {
+        impl<'row> sqlx::FromRow<'row, sqlx::sqlite::SqliteRow> for $record {
+            fn from_row(
+                row: &'row sqlx::sqlite::SqliteRow,
+            ) -> std::result::Result<Self, sqlx::Error> {
+                Ok(Self {
+                    $($field: row.try_get(stringify!($field))?,)+
+                })
+            }
+        }
+    };
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct StructuredSnapshot {
@@ -23,10 +37,26 @@ pub struct StructuredSnapshot {
     pub habit_entries: Vec<HabitEntry>,
     pub metrics: Vec<Metric>,
     pub metric_entries: Vec<MetricEntry>,
+    #[serde(default)]
+    pub projects: Vec<Value>,
+    #[serde(default)]
+    pub goals: Vec<Value>,
+    #[serde(default)]
+    pub focus_priorities: Vec<Value>,
+    #[serde(default)]
+    pub focus_sessions: Vec<Value>,
+    #[serde(default)]
+    pub training_activities: Vec<Value>,
+    #[serde(default)]
+    pub training_exercises: Vec<Value>,
+    #[serde(default)]
+    pub training_templates: Vec<Value>,
+    #[serde(default)]
+    pub training_sessions: Vec<Value>,
     pub recaps: Vec<Recap>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Workspace {
     id: String,
@@ -38,7 +68,7 @@ pub struct Workspace {
     created_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Category {
     id: String,
@@ -49,7 +79,7 @@ pub struct Category {
     sort_order: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Course {
     id: String,
@@ -64,7 +94,7 @@ pub struct Course {
     sort_order: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StudyTemplate {
     id: String,
@@ -76,7 +106,7 @@ pub struct StudyTemplate {
     sort_order: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Flashcard {
     id: String,
@@ -94,7 +124,7 @@ pub struct Flashcard {
     last_reviewed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewLog {
     id: String,
@@ -120,7 +150,7 @@ pub struct Reference {
     url: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Item {
     id: String,
@@ -138,6 +168,12 @@ pub struct Item {
     subtasks: Value,
     note_id: Option<String>,
     course_id: Option<String>,
+    #[serde(default)]
+    project_id: Option<String>,
+    #[serde(default)]
+    training_template_id: Option<String>,
+    #[serde(default)]
+    training_session_id: Option<String>,
     source_note_line: Option<i64>,
     rrule: Option<String>,
     rrule_exceptions: Value,
@@ -177,7 +213,7 @@ pub struct HabitEntry {
     note: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Metric {
     id: String,
@@ -189,7 +225,7 @@ pub struct Metric {
     sort_order: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MetricEntry {
     workspace_id: String,
@@ -220,6 +256,84 @@ pub struct LoadedStructuredState {
     pub initialized: bool,
     pub snapshot: StructuredSnapshot,
 }
+
+impl_sqlite_from_row!(Workspace {
+    id,
+    name,
+    color,
+    folder_name,
+    sort_order,
+    kind,
+    created_at,
+});
+impl_sqlite_from_row!(Category {
+    id,
+    workspace_id,
+    name,
+    color,
+    icon,
+    sort_order,
+});
+impl_sqlite_from_row!(Course {
+    id,
+    workspace_id,
+    name,
+    code,
+    color,
+    semester,
+    instructor,
+    credits,
+    schedule,
+    sort_order,
+});
+impl_sqlite_from_row!(StudyTemplate {
+    id,
+    workspace_id,
+    name,
+    body,
+    built_in,
+    default_course_id,
+    sort_order,
+});
+impl_sqlite_from_row!(Flashcard {
+    id,
+    workspace_id,
+    note_id,
+    block_id,
+    front,
+    back,
+    card_type,
+    ease,
+    interval_days,
+    due_date,
+    reps,
+    lapses,
+    last_reviewed_at,
+});
+impl_sqlite_from_row!(ReviewLog {
+    id,
+    workspace_id,
+    flashcard_id,
+    reviewed_at,
+    grade,
+    interval_before,
+    interval_after,
+});
+impl_sqlite_from_row!(Metric {
+    id,
+    workspace_id,
+    name,
+    unit,
+    category_id,
+    target,
+    sort_order,
+});
+impl_sqlite_from_row!(MetricEntry {
+    workspace_id,
+    metric_id,
+    date,
+    value,
+});
 
 pub async fn persist(pool: &SqlitePool, snapshot: StructuredSnapshot) -> Result<()> {
     let mut tx = pool.begin().await?;
@@ -309,12 +423,13 @@ pub async fn persist(pool: &SqlitePool, snapshot: StructuredSnapshot) -> Result<
             value.course_id.as_deref(),
         )
         .await?;
-        sqlx::query("INSERT INTO item(id,workspace_id,kind,title,description,category_id,start_at,end_at,all_day,due_at,completed_at,priority,subtasks_json,rrule,rrule_exceptions,note_id,course_id,source_note_line,created_at,updated_at,trashed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,title=excluded.title,description=excluded.description,category_id=excluded.category_id,start_at=excluded.start_at,end_at=excluded.end_at,all_day=excluded.all_day,due_at=excluded.due_at,completed_at=excluded.completed_at,priority=excluded.priority,subtasks_json=excluded.subtasks_json,rrule=excluded.rrule,rrule_exceptions=excluded.rrule_exceptions,note_id=excluded.note_id,course_id=excluded.course_id,source_note_line=excluded.source_note_line,updated_at=excluded.updated_at,trashed_at=excluded.trashed_at")
+        sqlx::query("INSERT INTO item(id,workspace_id,kind,title,description,category_id,start_at,end_at,all_day,due_at,completed_at,priority,subtasks_json,rrule,rrule_exceptions,note_id,course_id,project_id,training_template_id,training_session_id,source_note_line,created_at,updated_at,trashed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET kind=excluded.kind,title=excluded.title,description=excluded.description,category_id=excluded.category_id,start_at=excluded.start_at,end_at=excluded.end_at,all_day=excluded.all_day,due_at=excluded.due_at,completed_at=excluded.completed_at,priority=excluded.priority,subtasks_json=excluded.subtasks_json,rrule=excluded.rrule,rrule_exceptions=excluded.rrule_exceptions,note_id=excluded.note_id,course_id=excluded.course_id,project_id=excluded.project_id,training_template_id=excluded.training_template_id,training_session_id=excluded.training_session_id,source_note_line=excluded.source_note_line,updated_at=excluded.updated_at,trashed_at=excluded.trashed_at")
             .bind(&value.id).bind(&value.workspace_id).bind(&value.kind).bind(&value.title)
             .bind(&value.description).bind(&value.category_id).bind(&value.start_at).bind(&value.end_at)
             .bind(value.all_day).bind(&value.due_at).bind(&value.completed_at).bind(&value.priority)
             .bind(json_text(&value.subtasks)?).bind(&value.rrule)
-            .bind(json_text(&value.rrule_exceptions)?).bind(note_id).bind(course_id).bind(value.source_note_line)
+            .bind(json_text(&value.rrule_exceptions)?).bind(note_id).bind(course_id).bind(&value.project_id)
+            .bind(&value.training_template_id).bind(&value.training_session_id).bind(value.source_note_line)
             .bind(&value.created_at).bind(&value.updated_at).bind(&value.trashed_at).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM item_reminder WHERE workspace_id=? AND item_id=?")
             .bind(&value.workspace_id)
@@ -359,6 +474,14 @@ pub async fn persist(pool: &SqlitePool, snapshot: StructuredSnapshot) -> Result<
             .bind(&value.workspace_id).bind(&value.metric_id).bind(&value.date).bind(value.value)
             .execute(&mut *tx).await?;
     }
+    persist_json_entities(&mut tx, "training_activity", &snapshot.training_activities).await?;
+    persist_json_entities(&mut tx, "training_exercise", &snapshot.training_exercises).await?;
+    persist_json_entities(&mut tx, "training_template", &snapshot.training_templates).await?;
+    persist_json_entities(&mut tx, "training_session", &snapshot.training_sessions).await?;
+    persist_json_entities(&mut tx, "project", &snapshot.projects).await?;
+    persist_json_entities(&mut tx, "goal", &snapshot.goals).await?;
+    persist_json_entities(&mut tx, "focus_priority", &snapshot.focus_priorities).await?;
+    persist_json_entities(&mut tx, "focus_session", &snapshot.focus_sessions).await?;
     for value in &snapshot.recaps {
         if existing_id(&mut tx, "note", &value.workspace_id, Some(&value.note_id))
             .await?
@@ -432,6 +555,38 @@ pub async fn persist(pool: &SqlitePool, snapshot: StructuredSnapshot) -> Result<
     Ok(())
 }
 
+async fn persist_json_entities(
+    tx: &mut Transaction<'_, Sqlite>,
+    table: &str,
+    values: &[Value],
+) -> Result<()> {
+    let mut ids = Vec::with_capacity(values.len());
+    for value in values {
+        let id = value
+            .get("id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| DiornaError::InvalidData(format!("{table} entity is missing id")))?;
+        let workspace_id = value
+            .get("workspaceId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                DiornaError::InvalidData(format!("{table} entity is missing workspaceId"))
+            })?;
+        let payload = json_text(value)?;
+        sqlx::query(&format!(
+            "INSERT INTO {table}(id,workspace_id,payload_json) VALUES(?,?,?) \
+             ON CONFLICT(id) DO UPDATE SET workspace_id=excluded.workspace_id,payload_json=excluded.payload_json"
+        ))
+        .bind(id)
+        .bind(workspace_id)
+        .bind(payload)
+        .execute(&mut **tx)
+        .await?;
+        ids.push(id);
+    }
+    delete_missing_ids(tx, table, ids.into_iter()).await
+}
+
 async fn delete_missing_ids<'a>(
     tx: &mut Transaction<'_, Sqlite>,
     table: &str,
@@ -498,7 +653,7 @@ pub async fn load(pool: &SqlitePool) -> Result<LoadedStructuredState> {
             .push(row.get("minutes_before"));
     }
     let mut items = Vec::new();
-    for row in sqlx::query("SELECT id,workspace_id,kind,title,description,category_id,start_at,end_at,all_day,due_at,completed_at,priority,subtasks_json,note_id,course_id,source_note_line,rrule,rrule_exceptions,created_at,updated_at,trashed_at FROM item ORDER BY created_at")
+    for row in sqlx::query("SELECT id,workspace_id,kind,title,description,category_id,start_at,end_at,all_day,due_at,completed_at,priority,subtasks_json,note_id,course_id,project_id,training_template_id,training_session_id,source_note_line,rrule,rrule_exceptions,created_at,updated_at,trashed_at FROM item ORDER BY created_at")
         .fetch_all(pool).await? {
         let id: String = row.get("id");
         items.push(Item {
@@ -509,7 +664,8 @@ pub async fn load(pool: &SqlitePool) -> Result<LoadedStructuredState> {
             start_at: row.get("start_at"), end_at: row.get("end_at"), all_day: row.get::<i64,_>("all_day") != 0,
             due_at: row.get("due_at"), completed_at: row.get("completed_at"), priority: row.get("priority"),
             subtasks: parse_json(row.get::<String,_>("subtasks_json"))?, note_id: row.get("note_id"),
-            course_id: row.get("course_id"), source_note_line: row.get("source_note_line"), rrule: row.get("rrule"),
+            course_id: row.get("course_id"), project_id: row.get("project_id"), training_template_id: row.get("training_template_id"),
+            training_session_id: row.get("training_session_id"), source_note_line: row.get("source_note_line"), rrule: row.get("rrule"),
             rrule_exceptions: parse_json(row.get::<String,_>("rrule_exceptions"))?,
             created_at: row.get("created_at"), updated_at: row.get("updated_at"), trashed_at: row.get("trashed_at"),
         });
@@ -551,6 +707,14 @@ pub async fn load(pool: &SqlitePool) -> Result<LoadedStructuredState> {
             model_used: row.get("model_used"), generated_at: row.get("generated_at"), revision: row.get("revision"),
         });
     }
+    let training_activities = load_json_entities(pool, "training_activity").await?;
+    let training_exercises = load_json_entities(pool, "training_exercise").await?;
+    let training_templates = load_json_entities(pool, "training_template").await?;
+    let training_sessions = load_json_entities(pool, "training_session").await?;
+    let projects = load_json_entities(pool, "project").await?;
+    let goals = load_json_entities(pool, "goal").await?;
+    let focus_priorities = load_json_entities(pool, "focus_priority").await?;
+    let focus_sessions = load_json_entities(pool, "focus_session").await?;
     Ok(LoadedStructuredState {
         initialized,
         snapshot: StructuredSnapshot {
@@ -566,9 +730,26 @@ pub async fn load(pool: &SqlitePool) -> Result<LoadedStructuredState> {
             habit_entries,
             metrics,
             metric_entries,
+            projects,
+            goals,
+            focus_priorities,
+            focus_sessions,
+            training_activities,
+            training_exercises,
+            training_templates,
+            training_sessions,
             recaps,
         },
     })
+}
+
+async fn load_json_entities(pool: &SqlitePool, table: &str) -> Result<Vec<Value>> {
+    let rows = sqlx::query(&format!("SELECT payload_json FROM {table} ORDER BY rowid"))
+        .fetch_all(pool)
+        .await?;
+    rows.into_iter()
+        .map(|row| parse_json(row.get::<String, _>("payload_json")))
+        .collect()
 }
 
 fn json_text(value: &Value) -> Result<String> {
@@ -638,6 +819,9 @@ mod tests {
                 subtasks: serde_json::json!([]),
                 note_id: None,
                 course_id: None,
+                project_id: Some("project-test".into()),
+                training_template_id: Some("training-template-test".into()),
+                training_session_id: Some("training-session-test".into()),
                 source_note_line: None,
                 rrule: None,
                 rrule_exceptions: serde_json::json!([]),
@@ -690,6 +874,53 @@ mod tests {
                 doi: None,
                 url: None,
             }],
+            training_activities: vec![serde_json::json!({
+                "id": "training-activity-test",
+                "workspaceId": "workspace-personal",
+                "name": "Strength",
+                "kind": "strength"
+            })],
+            training_exercises: vec![serde_json::json!({
+                "id": "training-exercise-test",
+                "workspaceId": "workspace-personal",
+                "activityId": "training-activity-test",
+                "name": "Leg curl"
+            })],
+            training_templates: vec![serde_json::json!({
+                "id": "training-template-test",
+                "workspaceId": "workspace-personal",
+                "activityId": "training-activity-test",
+                "name": "Leg day"
+            })],
+            training_sessions: vec![serde_json::json!({
+                "id": "training-session-test",
+                "workspaceId": "workspace-personal",
+                "activityId": "training-activity-test",
+                "status": "completed"
+            })],
+            projects: vec![serde_json::json!({
+                "id": "project-test",
+                "workspaceId": "workspace-personal",
+                "name": "Launch"
+            })],
+            goals: vec![serde_json::json!({
+                "id": "goal-test",
+                "workspaceId": "workspace-personal",
+                "title": "Build a business"
+            })],
+            focus_priorities: vec![serde_json::json!({
+                "id": "focus-priority-test",
+                "workspaceId": "workspace-personal",
+                "title": "Ship the launch page",
+                "date": "2026-07-22"
+            })],
+            focus_sessions: vec![serde_json::json!({
+                "id": "focus-session-test",
+                "workspaceId": "workspace-personal",
+                "title": "Launch deep work",
+                "status": "completed",
+                "elapsedSeconds": 3000
+            })],
             ..StructuredSnapshot::default()
         };
         persist(&vault.pool, snapshot).await.unwrap();
@@ -698,10 +929,29 @@ mod tests {
         assert_eq!(loaded.snapshot.items.len(), 1);
         assert_eq!(loaded.snapshot.items[0].reminders, vec![15]);
         assert_eq!(loaded.snapshot.items[0].id, "item-training");
+        assert_eq!(
+            loaded.snapshot.items[0].training_template_id.as_deref(),
+            Some("training-template-test")
+        );
         assert_eq!(loaded.snapshot.templates[0].id, "template-test");
         assert_eq!(loaded.snapshot.flashcards[0].id, "card-test");
         assert_eq!(loaded.snapshot.review_logs[0].grade, "good");
         assert_eq!(loaded.snapshot.references[0].citation_key, "smith2026");
+        assert_eq!(
+            loaded.snapshot.training_sessions[0]["id"],
+            "training-session-test"
+        );
+        assert_eq!(
+            loaded.snapshot.items[0].project_id.as_deref(),
+            Some("project-test")
+        );
+        assert_eq!(loaded.snapshot.projects[0]["name"], "Launch");
+        assert_eq!(loaded.snapshot.goals[0]["title"], "Build a business");
+        assert_eq!(
+            loaded.snapshot.focus_priorities[0]["title"],
+            "Ship the launch page"
+        );
+        assert_eq!(loaded.snapshot.focus_sessions[0]["elapsedSeconds"], 3000);
 
         persist(
             &vault.pool,
@@ -719,6 +969,14 @@ mod tests {
         assert!(reconciled.snapshot.flashcards.is_empty());
         assert!(reconciled.snapshot.review_logs.is_empty());
         assert!(reconciled.snapshot.references.is_empty());
+        assert!(reconciled.snapshot.training_activities.is_empty());
+        assert!(reconciled.snapshot.training_exercises.is_empty());
+        assert!(reconciled.snapshot.training_templates.is_empty());
+        assert!(reconciled.snapshot.training_sessions.is_empty());
+        assert!(reconciled.snapshot.projects.is_empty());
+        assert!(reconciled.snapshot.goals.is_empty());
+        assert!(reconciled.snapshot.focus_priorities.is_empty());
+        assert!(reconciled.snapshot.focus_sessions.is_empty());
     }
 }
 

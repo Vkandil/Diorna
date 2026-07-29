@@ -127,6 +127,10 @@ function aggregateForWorkspace(
     flashcards: selectWorkspace(state.flashcards, workspaceId),
     reviewLogs: selectWorkspace(state.reviewLogs, workspaceId),
     courses: selectWorkspace(state.courses, workspaceId),
+    trainingActivities: selectWorkspace(state.trainingActivities, workspaceId),
+    trainingSessions: selectWorkspace(state.trainingSessions, workspaceId),
+    projects: selectWorkspace(state.projects, workspaceId),
+    focusSessions: selectWorkspace(state.focusSessions, workspaceId),
     categoryNames: Object.fromEntries(categories.map((category) => [category.id, category.name])),
   });
 }

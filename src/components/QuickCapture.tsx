@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { CheckSquare, Inbox, Tag, X } from "lucide-react";
 import { useDiornaStore } from "@/core/store";
+import { BrandLogo } from "./BrandLogo";
 
 export function QuickCapture({ onClose }: { onClose: () => void }) {
   const [value, setValue] = useState("");
@@ -45,7 +46,7 @@ export function QuickCapture({ onClose }: { onClose: () => void }) {
     <div className="capture-layer">
       <div className="quick-capture">
         <div className="capture-title">
-          <span className="brand-mark small">D</span>
+          <BrandLogo className="capture-brand-logo" />
           <strong>Quick capture</strong>
           <button onClick={onClose}>
             <X size={15} />

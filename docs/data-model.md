@@ -20,6 +20,9 @@ cross-workspace joins.
 | Study     | course, flashcard, review log, reference | SQLite; cards link to notes |
 | Planning  | item, reminder, category                 | SQLite                      |
 | Daily     | habit, habit entry, metric, metric entry | SQLite                      |
+| Direction | project, goal, project links and updates | SQLite JSON aggregates      |
+| Training  | activity, exercise, template, session    | SQLite JSON aggregates      |
+| Focus     | priority, session, distraction, review   | SQLite JSON aggregates      |
 | Reports   | recap and revision metadata              | SQLite + generated note     |
 
 Items use one entity with kind `task` or `event`; recurrence is RFC 5545 RRULE
@@ -27,6 +30,22 @@ plus exception JSON. Habits have checkbox/quantity type, weekday bitmask, date
 bounds, optional target, and immutable history when archived. Flashcards store
 SM-2 ease, interval, due date, repetition/lapse counts, and an append-only
 review log.
+
+Projects and goals are versioned JSON aggregates in SQLite, each carrying
+`workspaceId`. A project holds milestones, update entries and ID lists for
+linked Notes, Maps, habits and Training activities. Calendar `item` has the
+nullable `project_id` column. Deleting a project detaches Calendar items and
+does not delete source resources. Progress is derived at read time from
+milestones, project tasks or a metric, so cached percentages cannot go stale.
+
+Focus priorities and sessions are versioned JSON aggregates carrying
+`workspaceId`. A priority stores a local date, order, planned duration and an
+optional typed source reference. A session stores planned minutes,
+`elapsedSeconds` and `timerStartedAt`; the live elapsed value is derived at read
+time so navigation or restart cannot reset the timer. Distractions and the
+review are embedded evidence owned by the session. Calendar reservation is a
+normal item referenced by `calendarItemId`; deleting either side does not
+cascade into the user's source work.
 
 ## Vault layout
 
@@ -43,6 +62,8 @@ file representation.
 ## Migrations and recovery
 
 Migrations are numbered, forward-only, and applied transactionally by sqlx.
+Migration `0005_projects.sql` adds project/goal aggregates and Calendar links.
+Migration `0006_focus.sql` adds Focus priorities and sessions.
 Vault startup takes a backup before schema work. A failed migration does not
 replace the old database. Files are atomic-replaced; lock/hash conflicts are
 reported rather than silently merged. Trash manifests retain original paths

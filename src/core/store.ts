@@ -9,6 +9,10 @@ import type {
   Course,
   Flashcard,
   FlashcardGrade,
+  FocusDistraction,
+  FocusPriority,
+  FocusReview,
+  FocusSession,
   Habit,
   HabitEntry,
   Id,
@@ -16,13 +20,27 @@ import type {
   MetricEntry,
   ModuleId,
   Note,
+  Goal,
+  Project,
+  ProjectMilestone,
+  ProjectUpdate,
   Recap,
   ReferenceRecord,
   ReviewLog,
   StudyTemplate,
+  TrainingActivity,
+  TrainingExercise,
+  TrainingImportSession,
+  TrainingSession,
+  TrainingTemplate,
   Workspace,
 } from "@/shared/models";
 import { createId } from "@/shared/id";
+import {
+  AI_DEFAULT_MAX_TOKENS,
+  AI_DEFAULT_REPAIR_TIMEOUT_SECONDS,
+  AI_DEFAULT_REQUEST_TIMEOUT_SECONDS,
+} from "@/shared/aiConfig";
 import {
   persistNativeCanvas,
   deleteNativeWorkspace,
@@ -43,6 +61,12 @@ import {
 } from "@/modules/calendar/noteTasks";
 import { persistStorage } from "@/core/persistStorage";
 import { OPENROUTER_ENDPOINT, OPENROUTER_MODEL } from "@/shared/recapConfig";
+import {
+  repeatSessionResults,
+  resultsFromTemplate,
+  sessionDurationMinutes,
+} from "@/modules/training/logic";
+import { focusElapsedSeconds } from "@/modules/focus/logic";
 
 export interface TabState {
   id: string;
@@ -119,6 +143,7 @@ interface DiornaState {
   sidebarOpen: boolean;
   sidebarWidth: number;
   rightPanelOpen: boolean;
+  selectedMapId: Id | undefined;
   selectedCalendarItemId: Id | undefined;
   selectedDailyHabitId: Id | undefined;
   commandPaletteOpen: boolean;
@@ -143,6 +168,14 @@ interface DiornaState {
   habitEntries: HabitEntry[];
   metrics: Metric[];
   metricEntries: MetricEntry[];
+  projects: Project[];
+  goals: Goal[];
+  focusPriorities: FocusPriority[];
+  focusSessions: FocusSession[];
+  trainingActivities: TrainingActivity[];
+  trainingExercises: TrainingExercise[];
+  trainingTemplates: TrainingTemplate[];
+  trainingSessions: TrainingSession[];
   recaps: Recap[];
   settings: AppSettings;
   finishOnboarding: (
@@ -155,6 +188,7 @@ interface DiornaState {
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
   toggleRightPanel: () => void;
+  selectMap: (id?: Id) => void;
   selectCalendarItem: (id?: Id) => void;
   selectDailyHabit: (id?: Id) => void;
   setCommandPaletteOpen: (open: boolean) => void;
@@ -169,7 +203,7 @@ interface DiornaState {
   splitPane: (direction: "horizontal" | "vertical") => void;
   closePane: (id: string) => void;
   setSplitRatio: (id: string, ratio: number) => void;
-  addNote: (title?: string) => Note;
+  addNote: (title?: string, folderOverride?: string) => Note;
   duplicateNote: (id: Id) => Note | undefined;
   trashNote: (id: Id) => void;
   restoreFileTrash: (kind: "notes" | "maps", originalPath: string, restoredPath?: string) => void;
@@ -219,6 +253,149 @@ interface DiornaState {
   deleteMetric: (id: Id) => void;
   updateMetricEntry: (metricId: Id, date: string, value: number) => void;
   clearMetricEntry: (metricId: Id, date: string) => void;
+  addProject: (
+    input: Pick<Project, "name" | "outcome" | "kind"> &
+      Partial<
+        Pick<
+          Project,
+          | "description"
+          | "status"
+          | "health"
+          | "color"
+          | "categoryId"
+          | "goalId"
+          | "startDate"
+          | "targetDate"
+          | "nextAction"
+          | "stakeholders"
+          | "tags"
+          | "progressMode"
+          | "manualProgress"
+          | "metricId"
+          | "metricStartValue"
+          | "metricTargetValue"
+          | "favorite"
+          | "archived"
+        >
+      > & {
+        milestones?: Array<
+          Pick<ProjectMilestone, "title"> &
+            Partial<Pick<ProjectMilestone, "dueDate" | "notes" | "sortOrder">>
+        >;
+      },
+  ) => Project;
+  updateProject: (id: Id, changes: Partial<Project>) => void;
+  purgeProject: (id: Id) => void;
+  addProjectMilestone: (
+    projectId: Id,
+    input: Pick<ProjectMilestone, "title"> & Partial<Pick<ProjectMilestone, "dueDate" | "notes">>,
+  ) => ProjectMilestone | undefined;
+  updateProjectMilestone: (
+    projectId: Id,
+    milestoneId: Id,
+    changes: Partial<ProjectMilestone>,
+  ) => void;
+  addProjectUpdate: (
+    projectId: Id,
+    input: Pick<ProjectUpdate, "summary" | "wins" | "blockers" | "nextSteps">,
+  ) => ProjectUpdate | undefined;
+  linkProjectResource: (
+    projectId: Id,
+    kind: "note" | "map" | "habit" | "training",
+    resourceId: Id,
+    linked?: boolean,
+  ) => void;
+  addGoal: (
+    input: Pick<Goal, "title"> &
+      Partial<
+        Pick<
+          Goal,
+          | "purpose"
+          | "successDefinition"
+          | "status"
+          | "horizon"
+          | "color"
+          | "targetDate"
+          | "progressMode"
+          | "manualProgress"
+          | "metricId"
+          | "metricStartValue"
+          | "metricTargetValue"
+          | "linkedHabitIds"
+          | "tags"
+        >
+      >,
+  ) => Goal;
+  updateGoal: (id: Id, changes: Partial<Goal>) => void;
+  purgeGoal: (id: Id) => void;
+  addFocusPriority: (
+    input: Pick<FocusPriority, "date" | "title" | "sourceType"> &
+      Partial<Pick<FocusPriority, "sourceId" | "plannedMinutes" | "sortOrder">>,
+  ) => FocusPriority;
+  updateFocusPriority: (id: Id, changes: Partial<FocusPriority>) => void;
+  deleteFocusPriority: (id: Id) => void;
+  addFocusSession: (
+    input: Pick<FocusSession, "title" | "mode" | "plannedMinutes"> &
+      Partial<
+        Pick<
+          FocusSession,
+          | "intention"
+          | "status"
+          | "sourceType"
+          | "sourceId"
+          | "priorityId"
+          | "calendarItemId"
+          | "scheduledAt"
+          | "distractionShield"
+          | "tags"
+        >
+      >,
+  ) => FocusSession;
+  startFocusSession: (id: Id, startedAt?: string) => void;
+  pauseFocusSession: (id: Id, pausedAt?: string) => void;
+  resumeFocusSession: (id: Id, resumedAt?: string) => void;
+  completeFocusSession: (id: Id, review: FocusReview, endedAt?: string) => void;
+  cancelFocusSession: (id: Id, cancelledAt?: string) => void;
+  addFocusDistraction: (
+    sessionId: Id,
+    input: Pick<FocusDistraction, "kind" | "note">,
+  ) => FocusDistraction | undefined;
+  updateFocusDistraction: (
+    sessionId: Id,
+    distractionId: Id,
+    changes: Partial<FocusDistraction>,
+  ) => void;
+  deleteFocusSession: (id: Id) => void;
+  addTrainingActivity: (input: {
+    name: string;
+    kind: TrainingActivity["kind"];
+    color?: string;
+    trackInDaily?: boolean;
+  }) => TrainingActivity;
+  updateTrainingActivity: (id: Id, changes: Partial<TrainingActivity>) => void;
+  addTrainingExercise: (
+    input: Pick<TrainingExercise, "activityId" | "name" | "measureType"> &
+      Partial<Pick<TrainingExercise, "loadMode" | "loadUnit" | "distanceUnit" | "notes">>,
+  ) => TrainingExercise | undefined;
+  updateTrainingExercise: (id: Id, changes: Partial<TrainingExercise>) => void;
+  addTrainingTemplate: (
+    input: Pick<TrainingTemplate, "activityId" | "name" | "exercises"> &
+      Partial<Pick<TrainingTemplate, "notes">>,
+  ) => TrainingTemplate | undefined;
+  updateTrainingTemplate: (id: Id, changes: Partial<TrainingTemplate>) => void;
+  startTrainingSession: (input: {
+    activityId: Id;
+    templateId?: Id;
+    calendarItemId?: Id;
+    title?: string;
+    startedAt?: string;
+  }) => TrainingSession | undefined;
+  repeatTrainingSession: (id?: Id) => TrainingSession | undefined;
+  updateTrainingSession: (id: Id, changes: Partial<TrainingSession>) => void;
+  addExerciseToTrainingSession: (sessionId: Id, exerciseId: Id) => void;
+  completeTrainingSession: (id: Id, endedAt?: string) => void;
+  deleteTrainingSession: (id: Id) => void;
+  importTrainingSessions: (activityId: Id, noteId: Id, sessions: TrainingImportSession[]) => number;
   updateSettings: (changes: Partial<AppSettings>) => void;
   hydrateStructured: (snapshot: {
     workspaces: Workspace[];
@@ -233,6 +410,14 @@ interface DiornaState {
     habitEntries: HabitEntry[];
     metrics: Metric[];
     metricEntries: MetricEntry[];
+    projects: Project[];
+    goals: Goal[];
+    focusPriorities: FocusPriority[];
+    focusSessions: FocusSession[];
+    trainingActivities: TrainingActivity[];
+    trainingExercises: TrainingExercise[];
+    trainingTemplates: TrainingTemplate[];
+    trainingSessions: TrainingSession[];
     recaps: Recap[];
   }) => void;
   hydrateFileContent: (content: { notes: Note[]; maps: CanvasMap[] }) => void;
@@ -252,8 +437,8 @@ const personalId = "workspace-personal";
 
 const defaultSettings: AppSettings = {
   language: "en",
-  theme: "system",
-  accentColor: "#5b5bd6",
+  theme: "diorna",
+  accentColor: "#1D518A",
   density: "compact",
   interfaceFont: "system-ui",
   editorFont: "system-ui",
@@ -266,7 +451,8 @@ const defaultSettings: AppSettings = {
   vaultLocation: "Documents\\Diorna",
   weekStartsOn: 1,
   calendarVisibleStart: 7,
-  calendarVisibleEnd: 23,
+  calendarVisibleEnd: 20,
+  calendarHourHeight: 64,
   defaultEventDurationMinutes: 60,
   defaultReminderMinutes: 10,
   dailyWindow: "plus-minus-3",
@@ -287,16 +473,32 @@ const defaultSettings: AppSettings = {
   recapAutoMonthly: true,
   recapAutoYearly: true,
   recapConsentedProviders: [],
-  linkPreviewEnabled: false,
+  aiRequestTimeoutSeconds: AI_DEFAULT_REQUEST_TIMEOUT_SECONDS,
+  aiRepairTimeoutSeconds: AI_DEFAULT_REPAIR_TIMEOUT_SECONDS,
+  aiMaxTokens: AI_DEFAULT_MAX_TOKENS,
+  aiMapNoteOrganization: "tags",
+  aiMapFolderRoot: "AI Maps",
+  linkPreviewEnabled: true,
+  linkPreviewSettingsVersion: 1,
   updateEnabled: true,
   backupLocation: "Documents\\Diorna Backups",
   backupFrequency: "daily",
   backupRetention: 10,
   dashboardWidgetOrder: {
-    [studentId]: ["score", "agenda", "courses", "flashcards", "streaks", "recent", "recap"],
-    [personalId]: ["score", "agenda", "projects", "streaks", "recent", "recap"],
+    [studentId]: [
+      "score",
+      "agenda",
+      "focus",
+      "courses",
+      "flashcards",
+      "streaks",
+      "recent",
+      "recap",
+    ],
+    [personalId]: ["score", "agenda", "focus", "projects", "streaks", "recent", "recap"],
   },
   dashboardHiddenWidgets: {},
+  rightPanelWidth: 300,
   keymap: {
     commandPalette: "Ctrl+K",
     quickCapture: "Ctrl+Alt+Space",
@@ -307,7 +509,10 @@ const defaultSettings: AppSettings = {
     maps: "Ctrl+2",
     calendar: "Ctrl+3",
     daily: "Ctrl+4",
-    recap: "Ctrl+5",
+    training: "Ctrl+5",
+    recap: "Ctrl+6",
+    projects: "Ctrl+7",
+    focus: "Ctrl+8",
     home: "Ctrl+0",
     settings: "Ctrl+,",
     newNote: "Ctrl+N",
@@ -331,7 +536,7 @@ const baseWorkspaces: Workspace[] = [
   {
     id: studentId,
     name: "Student",
-    color: "#5b5bd6",
+    color: "#1D518A",
     folderName: "Student",
     sortOrder: 0,
     kind: "student",
@@ -340,7 +545,7 @@ const baseWorkspaces: Workspace[] = [
   {
     id: personalId,
     name: "Personal",
-    color: "#168a68",
+    color: "#7C8E58",
     folderName: "Personal",
     sortOrder: 1,
     kind: "personal",
@@ -352,12 +557,12 @@ const categorySeeds: Array<[string, string[], string[]]> = [
   [
     studentId,
     ["Courses", "Assignments", "Exams", "Revision", "Admin"],
-    ["#5b5bd6", "#bd6b28", "#c0445c", "#8371cf", "#657287"],
+    ["#1D518A", "#DAA343", "#C66542", "#3F6495", "#7C8E58"],
   ],
   [
     personalId,
     ["Work", "Projects", "Sport", "Health", "Social", "Errands"],
-    ["#3f70b5", "#795ac8", "#168a68", "#c15a64", "#b47619", "#677585"],
+    ["#3F6495", "#1D518A", "#7C8E58", "#7C8E58", "#C66542", "#DAA343"],
   ],
 ];
 const baseCategories: Category[] = categorySeeds.flatMap(([workspaceId, names, colors]) =>
@@ -445,7 +650,7 @@ function sampleData() {
       workspaceId: studentId,
       name: "Distributed Systems",
       code: "INFO-H515",
-      color: "#5b5bd6",
+      color: "#1D518A",
       semester: "Autumn 2026",
       instructor: "Prof. Martin",
       credits: 5,
@@ -693,6 +898,7 @@ const initial = {
   sidebarOpen: true,
   sidebarWidth: 248,
   rightPanelOpen: true,
+  selectedMapId: undefined,
   selectedCalendarItemId: undefined,
   selectedDailyHabitId: undefined,
   commandPaletteOpen: false,
@@ -717,6 +923,14 @@ const initial = {
   habitEntries: samples.habitEntries,
   metrics: samples.metrics,
   metricEntries: samples.metricEntries,
+  projects: [] as Project[],
+  goals: [] as Goal[],
+  focusPriorities: [] as FocusPriority[],
+  focusSessions: [] as FocusSession[],
+  trainingActivities: [] as TrainingActivity[],
+  trainingExercises: [] as TrainingExercise[],
+  trainingTemplates: [] as TrainingTemplate[],
+  trainingSessions: [] as TrainingSession[],
   recaps: [] as Recap[],
   settings: defaultSettings,
 };
@@ -729,6 +943,7 @@ function persistedSlice(state: DiornaState, includeContent: boolean) {
     sidebarOpen: state.sidebarOpen,
     sidebarWidth: state.sidebarWidth,
     rightPanelOpen: state.rightPanelOpen,
+    selectedMapId: state.selectedMapId,
     selectedCalendarItemId: state.selectedCalendarItemId,
     selectedDailyHabitId: state.selectedDailyHabitId,
     commandPaletteOpen: state.commandPaletteOpen,
@@ -758,6 +973,14 @@ function persistedSlice(state: DiornaState, includeContent: boolean) {
     habitEntries: state.habitEntries,
     metrics: state.metrics,
     metricEntries: state.metricEntries,
+    projects: state.projects,
+    goals: state.goals,
+    focusPriorities: state.focusPriorities,
+    focusSessions: state.focusSessions,
+    trainingActivities: state.trainingActivities,
+    trainingExercises: state.trainingExercises,
+    trainingTemplates: state.trainingTemplates,
+    trainingSessions: state.trainingSessions,
     recaps: state.recaps,
   };
 }
@@ -776,6 +999,14 @@ function structuredSnapshot(state: DiornaState) {
     habitEntries: state.habitEntries,
     metrics: state.metrics,
     metricEntries: state.metricEntries,
+    projects: state.projects,
+    goals: state.goals,
+    focusPriorities: state.focusPriorities,
+    focusSessions: state.focusSessions,
+    trainingActivities: state.trainingActivities,
+    trainingExercises: state.trainingExercises,
+    trainingTemplates: state.trainingTemplates,
+    trainingSessions: state.trainingSessions,
     recaps: state.recaps,
   };
 }
@@ -828,6 +1059,14 @@ export const useDiornaStore = create<DiornaState>()(
                 habitEntries: [],
                 metrics: [],
                 metricEntries: [],
+                projects: [],
+                goals: [],
+                focusPriorities: [],
+                focusSessions: [],
+                trainingActivities: [],
+                trainingExercises: [],
+                trainingTemplates: [],
+                trainingSessions: [],
                 flashcards: [],
                 reviewLogs: [],
                 references: [],
@@ -842,6 +1081,26 @@ export const useDiornaStore = create<DiornaState>()(
                 ),
                 metrics: state.metrics.filter((entry) => workspaceIds.has(entry.workspaceId)),
                 metricEntries: state.metricEntries.filter((entry) =>
+                  workspaceIds.has(entry.workspaceId),
+                ),
+                projects: state.projects.filter((entry) => workspaceIds.has(entry.workspaceId)),
+                goals: state.goals.filter((entry) => workspaceIds.has(entry.workspaceId)),
+                focusPriorities: state.focusPriorities.filter((entry) =>
+                  workspaceIds.has(entry.workspaceId),
+                ),
+                focusSessions: state.focusSessions.filter((entry) =>
+                  workspaceIds.has(entry.workspaceId),
+                ),
+                trainingActivities: state.trainingActivities.filter((entry) =>
+                  workspaceIds.has(entry.workspaceId),
+                ),
+                trainingExercises: state.trainingExercises.filter((entry) =>
+                  workspaceIds.has(entry.workspaceId),
+                ),
+                trainingTemplates: state.trainingTemplates.filter((entry) =>
+                  workspaceIds.has(entry.workspaceId),
+                ),
+                trainingSessions: state.trainingSessions.filter((entry) =>
                   workspaceIds.has(entry.workspaceId),
                 ),
                 flashcards: state.flashcards.filter((entry) => workspaceIds.has(entry.workspaceId)),
@@ -880,6 +1139,7 @@ export const useDiornaStore = create<DiornaState>()(
           const saved = workspaceSessions[id];
           return {
             activeWorkspaceId: id,
+            selectedMapId: undefined,
             workspaceSessions,
             ...(saved ?? {
               activeModule: "home" as ModuleId,
@@ -904,6 +1164,8 @@ export const useDiornaStore = create<DiornaState>()(
       setSidebarWidth: (width) =>
         set({ sidebarWidth: Math.max(190, Math.min(420, Math.round(width))) }),
       toggleRightPanel: () => set((state) => ({ rightPanelOpen: !state.rightPanelOpen })),
+      selectMap: (id) =>
+        set((state) => (state.selectedMapId === id ? state : { selectedMapId: id })),
       selectCalendarItem: (id) => set({ selectedCalendarItemId: id }),
       selectDailyHabit: (id) => set({ selectedDailyHabitId: id }),
       setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
@@ -1086,7 +1348,7 @@ export const useDiornaStore = create<DiornaState>()(
         set((state) => ({
           paneLayout: updateSplitRatio(state.paneLayout, id, Math.max(0.2, Math.min(0.8, ratio))),
         })),
-      addNote: (title = "Untitled") => {
+      addNote: (title = "Untitled", folderOverride) => {
         const workspaceId = get().activeWorkspaceId;
         const settings = get().settings;
         const usedTitles = new Set(
@@ -1102,7 +1364,9 @@ export const useDiornaStore = create<DiornaState>()(
           suffix += 1;
         }
         const folder =
-          settings.defaultNoteFolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") || "notes";
+          (folderOverride ?? settings.defaultNoteFolder)
+            .replace(/\\/g, "/")
+            .replace(/^\/+|\/+$/g, "") || "notes";
         const template = get().templates.find(
           (entry) => entry.id === settings.defaultTemplateId && entry.workspaceId === workspaceId,
         );
@@ -1426,7 +1690,7 @@ export const useDiornaStore = create<DiornaState>()(
           id: createId("category"),
           workspaceId,
           name,
-          color: "#657287",
+          color: "#3F6495",
           icon: "●",
           sortOrder: get().categories.filter((entry) => entry.workspaceId === workspaceId).length,
         };
@@ -1941,6 +2205,1094 @@ export const useDiornaStore = create<DiornaState>()(
               ),
           ),
         })),
+      addProject: (input) => {
+        const timestamp = new Date().toISOString();
+        const cleanList = (values: string[] | undefined) => [
+          ...new Set((values ?? []).map((value) => value.trim()).filter(Boolean)),
+        ];
+        const project: Project = {
+          id: createId("project"),
+          workspaceId: get().activeWorkspaceId,
+          name: input.name.trim() || "Untitled project",
+          outcome: input.outcome.trim(),
+          description: input.description?.trim() ?? "",
+          kind: input.kind,
+          status: input.status ?? "active",
+          health: input.health ?? "on-track",
+          color: input.color ?? "#1D518A",
+          ...(input.categoryId ? { categoryId: input.categoryId } : {}),
+          ...(input.goalId ? { goalId: input.goalId } : {}),
+          ...(input.startDate ? { startDate: input.startDate } : {}),
+          ...(input.targetDate ? { targetDate: input.targetDate } : {}),
+          nextAction: input.nextAction?.trim() ?? "",
+          stakeholders: cleanList(input.stakeholders),
+          tags: cleanList(input.tags),
+          progressMode: input.progressMode ?? "automatic",
+          manualProgress: Math.max(0, Math.min(100, input.manualProgress ?? 0)),
+          ...(input.metricId ? { metricId: input.metricId } : {}),
+          ...(input.metricStartValue !== undefined
+            ? { metricStartValue: input.metricStartValue }
+            : {}),
+          ...(input.metricTargetValue !== undefined
+            ? { metricTargetValue: input.metricTargetValue }
+            : {}),
+          milestones: (input.milestones ?? [])
+            .map((milestone, index) => ({
+              id: createId("milestone"),
+              title: milestone.title.trim(),
+              ...(milestone.dueDate ? { dueDate: milestone.dueDate } : {}),
+              notes: milestone.notes?.trim() ?? "",
+              sortOrder: milestone.sortOrder ?? index,
+            }))
+            .filter((milestone) => milestone.title),
+          updates: [],
+          linkedNoteIds: [],
+          linkedMapIds: [],
+          linkedHabitIds: [],
+          linkedTrainingActivityIds: [],
+          favorite: input.favorite ?? false,
+          archived: input.archived ?? false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          ...(input.status === "completed" ? { completedAt: timestamp } : {}),
+        };
+        set((state) => ({ projects: [...state.projects, project] }));
+        return project;
+      },
+      updateProject: (id, changes) =>
+        set((state) => ({
+          projects: state.projects.map((project) => {
+            if (project.id !== id || project.workspaceId !== state.activeWorkspaceId)
+              return project;
+            const timestamp = new Date().toISOString();
+            const next: Project = {
+              ...project,
+              ...changes,
+              id: project.id,
+              workspaceId: project.workspaceId,
+              updatedAt: timestamp,
+            };
+            if (changes.name !== undefined) next.name = changes.name.trim() || project.name;
+            if (changes.outcome !== undefined) next.outcome = changes.outcome.trim();
+            if (changes.description !== undefined) next.description = changes.description.trim();
+            if (changes.nextAction !== undefined) next.nextAction = changes.nextAction.trim();
+            if (changes.manualProgress !== undefined) {
+              next.manualProgress = Math.max(0, Math.min(100, changes.manualProgress));
+            }
+            if (changes.status === "completed" && !project.completedAt) {
+              next.completedAt = timestamp;
+            } else if (changes.status && changes.status !== "completed") {
+              delete next.completedAt;
+            }
+            return next;
+          }),
+        })),
+      purgeProject: (id) =>
+        set((state) => {
+          const project = state.projects.find(
+            (entry) => entry.id === id && entry.workspaceId === state.activeWorkspaceId,
+          );
+          if (!project) return state;
+          return {
+            projects: state.projects.filter((entry) => entry.id !== id),
+            items: state.items.map((item) =>
+              item.workspaceId === state.activeWorkspaceId && item.projectId === id
+                ? { ...item, projectId: undefined, updatedAt: new Date().toISOString() }
+                : item,
+            ),
+          };
+        }),
+      addProjectMilestone: (projectId, input) => {
+        const project = get().projects.find(
+          (entry) => entry.id === projectId && entry.workspaceId === get().activeWorkspaceId,
+        );
+        const title = input.title.trim();
+        if (!project || !title) return undefined;
+        const milestone: ProjectMilestone = {
+          id: createId("milestone"),
+          title,
+          ...(input.dueDate ? { dueDate: input.dueDate } : {}),
+          notes: input.notes?.trim() ?? "",
+          sortOrder: project.milestones.length,
+        };
+        get().updateProject(projectId, {
+          milestones: [...project.milestones, milestone],
+        });
+        return milestone;
+      },
+      updateProjectMilestone: (projectId, milestoneId, changes) =>
+        set((state) => ({
+          projects: state.projects.map((project) =>
+            project.id === projectId && project.workspaceId === state.activeWorkspaceId
+              ? {
+                  ...project,
+                  milestones: project.milestones.map((milestone) =>
+                    milestone.id === milestoneId
+                      ? {
+                          ...milestone,
+                          ...changes,
+                          id: milestone.id,
+                          title:
+                            changes.title !== undefined
+                              ? changes.title.trim() || milestone.title
+                              : milestone.title,
+                        }
+                      : milestone,
+                  ),
+                  updatedAt: new Date().toISOString(),
+                }
+              : project,
+          ),
+        })),
+      addProjectUpdate: (projectId, input) => {
+        const project = get().projects.find(
+          (entry) => entry.id === projectId && entry.workspaceId === get().activeWorkspaceId,
+        );
+        if (!project || !input.summary.trim()) return undefined;
+        const update: ProjectUpdate = {
+          id: createId("project-update"),
+          createdAt: new Date().toISOString(),
+          summary: input.summary.trim(),
+          wins: input.wins.trim(),
+          blockers: input.blockers.trim(),
+          nextSteps: input.nextSteps.trim(),
+        };
+        get().updateProject(projectId, { updates: [update, ...project.updates] });
+        return update;
+      },
+      linkProjectResource: (projectId, kind, resourceId, linked = true) =>
+        set((state) => {
+          const valid =
+            kind === "note"
+              ? state.notes.some(
+                  (entry) =>
+                    entry.id === resourceId &&
+                    entry.workspaceId === state.activeWorkspaceId &&
+                    !entry.trashedAt,
+                )
+              : kind === "map"
+                ? state.maps.some(
+                    (entry) =>
+                      entry.id === resourceId &&
+                      entry.workspaceId === state.activeWorkspaceId &&
+                      !entry.trashedAt,
+                  )
+                : kind === "habit"
+                  ? state.habits.some(
+                      (entry) =>
+                        entry.id === resourceId &&
+                        entry.workspaceId === state.activeWorkspaceId &&
+                        !entry.archived,
+                    )
+                  : state.trainingActivities.some(
+                      (entry) =>
+                        entry.id === resourceId &&
+                        entry.workspaceId === state.activeWorkspaceId &&
+                        !entry.archived,
+                    );
+          if (!valid) return state;
+          const field =
+            kind === "note"
+              ? "linkedNoteIds"
+              : kind === "map"
+                ? "linkedMapIds"
+                : kind === "habit"
+                  ? "linkedHabitIds"
+                  : "linkedTrainingActivityIds";
+          return {
+            projects: state.projects.map((project) => {
+              if (project.id !== projectId || project.workspaceId !== state.activeWorkspaceId)
+                return project;
+              const current = project[field];
+              const next = linked
+                ? current.includes(resourceId)
+                  ? current
+                  : [...current, resourceId]
+                : current.filter((id) => id !== resourceId);
+              return { ...project, [field]: next, updatedAt: new Date().toISOString() };
+            }),
+          };
+        }),
+      addGoal: (input) => {
+        const timestamp = new Date().toISOString();
+        const cleanList = (values: string[] | undefined) => [
+          ...new Set((values ?? []).map((value) => value.trim()).filter(Boolean)),
+        ];
+        const goal: Goal = {
+          id: createId("goal"),
+          workspaceId: get().activeWorkspaceId,
+          title: input.title.trim() || "Untitled goal",
+          purpose: input.purpose?.trim() ?? "",
+          successDefinition: input.successDefinition?.trim() ?? "",
+          status: input.status ?? "active",
+          horizon: input.horizon ?? "quarter",
+          color: input.color ?? "#7C8E58",
+          ...(input.targetDate ? { targetDate: input.targetDate } : {}),
+          progressMode: input.progressMode ?? "projects",
+          manualProgress: Math.max(0, Math.min(100, input.manualProgress ?? 0)),
+          ...(input.metricId ? { metricId: input.metricId } : {}),
+          ...(input.metricStartValue !== undefined
+            ? { metricStartValue: input.metricStartValue }
+            : {}),
+          ...(input.metricTargetValue !== undefined
+            ? { metricTargetValue: input.metricTargetValue }
+            : {}),
+          linkedHabitIds: input.linkedHabitIds ?? [],
+          tags: cleanList(input.tags),
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          ...(input.status === "completed" ? { completedAt: timestamp } : {}),
+        };
+        set((state) => ({ goals: [...state.goals, goal] }));
+        return goal;
+      },
+      updateGoal: (id, changes) =>
+        set((state) => ({
+          goals: state.goals.map((goal) => {
+            if (goal.id !== id || goal.workspaceId !== state.activeWorkspaceId) return goal;
+            const timestamp = new Date().toISOString();
+            const next: Goal = {
+              ...goal,
+              ...changes,
+              id: goal.id,
+              workspaceId: goal.workspaceId,
+              updatedAt: timestamp,
+            };
+            if (changes.title !== undefined) next.title = changes.title.trim() || goal.title;
+            if (changes.purpose !== undefined) next.purpose = changes.purpose.trim();
+            if (changes.successDefinition !== undefined)
+              next.successDefinition = changes.successDefinition.trim();
+            if (changes.manualProgress !== undefined) {
+              next.manualProgress = Math.max(0, Math.min(100, changes.manualProgress));
+            }
+            if (changes.status === "completed" && !goal.completedAt) {
+              next.completedAt = timestamp;
+            } else if (changes.status && changes.status !== "completed") {
+              delete next.completedAt;
+            }
+            return next;
+          }),
+        })),
+      purgeGoal: (id) =>
+        set((state) => {
+          if (
+            !state.goals.some(
+              (goal) => goal.id === id && goal.workspaceId === state.activeWorkspaceId,
+            )
+          )
+            return state;
+          return {
+            goals: state.goals.filter((goal) => goal.id !== id),
+            projects: state.projects.map((project) =>
+              project.workspaceId === state.activeWorkspaceId && project.goalId === id
+                ? { ...project, goalId: undefined, updatedAt: new Date().toISOString() }
+                : project,
+            ),
+          };
+        }),
+      addFocusPriority: (input) => {
+        const timestamp = new Date().toISOString();
+        const priority: FocusPriority = {
+          id: createId("focus-priority"),
+          workspaceId: get().activeWorkspaceId,
+          date: input.date,
+          title: input.title.trim() || "Untitled priority",
+          sourceType: input.sourceType,
+          ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+          plannedMinutes: Math.max(5, Math.min(480, Math.round(input.plannedMinutes ?? 45))),
+          sortOrder:
+            input.sortOrder ??
+            get().focusPriorities.filter(
+              (entry) => entry.workspaceId === get().activeWorkspaceId && entry.date === input.date,
+            ).length,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        set((state) => ({ focusPriorities: [...state.focusPriorities, priority] }));
+        return priority;
+      },
+      updateFocusPriority: (id, changes) =>
+        set((state) => ({
+          focusPriorities: state.focusPriorities.map((priority) => {
+            if (priority.id !== id || priority.workspaceId !== state.activeWorkspaceId)
+              return priority;
+            return {
+              ...priority,
+              ...changes,
+              id: priority.id,
+              workspaceId: priority.workspaceId,
+              title:
+                changes.title !== undefined
+                  ? changes.title.trim() || priority.title
+                  : priority.title,
+              plannedMinutes:
+                changes.plannedMinutes !== undefined
+                  ? Math.max(5, Math.min(480, Math.round(changes.plannedMinutes)))
+                  : priority.plannedMinutes,
+              updatedAt: new Date().toISOString(),
+            };
+          }),
+        })),
+      deleteFocusPriority: (id) =>
+        set((state) => ({
+          focusPriorities: state.focusPriorities.filter(
+            (priority) => priority.id !== id || priority.workspaceId !== state.activeWorkspaceId,
+          ),
+          focusSessions: state.focusSessions.map((session) =>
+            session.workspaceId === state.activeWorkspaceId && session.priorityId === id
+              ? { ...session, priorityId: undefined, updatedAt: new Date().toISOString() }
+              : session,
+          ),
+        })),
+      addFocusSession: (input) => {
+        const timestamp = new Date().toISOString();
+        const session: FocusSession = {
+          id: createId("focus-session"),
+          workspaceId: get().activeWorkspaceId,
+          title: input.title.trim() || "Focus session",
+          intention: input.intention?.trim() ?? "",
+          mode: input.mode,
+          status: input.status ?? "planned",
+          sourceType: input.sourceType ?? "custom",
+          ...(input.sourceId ? { sourceId: input.sourceId } : {}),
+          ...(input.priorityId ? { priorityId: input.priorityId } : {}),
+          ...(input.calendarItemId ? { calendarItemId: input.calendarItemId } : {}),
+          ...(input.scheduledAt ? { scheduledAt: input.scheduledAt } : {}),
+          plannedMinutes: Math.max(5, Math.min(480, Math.round(input.plannedMinutes))),
+          elapsedSeconds: 0,
+          pauseCount: 0,
+          distractionShield: [
+            ...new Set(
+              (input.distractionShield ?? []).map((value) => value.trim()).filter(Boolean),
+            ),
+          ],
+          distractions: [],
+          tags: [...new Set((input.tags ?? []).map((value) => value.trim()).filter(Boolean))],
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          ...(input.status === "running"
+            ? { startedAt: timestamp, timerStartedAt: timestamp }
+            : {}),
+        };
+        set((state) => ({ focusSessions: [...state.focusSessions, session] }));
+        return session;
+      },
+      startFocusSession: (id, startedAt = new Date().toISOString()) =>
+        set((state) => ({
+          focusSessions: state.focusSessions.map((session) => {
+            if (
+              session.workspaceId === state.activeWorkspaceId &&
+              session.id !== id &&
+              session.status === "running"
+            )
+              return {
+                ...session,
+                status: "paused" as const,
+                elapsedSeconds: focusElapsedSeconds(session, Date.parse(startedAt)),
+                timerStartedAt: undefined,
+                pauseCount: session.pauseCount + 1,
+                updatedAt: startedAt,
+              };
+            return session.id === id &&
+              session.workspaceId === state.activeWorkspaceId &&
+              ["planned", "paused"].includes(session.status)
+              ? {
+                  ...session,
+                  status: "running" as const,
+                  startedAt: session.startedAt ?? startedAt,
+                  timerStartedAt: startedAt,
+                  updatedAt: startedAt,
+                }
+              : session;
+          }),
+        })),
+      pauseFocusSession: (id, pausedAt = new Date().toISOString()) =>
+        set((state) => ({
+          focusSessions: state.focusSessions.map((session) =>
+            session.id === id &&
+            session.workspaceId === state.activeWorkspaceId &&
+            session.status === "running"
+              ? {
+                  ...session,
+                  status: "paused" as const,
+                  elapsedSeconds: focusElapsedSeconds(session, Date.parse(pausedAt)),
+                  timerStartedAt: undefined,
+                  pauseCount: session.pauseCount + 1,
+                  updatedAt: pausedAt,
+                }
+              : session,
+          ),
+        })),
+      resumeFocusSession: (id, resumedAt = new Date().toISOString()) =>
+        set((state) => ({
+          focusSessions: state.focusSessions.map((session) =>
+            session.id === id &&
+            session.workspaceId === state.activeWorkspaceId &&
+            session.status === "paused"
+              ? {
+                  ...session,
+                  status: "running" as const,
+                  timerStartedAt: resumedAt,
+                  updatedAt: resumedAt,
+                }
+              : session,
+          ),
+        })),
+      completeFocusSession: (id, review, endedAt = new Date().toISOString()) =>
+        set((state) => {
+          const session = state.focusSessions.find(
+            (entry) =>
+              entry.id === id &&
+              entry.workspaceId === state.activeWorkspaceId &&
+              ["running", "paused"].includes(entry.status),
+          );
+          if (!session) return state;
+          const elapsedSeconds = focusElapsedSeconds(session, Date.parse(endedAt));
+          const sourceHabit =
+            session.sourceType === "habit" && session.sourceId && review.sourceCompleted
+              ? state.habits.find(
+                  (habit) =>
+                    habit.id === session.sourceId &&
+                    habit.workspaceId === state.activeWorkspaceId &&
+                    !habit.archived,
+                )
+              : undefined;
+          const habitDate = endedAt.slice(0, 10);
+          const existingHabitEntry = sourceHabit
+            ? state.habitEntries.find(
+                (entry) =>
+                  entry.workspaceId === state.activeWorkspaceId &&
+                  entry.habitId === sourceHabit.id &&
+                  entry.date === habitDate,
+              )
+            : undefined;
+          const habitValue =
+            sourceHabit?.type === "quantity"
+              ? Math.round(
+                  ((sourceHabit.unit ?? "").toLocaleLowerCase().startsWith("h")
+                    ? elapsedSeconds / 3_600
+                    : elapsedSeconds / 60) * 10,
+                ) / 10
+              : undefined;
+          const nextHabitEntry =
+            sourceHabit && review.sourceCompleted
+              ? {
+                  workspaceId: state.activeWorkspaceId,
+                  habitId: sourceHabit.id,
+                  date: habitDate,
+                  done:
+                    sourceHabit.type === "checkbox" ||
+                    habitValue! >= Math.max(1, sourceHabit.target ?? 1),
+                  ...(habitValue !== undefined ? { value: habitValue } : {}),
+                  note: `Logged from Focus: ${session.title}`,
+                }
+              : undefined;
+          return {
+            focusSessions: state.focusSessions.map((entry) =>
+              entry.id === id
+                ? {
+                    ...entry,
+                    status: "completed" as const,
+                    elapsedSeconds,
+                    timerStartedAt: undefined,
+                    endedAt,
+                    review: {
+                      ...review,
+                      focusRating: Math.max(1, Math.min(5, Math.round(review.focusRating))),
+                      energyBefore: Math.max(1, Math.min(5, Math.round(review.energyBefore))),
+                      energyAfter: Math.max(1, Math.min(5, Math.round(review.energyAfter))),
+                    },
+                    updatedAt: endedAt,
+                  }
+                : entry,
+            ),
+            ...(session.priorityId && review.sourceCompleted
+              ? {
+                  focusPriorities: state.focusPriorities.map((priority) =>
+                    priority.id === session.priorityId
+                      ? { ...priority, completedAt: endedAt, updatedAt: endedAt }
+                      : priority,
+                  ),
+                }
+              : {}),
+            ...(session.sourceType === "calendar" && session.sourceId && review.sourceCompleted
+              ? {
+                  items: state.items.map((item) =>
+                    item.id === session.sourceId && item.kind === "task"
+                      ? { ...item, completedAt: endedAt, updatedAt: endedAt }
+                      : item,
+                  ),
+                }
+              : {}),
+            ...(nextHabitEntry
+              ? {
+                  habitEntries: existingHabitEntry
+                    ? state.habitEntries.map((entry) =>
+                        entry === existingHabitEntry ? nextHabitEntry : entry,
+                      )
+                    : [...state.habitEntries, nextHabitEntry],
+                }
+              : {}),
+          };
+        }),
+      cancelFocusSession: (id, cancelledAt = new Date().toISOString()) =>
+        set((state) => ({
+          focusSessions: state.focusSessions.map((session) =>
+            session.id === id &&
+            session.workspaceId === state.activeWorkspaceId &&
+            !["completed", "cancelled"].includes(session.status)
+              ? {
+                  ...session,
+                  status: "cancelled" as const,
+                  elapsedSeconds: focusElapsedSeconds(session, Date.parse(cancelledAt)),
+                  timerStartedAt: undefined,
+                  endedAt: cancelledAt,
+                  updatedAt: cancelledAt,
+                }
+              : session,
+          ),
+        })),
+      addFocusDistraction: (sessionId, input) => {
+        const session = get().focusSessions.find(
+          (entry) =>
+            entry.id === sessionId &&
+            entry.workspaceId === get().activeWorkspaceId &&
+            ["running", "paused"].includes(entry.status),
+        );
+        const note = input.note.trim();
+        if (!session || !note) return undefined;
+        const distraction: FocusDistraction = {
+          id: createId("focus-distraction"),
+          kind: input.kind,
+          note,
+          capturedAt: new Date().toISOString(),
+          handled: false,
+        };
+        set((state) => ({
+          focusSessions: state.focusSessions.map((entry) =>
+            entry.id === sessionId
+              ? {
+                  ...entry,
+                  distractions: [...entry.distractions, distraction],
+                  updatedAt: distraction.capturedAt,
+                }
+              : entry,
+          ),
+        }));
+        return distraction;
+      },
+      updateFocusDistraction: (sessionId, distractionId, changes) =>
+        set((state) => ({
+          focusSessions: state.focusSessions.map((session) =>
+            session.id === sessionId && session.workspaceId === state.activeWorkspaceId
+              ? {
+                  ...session,
+                  distractions: session.distractions.map((distraction) =>
+                    distraction.id === distractionId
+                      ? {
+                          ...distraction,
+                          ...changes,
+                          id: distraction.id,
+                          note:
+                            changes.note !== undefined
+                              ? changes.note.trim() || distraction.note
+                              : distraction.note,
+                        }
+                      : distraction,
+                  ),
+                  updatedAt: new Date().toISOString(),
+                }
+              : session,
+          ),
+        })),
+      deleteFocusSession: (id) =>
+        set((state) => ({
+          focusSessions: state.focusSessions.filter(
+            (session) => session.id !== id || session.workspaceId !== state.activeWorkspaceId,
+          ),
+        })),
+      addTrainingActivity: ({ name, kind, color = "#1D518A", trackInDaily = true }) => {
+        const state = get();
+        const timestamp = new Date().toISOString();
+        const activityId = createId("training-activity");
+        const category = state.categories.find(
+          (entry) => entry.workspaceId === state.activeWorkspaceId,
+        );
+        const dailyHabitId = trackInDaily && category ? createId("habit") : undefined;
+        const activity: TrainingActivity = {
+          id: activityId,
+          workspaceId: state.activeWorkspaceId,
+          name: name.trim() || "New activity",
+          kind,
+          color,
+          icon: trainingActivityIcon(kind),
+          ...(dailyHabitId ? { dailyHabitId } : {}),
+          archived: false,
+          sortOrder: state.trainingActivities.filter(
+            (entry) => entry.workspaceId === state.activeWorkspaceId,
+          ).length,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        set((current) => ({
+          trainingActivities: [...current.trainingActivities, activity],
+          ...(dailyHabitId && category
+            ? {
+                habits: [
+                  ...current.habits,
+                  {
+                    id: dailyHabitId,
+                    workspaceId: current.activeWorkspaceId,
+                    name: activity.name,
+                    categoryId: category.id,
+                    type: "quantity" as const,
+                    unit: "min",
+                    target: 30,
+                    activeWeekdays: [0, 1, 2, 3, 4, 5, 6],
+                    description: "Automatically updated from Training sessions.",
+                    sortOrder: current.habits.filter(
+                      (entry) => entry.workspaceId === current.activeWorkspaceId,
+                    ).length,
+                    archived: false,
+                  },
+                ],
+              }
+            : {}),
+        }));
+        return activity;
+      },
+      updateTrainingActivity: (id, changes) =>
+        set((state) => {
+          const source = state.trainingActivities.find(
+            (activity) => activity.id === id && activity.workspaceId === state.activeWorkspaceId,
+          );
+          return {
+            trainingActivities: state.trainingActivities.map((activity) =>
+              activity === source
+                ? {
+                    ...activity,
+                    ...changes,
+                    id: activity.id,
+                    workspaceId: activity.workspaceId,
+                    updatedAt: new Date().toISOString(),
+                  }
+                : activity,
+            ),
+            ...(source?.dailyHabitId
+              ? {
+                  habits: state.habits.map((habit) =>
+                    habit.id === source.dailyHabitId &&
+                    habit.workspaceId === state.activeWorkspaceId
+                      ? {
+                          ...habit,
+                          ...(changes.name === undefined ? {} : { name: changes.name }),
+                          ...(changes.archived === undefined ? {} : { archived: changes.archived }),
+                        }
+                      : habit,
+                  ),
+                }
+              : {}),
+          };
+        }),
+      addTrainingExercise: (input) => {
+        const state = get();
+        if (
+          !state.trainingActivities.some(
+            (activity) =>
+              activity.id === input.activityId &&
+              activity.workspaceId === state.activeWorkspaceId &&
+              !activity.archived,
+          )
+        )
+          return undefined;
+        const timestamp = new Date().toISOString();
+        const exercise: TrainingExercise = {
+          id: createId("training-exercise"),
+          workspaceId: state.activeWorkspaceId,
+          activityId: input.activityId,
+          name: input.name.trim() || "New exercise",
+          measureType: input.measureType,
+          loadMode:
+            input.loadMode ??
+            (input.measureType === "sets" || input.measureType === "mixed" ? "external" : "none"),
+          loadUnit: input.loadUnit ?? "kg",
+          distanceUnit: input.distanceUnit ?? "km",
+          notes: input.notes ?? "",
+          archived: false,
+          sortOrder: state.trainingExercises.filter(
+            (entry) =>
+              entry.workspaceId === state.activeWorkspaceId &&
+              entry.activityId === input.activityId,
+          ).length,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        set({ trainingExercises: [...state.trainingExercises, exercise] });
+        return exercise;
+      },
+      updateTrainingExercise: (id, changes) =>
+        set((state) => ({
+          trainingExercises: state.trainingExercises.map((exercise) =>
+            exercise.id === id && exercise.workspaceId === state.activeWorkspaceId
+              ? {
+                  ...exercise,
+                  ...changes,
+                  id: exercise.id,
+                  workspaceId: exercise.workspaceId,
+                  updatedAt: new Date().toISOString(),
+                }
+              : exercise,
+          ),
+        })),
+      addTrainingTemplate: (input) => {
+        const state = get();
+        const activity = state.trainingActivities.find(
+          (entry) => entry.id === input.activityId && entry.workspaceId === state.activeWorkspaceId,
+        );
+        if (!activity || !input.exercises.length) return undefined;
+        const validExerciseIds = new Set(
+          state.trainingExercises
+            .filter(
+              (exercise) =>
+                exercise.workspaceId === state.activeWorkspaceId &&
+                exercise.activityId === activity.id,
+            )
+            .map((exercise) => exercise.id),
+        );
+        const exercises = input.exercises.filter((exercise) =>
+          validExerciseIds.has(exercise.exerciseId),
+        );
+        if (!exercises.length) return undefined;
+        const timestamp = new Date().toISOString();
+        const template: TrainingTemplate = {
+          id: createId("training-template"),
+          workspaceId: state.activeWorkspaceId,
+          activityId: activity.id,
+          name: input.name.trim() || `${activity.name} session`,
+          exercises,
+          notes: input.notes ?? "",
+          archived: false,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        set({ trainingTemplates: [...state.trainingTemplates, template] });
+        return template;
+      },
+      updateTrainingTemplate: (id, changes) =>
+        set((state) => ({
+          trainingTemplates: state.trainingTemplates.map((template) =>
+            template.id === id && template.workspaceId === state.activeWorkspaceId
+              ? {
+                  ...template,
+                  ...changes,
+                  id: template.id,
+                  workspaceId: template.workspaceId,
+                  updatedAt: new Date().toISOString(),
+                }
+              : template,
+          ),
+        })),
+      startTrainingSession: (input) => {
+        const state = get();
+        const inProgress = state.trainingSessions.find(
+          (session) =>
+            session.workspaceId === state.activeWorkspaceId && session.status === "in-progress",
+        );
+        if (inProgress) return inProgress;
+        const activity = state.trainingActivities.find(
+          (entry) =>
+            entry.id === input.activityId &&
+            entry.workspaceId === state.activeWorkspaceId &&
+            !entry.archived,
+        );
+        if (!activity) return undefined;
+        const template = input.templateId
+          ? state.trainingTemplates.find(
+              (entry) =>
+                entry.id === input.templateId &&
+                entry.activityId === activity.id &&
+                entry.workspaceId === state.activeWorkspaceId &&
+                !entry.archived,
+            )
+          : undefined;
+        const timestamp = new Date().toISOString();
+        const session: TrainingSession = {
+          id: createId("training-session"),
+          workspaceId: state.activeWorkspaceId,
+          activityId: activity.id,
+          ...(template ? { templateId: template.id } : {}),
+          ...(input.calendarItemId ? { calendarItemId: input.calendarItemId } : {}),
+          title: input.title?.trim() || template?.name || activity.name,
+          status: "in-progress",
+          startedAt: input.startedAt ?? timestamp,
+          results: template ? resultsFromTemplate(template) : [],
+          notes: "",
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        };
+        set((current) => ({
+          trainingSessions: [...current.trainingSessions, session],
+          ...(input.calendarItemId
+            ? {
+                items: current.items.map((item) =>
+                  item.id === input.calendarItemId && item.workspaceId === current.activeWorkspaceId
+                    ? {
+                        ...item,
+                        trainingSessionId: session.id,
+                        updatedAt: timestamp,
+                      }
+                    : item,
+                ),
+              }
+            : {}),
+        }));
+        return session;
+      },
+      repeatTrainingSession: (id) => {
+        const state = get();
+        const inProgress = state.trainingSessions.find(
+          (session) =>
+            session.workspaceId === state.activeWorkspaceId && session.status === "in-progress",
+        );
+        if (inProgress) return inProgress;
+        const source = (
+          id
+            ? state.trainingSessions.filter((session) => session.id === id)
+            : state.trainingSessions
+        )
+          .filter(
+            (session) =>
+              session.workspaceId === state.activeWorkspaceId && session.status === "completed",
+          )
+          .sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0];
+        if (!source) return undefined;
+        const timestamp = new Date().toISOString();
+        const session: TrainingSession = {
+          ...source,
+          id: createId("training-session"),
+          status: "in-progress",
+          startedAt: timestamp,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+          results: repeatSessionResults(source),
+        };
+        delete session.endedAt;
+        delete session.calendarItemId;
+        delete session.importedFromNoteId;
+        set({ trainingSessions: [...state.trainingSessions, session] });
+        return session;
+      },
+      updateTrainingSession: (id, changes) =>
+        set((state) => ({
+          trainingSessions: state.trainingSessions.map((session) =>
+            session.id === id && session.workspaceId === state.activeWorkspaceId
+              ? {
+                  ...session,
+                  ...changes,
+                  id: session.id,
+                  workspaceId: session.workspaceId,
+                  updatedAt: new Date().toISOString(),
+                }
+              : session,
+          ),
+        })),
+      addExerciseToTrainingSession: (sessionId, exerciseId) =>
+        set((state) => {
+          const exercise = state.trainingExercises.find(
+            (entry) =>
+              entry.id === exerciseId &&
+              entry.workspaceId === state.activeWorkspaceId &&
+              !entry.archived,
+          );
+          if (!exercise) return state;
+          return {
+            trainingSessions: state.trainingSessions.map((session) =>
+              session.id === sessionId &&
+              session.workspaceId === state.activeWorkspaceId &&
+              session.status === "in-progress" &&
+              !session.results.some((result) => result.exerciseId === exercise.id)
+                ? {
+                    ...session,
+                    results: [
+                      ...session.results,
+                      {
+                        id: createId("training-result"),
+                        exerciseId: exercise.id,
+                        name: exercise.name,
+                        measureType: exercise.measureType,
+                        ...(exercise.loadMode ? { loadMode: exercise.loadMode } : {}),
+                        loadUnit: exercise.loadUnit,
+                        distanceUnit: exercise.distanceUnit,
+                        sets: [{ id: createId("training-set"), completed: false }],
+                        notes: "",
+                      },
+                    ],
+                    updatedAt: new Date().toISOString(),
+                  }
+                : session,
+            ),
+          };
+        }),
+      completeTrainingSession: (id, requestedEndedAt) =>
+        set((state) => {
+          const source = state.trainingSessions.find(
+            (session) =>
+              session.id === id &&
+              session.workspaceId === state.activeWorkspaceId &&
+              session.status === "in-progress",
+          );
+          if (!source) return state;
+          const endedAt = requestedEndedAt ?? new Date().toISOString();
+          const session: TrainingSession = {
+            ...source,
+            status: "completed",
+            endedAt,
+            results: source.results.map((result) => ({
+              ...result,
+              sets: result.sets.map((entry) => ({
+                ...entry,
+                completed:
+                  entry.completed ||
+                  entry.load !== undefined ||
+                  entry.reps !== undefined ||
+                  entry.durationSeconds !== undefined ||
+                  entry.distance !== undefined,
+              })),
+            })),
+            updatedAt: endedAt,
+          };
+          const sessions = state.trainingSessions.map((entry) =>
+            entry.id === id ? session : entry,
+          );
+          const activity = state.trainingActivities.find(
+            (entry) => entry.id === session.activityId && entry.workspaceId === session.workspaceId,
+          );
+          const date = session.startedAt.slice(0, 10);
+          const habitId = activity?.dailyHabitId;
+          const minutes = habitId
+            ? sessions
+                .filter(
+                  (entry) =>
+                    entry.workspaceId === session.workspaceId &&
+                    entry.activityId === session.activityId &&
+                    entry.status === "completed" &&
+                    entry.startedAt.slice(0, 10) === date,
+                )
+                .reduce((sum, entry) => sum + sessionDurationMinutes(entry), 0)
+            : 0;
+          const existingEntry = habitId
+            ? state.habitEntries.find(
+                (entry) =>
+                  entry.workspaceId === session.workspaceId &&
+                  entry.habitId === habitId &&
+                  entry.date === date,
+              )
+            : undefined;
+          const habitEntry: HabitEntry | undefined = habitId
+            ? {
+                workspaceId: session.workspaceId,
+                habitId,
+                date,
+                value: minutes,
+                done: minutes > 0,
+                note: "Synced from Training.",
+              }
+            : undefined;
+          return {
+            trainingSessions: sessions,
+            ...(habitEntry
+              ? {
+                  habitEntries: existingEntry
+                    ? state.habitEntries.map((entry) =>
+                        entry === existingEntry ? habitEntry : entry,
+                      )
+                    : [...state.habitEntries, habitEntry],
+                }
+              : {}),
+          };
+        }),
+      deleteTrainingSession: (id) =>
+        set((state) => ({
+          trainingSessions: state.trainingSessions.filter(
+            (session) => !(session.id === id && session.workspaceId === state.activeWorkspaceId),
+          ),
+          items: state.items.map((item) => {
+            if (item.workspaceId !== state.activeWorkspaceId || item.trainingSessionId !== id)
+              return item;
+            const { trainingSessionId: _trainingSessionId, ...rest } = item;
+            void _trainingSessionId;
+            return { ...rest, updatedAt: new Date().toISOString() };
+          }),
+        })),
+      importTrainingSessions: (activityId, noteId, imported) => {
+        const state = get();
+        const activity = state.trainingActivities.find(
+          (entry) => entry.id === activityId && entry.workspaceId === state.activeWorkspaceId,
+        );
+        if (!activity || !imported.length) return 0;
+        const timestamp = new Date().toISOString();
+        const exercises = [...state.trainingExercises];
+        const byName = new Map(
+          exercises
+            .filter(
+              (exercise) =>
+                exercise.workspaceId === state.activeWorkspaceId &&
+                exercise.activityId === activity.id,
+            )
+            .map((exercise) => [exercise.name.toLocaleLowerCase(), exercise]),
+        );
+        const sessions = imported.map((candidate) => {
+          const results = candidate.exercises.map((parsed) => {
+            let exercise = byName.get(parsed.name.toLocaleLowerCase());
+            if (!exercise) {
+              exercise = {
+                id: createId("training-exercise"),
+                workspaceId: state.activeWorkspaceId,
+                activityId: activity.id,
+                name: parsed.name,
+                measureType: parsed.measureType,
+                loadUnit: "kg",
+                distanceUnit: "km",
+                notes: "",
+                archived: false,
+                sortOrder: byName.size,
+                createdAt: timestamp,
+                updatedAt: timestamp,
+              };
+              byName.set(parsed.name.toLocaleLowerCase(), exercise);
+              exercises.push(exercise);
+            }
+            return {
+              id: createId("training-result"),
+              exerciseId: exercise.id,
+              name: exercise.name,
+              measureType: parsed.measureType,
+              loadUnit: exercise.loadUnit,
+              distanceUnit: exercise.distanceUnit,
+              sets: parsed.sets.map((entry) => ({ ...entry, id: createId("training-set") })),
+              notes: "",
+            };
+          });
+          return {
+            id: createId("training-session"),
+            workspaceId: state.activeWorkspaceId,
+            activityId: activity.id,
+            title: candidate.title,
+            status: "completed" as const,
+            startedAt: `${candidate.date}T12:00:00.000Z`,
+            results,
+            notes: "Imported from a Diorna note.",
+            importedFromNoteId: noteId,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          };
+        });
+        set({
+          trainingExercises: exercises,
+          trainingSessions: [...state.trainingSessions, ...sessions],
+        });
+        return sessions.length;
+      },
       updateSettings: (changes) => {
         const settings = { ...get().settings, ...changes };
         set({ settings });
@@ -2041,6 +3393,16 @@ export const useDiornaStore = create<DiornaState>()(
             habitEntries: state.habitEntries.filter((entry) => entry.workspaceId !== id),
             metrics: state.metrics.filter((entry) => entry.workspaceId !== id),
             metricEntries: state.metricEntries.filter((entry) => entry.workspaceId !== id),
+            projects: state.projects.filter((entry) => entry.workspaceId !== id),
+            goals: state.goals.filter((entry) => entry.workspaceId !== id),
+            focusPriorities: state.focusPriorities.filter((entry) => entry.workspaceId !== id),
+            focusSessions: state.focusSessions.filter((entry) => entry.workspaceId !== id),
+            trainingActivities: state.trainingActivities.filter(
+              (entry) => entry.workspaceId !== id,
+            ),
+            trainingExercises: state.trainingExercises.filter((entry) => entry.workspaceId !== id),
+            trainingTemplates: state.trainingTemplates.filter((entry) => entry.workspaceId !== id),
+            trainingSessions: state.trainingSessions.filter((entry) => entry.workspaceId !== id),
             recaps: state.recaps.filter((entry) => entry.workspaceId !== id),
             settings: {
               ...state.settings,
@@ -2072,7 +3434,18 @@ export const useDiornaStore = create<DiornaState>()(
       partialize: (state) => persistedSlice(state, !isTauri()),
       merge: (persisted, current) => {
         const saved = persisted as Partial<DiornaState>;
-        const settings = { ...defaultSettings, ...(saved.settings ?? {}) };
+        const settings = {
+          ...defaultSettings,
+          ...(saved.settings ?? {}),
+          keymap: {
+            ...defaultSettings.keymap,
+            ...(saved.settings?.keymap ?? {}),
+          },
+        };
+        if (saved.settings && !("linkPreviewSettingsVersion" in saved.settings)) {
+          settings.linkPreviewEnabled = true;
+          settings.linkPreviewSettingsVersion = 1;
+        }
         if (settings.recapEndpoint === OPENROUTER_ENDPOINT && !settings.recapModel.trim()) {
           settings.recapModel = OPENROUTER_MODEL;
         }
@@ -2105,3 +3478,17 @@ export const selectWorkspace = <T extends { workspaceId: string }>(
   items: T[],
   workspaceId: string,
 ): T[] => items.filter((item) => item.workspaceId === workspaceId);
+
+function trainingActivityIcon(kind: TrainingActivity["kind"]): string {
+  return (
+    {
+      strength: "Dumbbell",
+      running: "Footprints",
+      cycling: "Bike",
+      swimming: "Waves",
+      team: "Trophy",
+      mobility: "Activity",
+      custom: "Sparkles",
+    } as const
+  )[kind];
+}

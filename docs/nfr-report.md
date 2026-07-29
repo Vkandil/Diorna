@@ -4,21 +4,22 @@ This file is the reproducible acceptance record. Measurements must be repeated
 on the reference machine (11th-generation Intel i5, 16 GB RAM, SSD) and on clean
 Windows 10 1809 and Windows 11 systems before a signed public release.
 
-## Automated evidence — 2026-07-23
+## Automated evidence — 2026-07-28
 
 | Gate                      | Result                                                                                        |
 | ------------------------- | --------------------------------------------------------------------------------------------- |
 | TypeScript strict build   | Pass                                                                                          |
 | ESLint, zero warnings     | Pass                                                                                          |
-| Business-logic unit tests | 205/205 pass across 22 suites                                                                 |
-| Business-logic coverage   | 97.88% statements, 82.48% branches, 97.46% functions                                          |
+| Business-logic unit tests | 223/223 pass across 23 suites                                                                 |
+| Business-logic coverage   | 97.34% statements, 80.89% branches, 97.05% functions, 98.07% lines                            |
 | Parser corpus             | 63 cases pass                                                                                 |
 | Workspace isolation       | 19 tests covering all 16 content entity classes                                               |
-| Rust tests                | 20/20 pass, including recovery, conflicts, attachments, trash, DPAPI, and XLSX                |
-| Playwright acceptance     | 19/19 pass, including AI plans, PDF quoting, month drag/drop, attachments, and WCAG           |
+| Rust tests                | 24/24 pass, including link-preview SSRF guards, import+undo, recovery, trash, DPAPI, and XLSX |
+| Playwright acceptance     | 21/21 pass, including rich links, AI Maps, PDF quoting, month drag/drop, media, and WCAG      |
 | Reference web performance | Pass at 5,000 notes, 50 maps, 3,000 items, and 730 days of habit history                      |
 | npm production audit      | 0 known vulnerabilities                                                                       |
-| Production web build      | Pass; shell entry about 483 kB minified / 156 kB gzip; PDF.js and feature modules lazy-loaded |
+| RustSec audit             | Pass with three documented upstream/unused-feature exceptions below                           |
+| Production web build      | Pass; shell entry 488.66 kB minified / 157.99 kB gzip; PDF.js and feature modules lazy-loaded |
 | Native release compile    | Pass; optimized `diorna.exe` built from a clean Cargo target                                  |
 | Windows bundles           | Pass; x64 EN/FR MSI and NSIS generated locally                                                |
 
@@ -35,6 +36,17 @@ Windows 10 1809 and Windows 11 systems before a signed public release.
   extraction audit is a release gate.
 - NFR-13: React error boundary, serialisable Rust errors, copy diagnostics, and
   local rotating logs prevent a blank-screen failure mode.
+
+## Security audit exceptions
+
+The project audit configuration temporarily accepts RUSTSEC-2026-0194 and
+RUSTSEC-2026-0195 because Tauri 2.11.5 currently resolves `plist` 1.8.0, which
+pins `quick-xml` below the fixed release. Diorna does not parse user-supplied
+plist/XML and does not ship a macOS target. RUSTSEC-2023-0071 is attached to
+sqlx's optional MySQL dependency in `Cargo.lock`; Diorna disables sqlx default
+features, compiles SQLite only, and `rsa` is absent from the all-target compiled
+graph. Dependabot is expected to remove these exceptions as soon as upstream
+constraints allow it; they must be re-reviewed for every release.
 
 ## Performance protocol
 

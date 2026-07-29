@@ -5,7 +5,7 @@ description = "Diorna local-first knowledge and productivity suite"
 authors = ["Diorna Contributors"]
 edition = "2024"
 license = "AGPL-3.0-only"
-rust-version = "1.85"
+rust-version = "1.88"
 
 [lib]
 name = "diorna_lib"
@@ -24,11 +24,13 @@ futures = "0.3.31"
 log = "0.4.27"
 parking_lot = "0.12.4"
 regex = "1.11.1"
+reqwest = { version = "0.12.22", default-features = false, features = ["charset", "http2", "rustls-tls", "stream"] }
 rust_xlsxwriter = "0.96.0"
+scraper = "0.23.1"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.141"
 sha2 = "0.10.9"
-sqlx = { version = "0.8.6", features = ["runtime-tokio", "sqlite", "migrate", "chrono", "uuid"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite", "migrate", "chrono", "uuid"] }
 tauri = { version = "2.7.0", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-autostart = "2.5.0"
 tauri-plugin-dialog = "2.3.0"

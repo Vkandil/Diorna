@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { differenceInCalendarDays, format, isBefore, startOfToday } from "date-fns";
 import {
   ArrowRight,
@@ -12,12 +12,24 @@ import {
   Layers3,
   Settings2,
   Sparkles,
+  Timer,
 } from "lucide-react";
 import { selectWorkspace, useDiornaStore } from "@/core/store";
 import { completionScore, dateKey, habitStatistics } from "@/modules/daily/logic";
+import { projectProgress } from "@/modules/projects/logic";
+import { focusActualMinutes } from "@/modules/focus/logic";
 
-const studentDefaults = ["score", "agenda", "courses", "flashcards", "streaks", "recent", "recap"];
-const personalDefaults = ["score", "agenda", "projects", "streaks", "recent", "recap"];
+const studentDefaults = [
+  "score",
+  "agenda",
+  "focus",
+  "courses",
+  "flashcards",
+  "streaks",
+  "recent",
+  "recap",
+];
+const personalDefaults = ["score", "agenda", "focus", "projects", "streaks", "recent", "recap"];
 const labels: Record<string, string> = {
   score: "Today’s completion",
   agenda: "Agenda and deadlines",
@@ -27,11 +39,14 @@ const labels: Record<string, string> = {
   streaks: "Current streaks",
   recent: "Recently edited",
   recap: "Monthly recap",
+  focus: "Focus today",
 };
 
 export function HomeView() {
   const state = useDiornaStore();
   const [draggedWidget, setDraggedWidget] = useState<string>();
+  const [dragTarget, setDragTarget] = useState<string>();
+  const pointerDrag = useRef<{ id: string; pointerId: number }>();
   const workspace = state.workspaces.find((item) => item.id === state.activeWorkspaceId)!;
   const defaults = workspace.kind === "student" ? studentDefaults : personalDefaults;
   const savedOrder = state.settings.dashboardWidgetOrder[workspace.id] ?? defaults;
@@ -49,6 +64,15 @@ export function HomeView() {
   );
   const today = dateKey(new Date());
   const score = completionScore(habits, entries, today);
+  const focusPriorities = selectWorkspace(state.focusPriorities, workspace.id).filter(
+    (priority) => priority.date === today,
+  );
+  const focusSessions = selectWorkspace(state.focusSessions, workspace.id).filter(
+    (session) => session.status === "completed" && session.endedAt?.slice(0, 10) === today,
+  );
+  const activeFocus = selectWorkspace(state.focusSessions, workspace.id).find((session) =>
+    ["running", "paused"].includes(session.status),
+  );
   const upcoming = items
     .filter((item) => {
       const when = item.dueAt ?? item.startAt;
@@ -64,15 +88,18 @@ export function HomeView() {
     }))
     .sort((a, b) => b.stat.currentStreak - a.stat.currentStreak)
     .slice(0, 3);
-  const projects = notes
-    .filter((note) => /(^|[\\/])projects[\\/]/i.test(note.path))
-    .map((note) => {
-      const linked = items.filter((item) => item.noteId === note.id && item.kind === "task");
-      const completed = linked.filter((item) => item.completedAt).length;
+  const projects = selectWorkspace(state.projects, workspace.id)
+    .filter(
+      (project) => !project.archived && ["planned", "active", "on-hold"].includes(project.status),
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    .slice(0, 5)
+    .map((project) => {
+      const linked = items.filter((item) => item.projectId === project.id && item.kind === "task");
       return {
-        note,
-        open: linked.length - completed,
-        progress: linked.length ? Math.round((completed / linked.length) * 100) : 0,
+        project,
+        open: linked.filter((item) => !item.completedAt).length,
+        progress: projectProgress(project, items, state.metricEntries),
       };
     });
 
@@ -96,6 +123,32 @@ export function HomeView() {
     if (moved) next.splice(to, 0, moved);
     updateLayout(next);
   };
+  useEffect(() => {
+    const widgetAt = (x: number, y: number) =>
+      document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-widget-id]")?.dataset.widgetId;
+    const onPointerMove = (event: PointerEvent) => {
+      if (pointerDrag.current?.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      setDragTarget(widgetAt(event.clientX, event.clientY));
+    };
+    const finish = (event: PointerEvent) => {
+      const drag = pointerDrag.current;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      const target = widgetAt(event.clientX, event.clientY);
+      if (target) reorder(drag.id, target);
+      pointerDrag.current = undefined;
+      setDraggedWidget(undefined);
+      setDragTarget(undefined);
+    };
+    window.addEventListener("pointermove", onPointerMove, { passive: false });
+    window.addEventListener("pointerup", finish);
+    window.addEventListener("pointercancel", finish);
+    return () => {
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", finish);
+      window.removeEventListener("pointercancel", finish);
+    };
+  });
 
   const widgets: Record<string, React.ReactNode> = {
     score: (
@@ -114,10 +167,23 @@ export function HomeView() {
               (entry) =>
                 entry.habitId === habit.id &&
                 entry.date === today &&
-                (entry.done || (entry.value ?? 0) >= (habit.target ?? 0)),
+                (entry.done ||
+                  (habit.type === "quantity" &&
+                    (entry.value ?? 0) >= Math.max(1, habit.target ?? 1))),
             );
             return (
-              <button key={habit.id} onClick={() => state.updateHabitEntry(habit.id, today, !done)}>
+              <button
+                key={habit.id}
+                onClick={() => {
+                  if (done) state.clearHabitEntry(habit.id, today);
+                  else
+                    state.updateHabitEntry(
+                      habit.id,
+                      today,
+                      habit.type === "quantity" ? (habit.target ?? 1) : true,
+                    );
+                }}
+              >
                 <i className={done ? "done" : ""}>{done && "✓"}</i>
                 <span>{habit.name}</span>
               </button>
@@ -170,6 +236,36 @@ export function HomeView() {
             </div>
           )}
         </div>
+      </section>
+    ),
+    focus: (
+      <section className="widget focus-home-widget">
+        <header>
+          <span>Focus today</span>
+          <Timer size={17} />
+        </header>
+        <div className="focus-home-summary">
+          <strong>
+            {focusSessions.reduce((sum, session) => sum + focusActualMinutes(session), 0)} min
+          </strong>
+          <span>protected across {focusSessions.length} completed blocks</span>
+        </div>
+        <div className="focus-home-priorities">
+          {focusPriorities.slice(0, 3).map((priority) => (
+            <div className={priority.completedAt ? "completed" : ""} key={priority.id}>
+              <i>{priority.completedAt ? "✓" : ""}</i>
+              <span>{priority.title}</span>
+              <small>{priority.plannedMinutes}m</small>
+            </div>
+          ))}
+          {!focusPriorities.length && (
+            <div className="empty-mini">Choose today’s priorities in Focus.</div>
+          )}
+        </div>
+        <button className="link-button" onClick={() => state.setModule("focus")}>
+          {activeFocus ? `Resume ${activeFocus.title}` : "Open Focus studio"}{" "}
+          <ArrowRight size={14} />
+        </button>
       </section>
     ),
     courses: (
@@ -233,13 +329,15 @@ export function HomeView() {
           <span>Active projects</span>
           <FolderKanban size={17} />
         </header>
-        {projects.map(({ note, open, progress }) => (
-          <div className="project-row" key={note.id}>
+        {projects.map(({ project, open, progress }) => (
+          <div className="project-row" key={project.id}>
             <div>
-              <span className="project-icon">{note.title.slice(0, 2).toUpperCase()}</span>
-              <strong>{note.title}</strong>
+              <span className="project-icon" style={{ background: project.color }}>
+                {project.name.slice(0, 2).toUpperCase()}
+              </span>
+              <strong>{project.name}</strong>
               <small>
-                {open} open tasks · edited {format(new Date(note.updatedAt), "d MMM")}
+                {open} open tasks · edited {format(new Date(project.updatedAt), "d MMM")}
               </small>
             </div>
             <div className="project-progress">
@@ -250,9 +348,13 @@ export function HomeView() {
             </div>
             <button
               className="icon-button"
-              aria-label={`Open ${note.title}`}
+              aria-label={`Open ${project.name}`}
               onClick={() =>
-                state.openTab({ module: "notes", title: note.title, entityId: note.id })
+                state.openTab({
+                  module: "projects",
+                  title: project.name,
+                  entityId: project.id,
+                })
               }
             >
               <ArrowRight />
@@ -261,7 +363,7 @@ export function HomeView() {
         ))}
         {!projects.length && (
           <div className="empty-mini">
-            Create a note inside the Projects folder to track it here.
+            Create a project to track outcomes, connected work and progress here.
           </div>
         )}
       </section>
@@ -367,18 +469,52 @@ export function HomeView() {
           .filter((id) => !hidden.includes(id) && widgets[id])
           .map((id) => (
             <div
-              className={`dashboard-widget-slot ${["courses", "projects", "recap"].includes(id) ? "wide" : ""}`}
-              draggable
+              className={`dashboard-widget-slot ${["courses", "projects", "recap"].includes(id) ? "wide" : ""} ${dragTarget === id && draggedWidget !== id ? "drag-target" : ""}`}
+              data-widget-id={id}
               key={id}
-              onDragStart={() => setDraggedWidget(id)}
               onDragOver={(event) => event.preventDefault()}
               onDrop={() => {
                 if (draggedWidget) reorder(draggedWidget, id);
                 setDraggedWidget(undefined);
+                setDragTarget(undefined);
               }}
             >
               <div className="widget-controls">
-                <GripVertical size={14} />
+                <button
+                  aria-label={`Move ${labels[id]}`}
+                  title="Drag to move. Use arrow keys to reorder."
+                  draggable
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/diorna-widget", id);
+                    setDraggedWidget(id);
+                  }}
+                  onDragEnd={() => {
+                    setDraggedWidget(undefined);
+                    setDragTarget(undefined);
+                  }}
+                  onPointerDown={(event) => {
+                    if (event.button !== 0) return;
+                    event.preventDefault();
+                    pointerDrag.current = { id, pointerId: event.pointerId };
+                    setDraggedWidget(id);
+                  }}
+                  onKeyDown={(event) => {
+                    const index = order.indexOf(id);
+                    if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+                      event.preventDefault();
+                      const target = order[index - 1];
+                      if (target) reorder(id, target);
+                    }
+                    if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+                      event.preventDefault();
+                      const target = order[index + 1];
+                      if (target) reorder(id, target);
+                    }
+                  }}
+                >
+                  <GripVertical size={14} />
+                </button>
                 <button
                   aria-label={`Hide ${labels[id]}`}
                   title="Hide widget"

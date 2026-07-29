@@ -27,6 +27,99 @@ test.beforeEach(async ({ page }) => {
   await page.reload();
 });
 
+test("creates a goal-directed project and connects a Calendar task", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.locator(".module-rail button").filter({ hasText: "Projects" }).click();
+  await expect(page.getByRole("heading", { name: "Projects & Goals" })).toBeVisible();
+
+  await page.getByRole("button", { name: "New goal" }).click();
+  await page.getByLabel("Goal", { exact: true }).fill("Complete the semester");
+  await page.getByLabel("Why it matters").fill("Graduate with a strong final result.");
+  await page
+    .getByLabel("Success looks like")
+    .fill("Every assignment is submitted and the thesis is accepted.");
+  await page.getByRole("button", { name: "Create goal" }).click();
+
+  await page.getByRole("button", { name: "New project" }).click();
+  await page.getByRole("button", { name: /Assignment or thesis/ }).click();
+  await page.getByLabel("Project name").fill("Submit thesis");
+  await page.getByLabel("Observable outcome").fill("The final thesis is submitted and accepted.");
+  await page.getByLabel("Supports goal").selectOption({ label: "Complete the semester" });
+  await page.getByRole("button", { name: "Create project" }).click();
+
+  await expect(page.getByLabel("Project name")).toHaveValue("Submit thesis");
+  await expect(
+    page.locator('.milestone-list input[value="Requirements understood"]'),
+  ).toBeVisible();
+  const milestoneTitle = page.getByLabel("Milestone title: Requirements understood");
+  await milestoneTitle.press("End");
+  await milestoneTitle.type(" and approved");
+  await expect(milestoneTitle).toHaveValue("Requirements understood and approved");
+  await milestoneTitle.press("Tab");
+  await expect(
+    page.getByLabel("Milestone title: Requirements understood and approved"),
+  ).toHaveValue("Requirements understood and approved");
+  await page.getByLabel("Calendar item title").fill("Send draft to supervisor");
+  await page.getByLabel("Calendar item date").fill("2026-08-10");
+  await page.locator(".project-item-form").getByRole("button", { name: "Add" }).click();
+  await expect(page.getByText("Send draft to supervisor", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Back to projects" }).click();
+  await expect(page.locator(".project-card h3", { hasText: "Submit thesis" })).toBeVisible();
+  await page.screenshot({ path: "test-results/projects-portfolio.png", fullPage: true });
+});
+
+test("plans, runs and reviews a connected Focus session", async ({ page }) => {
+  await completeOnboarding(page);
+  await page.locator(".module-rail button").filter({ hasText: "Focus" }).click();
+  await expect(page.getByRole("heading", { name: "Focus", exact: true })).toBeVisible();
+
+  await page.getByLabel("New priority").fill("Review the distributed systems chapter");
+  await page.getByLabel("Priority planned minutes").fill("25");
+  await page.getByRole("button", { name: "Add priority" }).click();
+  await expect(
+    page
+      .locator(".focus-priority-list")
+      .getByText("Review the distributed systems chapter", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/focus-today.png", fullPage: true });
+
+  await page
+    .getByRole("button", { name: "Focus on Review the distributed systems chapter" })
+    .click();
+  await expect(page.getByText("Remaining", { exact: true })).toBeVisible();
+  const focusTimer = page.locator(".focus-timer-ring");
+  const miniPlayer = page.locator(".focus-mini-player");
+  await expect(miniPlayer).toBeVisible();
+  await expect
+    .poll(async () => {
+      const [mainSession, miniSession, mainTime, miniTime] = await Promise.all([
+        focusTimer.getAttribute("data-focus-session-id"),
+        miniPlayer.getAttribute("data-focus-session-id"),
+        focusTimer.getAttribute("data-focus-time"),
+        miniPlayer.getAttribute("data-focus-time"),
+      ]);
+      return mainSession === miniSession && mainTime === miniTime;
+    })
+    .toBe(true);
+  await page.getByRole("button", { name: "Pause", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Resume", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Resume", exact: true }).click();
+  await page.getByLabel("Distraction note").fill("Check the course chat later");
+  await page.getByRole("button", { name: "Capture distraction" }).click();
+  await expect(page.getByText("Check the course chat later", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Finish & review" }).click();
+  await page.getByLabel("Focus outcome").fill("The chapter summary is complete.");
+  await page.getByLabel("Focus next action").fill("Create five flashcards.");
+  await page.getByRole("button", { name: "Save review" }).click();
+  await page.getByRole("button", { name: "History" }).click();
+  await expect(page.getByText("The chapter summary is complete.")).toBeVisible();
+  await page.getByRole("button", { name: "Insights" }).click();
+  await expect(page.getByRole("heading", { name: "Actual focused minutes" })).toBeVisible();
+  await page.screenshot({ path: "test-results/focus-insights.png", fullPage: true });
+});
+
 test("customizes and replaces both starter workspaces during onboarding", async ({ page }) => {
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Dark" }).click();
@@ -48,12 +141,17 @@ test("configures OpenRouter during onboarding and manages its API key in setting
   page,
 }) => {
   await page.getByRole("button", { name: "Continue" }).click();
+  const diornaTheme = page.locator(".choice.theme-diorna");
+  await expect(diornaTheme).toHaveClass(/selected/);
+  await expect(diornaTheme).toHaveCSS("background-color", "rgb(243, 239, 224)");
+  await expect(diornaTheme).toHaveCSS("color", "rgb(63, 100, 149)");
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("OpenRouter API key").fill("sk-or-v1-test-only");
   await page.screenshot({ path: "test-results/openrouter-onboarding.png", fullPage: true });
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Enter Diorna" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "diorna");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.locator(".settings-layout aside").getByRole("button", { name: "Recap" }).click();
   await expect(page.getByLabel("OpenRouter API key")).toHaveValue("");
@@ -90,6 +188,12 @@ test("plans, previews, creates, and undoes workspace content with Diorna AI", as
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({
+          usage: {
+            prompt_tokens: 1200,
+            completion_tokens: 800,
+            total_tokens: 2000,
+            cost: 0.0042,
+          },
           choices: [
             {
               message: {
@@ -193,6 +297,8 @@ test("plans, previews, creates, and undoes workspace content with Diorna AI", as
   await expect(preview.getByText("AI Coffee Business", { exact: true })).toBeVisible();
   await expect(preview.getByText("AI Football", { exact: true })).toBeVisible();
   await expect(preview.getByText("AI Stretch", { exact: true })).toBeVisible();
+  await expect(drawer.getByLabel("AI request usage")).toContainText("2,000 tokens");
+  await expect(drawer.getByLabel("AI request usage")).toContainText("$0.0042");
   expect(submittedPayload).toMatchObject({
     workspace: "University",
     timezone: "Europe/Brussels",
@@ -217,6 +323,77 @@ test("plans, previews, creates, and undoes workspace content with Diorna AI", as
   ).toHaveCount(0);
 });
 
+test("previews, applies, and undoes an AI restructure of the current Map", async ({ page }) => {
+  await page.route("**/chat/completions", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        usage: {
+          prompt_tokens: 500,
+          completion_tokens: 300,
+          total_tokens: 800,
+          cost: 0.001,
+        },
+        choices: [
+          {
+            message: {
+              content: JSON.stringify({
+                version: 1,
+                summary: "Reorganize the Gym Map around a clear training goal.",
+                assumptions: [],
+                operations: [
+                  {
+                    id: "gym-map",
+                    type: "create_map",
+                    name: "Gym",
+                    nodes: [
+                      {
+                        id: "goal",
+                        kind: "text",
+                        title: "Training goal",
+                        locked: true,
+                      },
+                      {
+                        id: "programme",
+                        kind: "text",
+                        title: "Programme",
+                        locked: false,
+                      },
+                    ],
+                    edges: [{ from: "goal", to: "programme", label: "is delivered by" }],
+                  },
+                ],
+              }),
+            },
+          },
+        ],
+      }),
+    });
+  });
+  page.on("dialog", (dialog) => void dialog.accept());
+
+  await completeOnboarding(page, "sk-or-v1-e2e-only");
+  await page.getByLabel("Workspace").selectOption("workspace-personal");
+  await page.getByRole("button", { name: "Maps Ctrl 2" }).click();
+  await expect(page.getByLabel("Current map")).toHaveValue("map-gym");
+  await expect(page.locator(".react-flow__node")).toHaveCount(4);
+
+  await page.getByRole("button", { name: "Diorna AI" }).click();
+  const drawer = page.getByRole("region", { name: "Diorna AI" });
+  await drawer.getByRole("button", { name: /Restructure current Map/ }).click();
+  await drawer.getByLabel("Ask Diorna AI").fill("Create a clearer hierarchy with one main goal.");
+  await drawer.getByRole("button", { name: "Plan", exact: true }).click();
+  const preview = drawer.getByLabel("AI plan preview");
+  await expect(preview.getByText("Review before updating")).toBeVisible();
+  await preview.getByRole("button", { name: "Apply 1 action" }).click();
+
+  await expect(drawer.getByRole("heading", { name: "Updated in Studio" })).toBeVisible();
+  await expect(page.locator(".react-flow__node")).toHaveCount(2);
+  await drawer.getByRole("button", { name: "Undo this batch" }).click();
+  await expect(page.locator(".react-flow__node")).toHaveCount(4);
+});
+
 test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page }) => {
   const errors: string[] = [];
   page.on("console", (message) => {
@@ -230,14 +407,105 @@ test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page })
   await expect(page.locator(".react-flow__node")).toHaveCount(4);
   await expect(page.getByText("Programme", { exact: true })).toBeVisible();
   await expect(page.getByText("Stretching", { exact: true })).toBeVisible();
+  const viewport = page.locator(".react-flow__viewport");
+  const viewportBeforePan = await viewport.getAttribute("style");
+  const panStart = await page.evaluate(() => {
+    const pane = document.querySelector<HTMLElement>(".react-flow__pane");
+    if (!pane) return undefined;
+    const rect = pane.getBoundingClientRect();
+    for (const [x, y] of [
+      [0.75, 0.2],
+      [0.75, 0.7],
+      [0.25, 0.8],
+      [0.5, 0.85],
+    ]) {
+      const point = { x: rect.left + rect.width * x, y: rect.top + rect.height * y };
+      if (document.elementFromPoint(point.x, point.y)?.classList.contains("react-flow__pane"))
+        return point;
+    }
+    return undefined;
+  });
+  if (!panStart) throw new Error("Map has no empty area available for panning");
+  await page.mouse.move(panStart.x, panStart.y);
+  await page.mouse.down();
+  await page.mouse.move(panStart.x + 60, panStart.y + 35, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(() => viewport.getAttribute("style")).not.toBe(viewportBeforePan);
   await page.getByTitle("Text card").click();
   await expect(page.locator(".react-flow__node")).toHaveCount(5);
   await page.getByLabel("Undo").click();
   await expect(page.locator(".react-flow__node")).toHaveCount(4);
   await page.getByLabel("Redo").click();
   await expect(page.locator(".react-flow__node")).toHaveCount(5);
-  await page.getByText("New idea", { exact: true }).click();
+  await page.locator(".react-flow__node").getByText("New idea", { exact: true }).last().click();
   await expect(page.locator(".right-panel").getByLabel("Node text")).toBeVisible();
+  await page.getByLabel("Text card style").selectOption("title");
+  await expect(page.locator(".react-flow__node.selected .canvas-card")).toHaveClass(
+    /text-style-title/,
+  );
+  const nodeCountBeforeConnect = await page.locator(".react-flow__node").count();
+  const edgeCountBeforeConnect = await page.locator(".react-flow__edge").count();
+  const sourceHandle = page
+    .locator('.react-flow__node.selected [data-handleid="source-right"]')
+    .first();
+  const sourceHandleBox = await sourceHandle.boundingBox();
+  const selectedNodeBox = await page.locator(".react-flow__node.selected").boundingBox();
+  if (!sourceHandleBox || !selectedNodeBox) throw new Error("Map connector handle is not visible");
+  const handleAtPointer = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.getAttribute("data-handleid") ?? "not-a-handle",
+    {
+      x: sourceHandleBox.x + sourceHandleBox.width / 2,
+      y: sourceHandleBox.y + sourceHandleBox.height / 2,
+    },
+  );
+  expect(handleAtPointer).toBe("source-right");
+  const connectionTarget = await page.evaluate(() => {
+    const pane = document.querySelector<HTMLElement>(".react-flow__pane");
+    if (!pane) return undefined;
+    const rect = pane.getBoundingClientRect();
+    for (let row = 1; row < 9; row += 1) {
+      for (let column = 1; column < 9; column += 1) {
+        const point = {
+          x: rect.left + (rect.width * column) / 10,
+          y: rect.top + (rect.height * row) / 10,
+        };
+        if (document.elementFromPoint(point.x, point.y)?.classList.contains("react-flow__pane"))
+          return point;
+      }
+    }
+    return undefined;
+  });
+  if (!connectionTarget) throw new Error("Map has no empty connector target");
+  await page.mouse.move(
+    sourceHandleBox.x + sourceHandleBox.width / 2,
+    sourceHandleBox.y + sourceHandleBox.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(connectionTarget.x, connectionTarget.y, { steps: 10 });
+  await page.mouse.up();
+  await expect(page.locator(".react-flow__node")).toHaveCount(nodeCountBeforeConnect + 1);
+  const edgeMetadata = await page.locator(".react-flow__edge").evaluateAll((elements) =>
+    elements.map((element) => ({
+      id: element.getAttribute("data-id"),
+      label: element.getAttribute("aria-label"),
+    })),
+  );
+  expect(edgeMetadata, JSON.stringify(edgeMetadata)).toHaveLength(edgeCountBeforeConnect + 1);
+  const edge = page.locator(".react-flow__edge-interaction").first();
+  const edgePoint = await edge.evaluate((element) => {
+    const path = element as SVGPathElement;
+    const point = path.getPointAtLength(path.getTotalLength() / 2);
+    const matrix = path.getScreenCTM();
+    if (!matrix) return undefined;
+    return {
+      x: matrix.a * point.x + matrix.c * point.y + matrix.e,
+      y: matrix.b * point.x + matrix.d * point.y + matrix.f,
+    };
+  });
+  if (!edgePoint) throw new Error("Map edge has no clickable midpoint");
+  await page.mouse.click(edgePoint.x, edgePoint.y);
+  await expect(page.getByLabel("Edge inspector")).toBeVisible();
+  await page.locator(".react-flow__node").getByText("New idea", { exact: true }).last().click();
   await expect(page.locator(".canvas-wrap .map-inspector")).toHaveCount(0);
   await page.getByRole("button", { name: "Close inspector" }).click();
   await expect(page.getByRole("button", { name: "Open node inspector" })).toBeVisible();
@@ -263,7 +531,7 @@ test("onboards, isolates workspaces, and opens the Gym canvas", async ({ page })
   const breadcrumb = page.getByRole("navigation", { name: "Map breadcrumb" });
   await expect(breadcrumb.getByRole("button", { name: "Gym" })).toBeVisible();
   await breadcrumb.getByRole("button", { name: "Gym" }).click();
-  await expect(page.locator(".react-flow__node")).toHaveCount(5);
+  await expect(page.locator(".react-flow__node")).toHaveCount(nodeCountBeforeConnect + 1);
   await page.getByRole("button", { name: /Present/ }).click();
   await expect(page.locator(".map-module.presenting")).toBeVisible();
   await page.getByRole("button", { name: "Exit" }).click();
@@ -412,7 +680,7 @@ test("keeps linked map notes current with complete rich media", async ({ page })
 
   await page.getByRole("button", { name: "Maps Ctrl 2" }).click();
   await page.getByRole("button", { name: "Add node" }).click();
-  await page.getByText("New idea", { exact: true }).click();
+  await page.locator(".react-flow__node").getByText("New idea", { exact: true }).click();
   await page.getByLabel("Node type").selectOption("note");
   await page.getByLabel("Linked note").selectOption({ label: "Map live note" });
   const noteNode = page.locator(".react-flow__node:has(.canvas-card.type-note)");
@@ -533,10 +801,96 @@ test("defines, backfills, analyses, and restores daily series", async ({ page })
   expect(errors).toEqual([]);
 });
 
+test("creates, schedules, repeats, and analyses a Training session", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await completeOnboarding(page);
+  await page.getByLabel("Workspace").selectOption("workspace-personal");
+  await page.getByRole("button", { name: "Training Ctrl 5" }).click();
+  await expect(page.getByRole("heading", { name: "Create your first activity" })).toBeVisible();
+  await page.getByRole("button", { name: "Strength" }).click();
+
+  await page.locator(".training-tabs").getByRole("button", { name: "Library" }).click();
+  await expect(page.getByRole("heading", { name: "Activity library" })).toBeVisible();
+  await expect(
+    page
+      .locator(".training-library-panel")
+      .filter({ has: page.getByRole("heading", { name: "Exercises" }) })
+      .getByText("Leg curl", { exact: true }),
+  ).toBeVisible();
+  const exerciseSearch = page.getByLabel("Search or create exercise");
+  await exerciseSearch.fill("leg");
+  await expect(page.getByRole("button", { name: "Add Single-leg curl" })).toBeVisible();
+  await exerciseSearch.fill("Dragon flag raise");
+  await expect(page.getByText("No catalogue match. You can still create it below.")).toBeVisible();
+  await page.getByLabel("Weight tracking", { exact: true }).selectOption("bodyweight");
+  await page.getByRole("button", { name: "Create “Dragon flag raise”" }).click();
+  await expect(
+    page.locator(".training-library-list").getByText("Dragon flag raise", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Weight tracking for Dragon flag raise")).toHaveValue("bodyweight");
+  await page.getByLabel("Template name").fill("Leg day");
+  const legCurlTemplateRow = page
+    .locator(".training-template-checklist label")
+    .filter({ hasText: "Leg curl" });
+  await legCurlTemplateRow.getByRole("checkbox").check();
+  await legCurlTemplateRow.getByRole("spinbutton").fill("3");
+  await page.getByRole("button", { name: "Save template" }).click();
+
+  await page.locator(".training-tabs").getByRole("button", { name: "Session" }).click();
+  const templateCard = page.locator(".training-template-card").filter({ hasText: "Leg day" });
+  await expect(templateCard).toBeVisible();
+  await templateCard.getByRole("button", { name: "Schedule Leg day" }).click();
+  const scheduleDialog = page.getByRole("dialog", { name: "Schedule training" });
+  await scheduleDialog.getByRole("button", { name: "Add to Calendar" }).click();
+  await expect(page.getByText("Leg day added to Calendar")).toBeVisible();
+
+  await templateCard.getByRole("button", { name: "Start", exact: true }).click();
+  const legCurlCard = page.locator(".training-exercise-card").filter({ hasText: "Leg curl" });
+  await expect(legCurlCard.getByText("Previous: No previous result")).toBeVisible();
+  await legCurlCard.getByLabel("Set 1 load").fill("25");
+  await legCurlCard.getByLabel("Set 1 repetitions").fill("20");
+  await legCurlCard.getByRole("button", { name: "Mark complete set 1" }).click();
+  await page.getByLabel("Search exercise to add").fill("Dragon");
+  await page.getByRole("button", { name: "Add Dragon flag raise to session" }).click();
+  const bodyweightCard = page
+    .locator(".training-exercise-card")
+    .filter({ hasText: "Dragon flag raise" });
+  await expect(bodyweightCard.getByLabel("Set 1 load")).toHaveCount(0);
+  await bodyweightCard.getByLabel("Set 1 repetitions").fill("8");
+  await bodyweightCard.getByRole("button", { name: "Mark complete set 1" }).click();
+  await page.locator(".training-finish-button").click();
+  await expect(page.getByRole("heading", { name: "History" })).toBeVisible();
+  await expect(page.getByText("25 kg × 20")).toBeVisible();
+
+  await page.getByRole("button", { name: "Repeat" }).click();
+  const repeatedLegCurlCard = page
+    .locator(".training-exercise-card")
+    .filter({ hasText: "Leg curl" });
+  await expect(repeatedLegCurlCard.getByText("Previous:", { exact: false })).toContainText(
+    "25 kg × 20",
+  );
+  await repeatedLegCurlCard.getByLabel("Set 1 load").fill("27.5");
+  await repeatedLegCurlCard.getByLabel("Set 1 repetitions").fill("20");
+  await repeatedLegCurlCard.getByRole("button", { name: "Mark complete set 1" }).click();
+  await page.locator(".training-finish-button").click();
+  await page.locator(".training-tabs").getByRole("button", { name: "Progress" }).click();
+  await expect(page.getByRole("heading", { name: "Progress" })).toBeVisible();
+  await expect(
+    page.locator(".training-progress-chart .recharts-responsive-container"),
+  ).toBeVisible();
+
+  await page.getByRole("button", { name: "Daily Ctrl 4" }).click();
+  await expect(page.locator(".habit-name").filter({ hasText: "Strength" })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("creates a deterministic recap and stores it as a note", async ({ page }) => {
   await completeOnboarding(page);
   await page.getByLabel("Workspace").selectOption("workspace-personal");
-  await page.getByRole("button", { name: "Recap Ctrl 5" }).click();
+  await page.getByRole("button", { name: "Recap Ctrl 6" }).click();
   await page.getByRole("button", { name: "Generate now" }).click();
   await expect(
     page.getByText("Every figure below is traceable to local statistics."),
@@ -570,6 +924,10 @@ test("plans, recurs, completes, and reloads a calendar item", async ({ page }) =
   await completeOnboarding(page);
   await page.getByRole("button", { name: "Calendar Ctrl 3" }).click();
   await expect(page.locator(".calendar-page")).toBeVisible();
+  await expect(page.locator(".hour-labels span").first()).toHaveText("07:00");
+  await expect(page.locator(".hour-labels span").last()).toHaveText("19:00");
+  await expect(page.locator(".timeline-day.today")).toBeVisible();
+  await expect(page.locator(".calendar-range-context").getByText("This week")).toBeVisible();
   await page.getByRole("button", { name: "New item" }).click();
   const dialog = page.getByRole("dialog", { name: "New calendar item" });
   await expect(dialog).toBeVisible();
@@ -605,7 +963,7 @@ test("plans, recurs, completes, and reloads a calendar item", async ({ page }) =
     page.locator(".agenda-view article").filter({ hasText: "Calendar acceptance review" }).first(),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/calendar-workflow.png", fullPage: true });
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.locator(".sidebar-bottom").getByRole("button", { name: "Settings" }).click();
   await page.locator(".settings-layout aside").getByRole("button", { name: "Categories" }).click();
   await page.getByRole("button", { name: "New category" }).click();
   await page
@@ -617,6 +975,16 @@ test("plans, recurs, completes, and reloads a calendar item", async ({ page }) =
   await expect(
     page.locator(".category-filter").getByRole("button", { name: "Focus" }),
   ).toBeVisible();
+  await page.locator(".sidebar-bottom").getByRole("button", { name: "Settings" }).click();
+  await page.locator(".settings-layout aside").getByRole("button", { name: "Calendar" }).click();
+  await page.getByLabel("First visible hour").fill("8");
+  await page.getByLabel("Last visible hour").fill("18");
+  await page.getByLabel("Calendar hour height").fill("80");
+  await page.getByRole("button", { name: "Calendar Ctrl 3" }).click();
+  await page.getByRole("button", { name: "W", exact: true }).click();
+  await expect(page.locator(".hour-labels span").first()).toHaveText("08:00");
+  await expect(page.locator(".hour-labels span").last()).toHaveText("17:00");
+  await expect(page.locator(".timeline-day > i").first()).toHaveCSS("height", "80px");
   expect(errors).toEqual([]);
 });
 
@@ -640,9 +1008,17 @@ test("moves a calendar event to another day in month view", async ({ page }) => 
     String(target.getMonth() + 1).padStart(2, "0"),
     String(target.getDate()).padStart(2, "0"),
   ].join("-");
+  await event.scrollIntoViewIfNeeded();
+  await page.locator(`[data-date="${targetDate}"]`).scrollIntoViewIfNeeded();
   const sourceBox = await event.boundingBox();
   const targetBox = await page.locator(`[data-date="${targetDate}"]`).boundingBox();
   if (!sourceBox || !targetBox) throw new Error("Calendar drag source or target is not visible");
+  const dateAtTarget = await page.evaluate(
+    ({ x, y }) =>
+      document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-date]")?.dataset.date ?? "",
+    { x: targetBox.x + targetBox.width / 2, y: targetBox.y + targetBox.height / 2 },
+  );
+  expect(dateAtTarget).toBe(targetDate);
   await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
   await page.mouse.down();
   await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
@@ -697,6 +1073,74 @@ test("organises, annotates, searches, and revises notes", async ({ page }) => {
   await page.getByRole("button", { name: "Revision history" }).click();
   await expect(page.getByRole("complementary", { name: "Revision history" })).toBeVisible();
   await page.screenshot({ path: "test-results/notes-workflow.png", fullPage: true });
+});
+
+test("creates cached rich link previews in notes and maps", async ({ page }) => {
+  test.setTimeout(45_000);
+  await page.route("https://preview.test/**", async (route) => {
+    if (route.request().url().endsWith(".png")) {
+      await route.fulfill({
+        status: 200,
+        contentType: "image/png",
+        body: Buffer.from(
+          "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mNkYPj/n4GBgYGJAQoAHgQCAf2WGHgAAAAASUVORK5CYII=",
+          "base64",
+        ),
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: `
+        <title>Fallback title</title>
+        <meta property="og:title" content="A richer linked article">
+        <meta property="og:description" content="The useful context appears before opening the page.">
+        <meta property="og:site_name" content="Preview Journal">
+        <meta property="og:image" content="/cover.png">
+        <link rel="icon" href="/favicon.png">
+      `,
+    });
+  });
+
+  await completeOnboarding(page);
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  await page.getByRole("button", { name: "New note" }).click();
+  await page.getByRole("button", { name: "Insert link" }).click();
+  const dialog = page.getByRole("dialog", { name: "Insert link" });
+  await dialog.getByLabel("Web address").fill("https://preview.test/article#section");
+  await dialog.getByRole("button", { name: "Preview card" }).click();
+  const notePreview = page.locator(".link-preview-node");
+  await expect(notePreview.getByText("A richer linked article")).toBeVisible();
+  await expect(
+    notePreview.getByText("The useful context appears before opening the page."),
+  ).toBeVisible();
+  await expect(notePreview.getByText("Preview Journal")).toBeVisible();
+  await expect(notePreview.locator(".link-preview-image:not(.placeholder)")).toBeVisible();
+  await expect(notePreview.getByRole("button", { name: /Refresh .* preview/ })).toBeVisible();
+  await page.screenshot({ path: "test-results/rich-link-preview-note.png", fullPage: true });
+  await page.waitForTimeout(800);
+  await page.reload();
+  await expect(
+    page.locator(".link-preview-node").getByText("A richer linked article"),
+  ).toBeVisible();
+
+  await page.getByLabel("Workspace").selectOption("workspace-personal");
+  await page.getByRole("button", { name: "Maps Ctrl 2" }).click();
+  await page.getByTitle("Link node").click();
+  const inspector = page.locator(".right-panel");
+  await inspector.getByLabel("Link URL").fill("https://preview.test/article");
+  await inspector.getByLabel("Link URL").blur();
+  const mapPreview = page.locator(".canvas-card.type-link").filter({
+    hasText: "A richer linked article",
+  });
+  await expect(mapPreview).toBeVisible();
+  await expect(
+    mapPreview.getByText("The useful context appears before opening the page."),
+  ).toBeVisible();
+  await expect(mapPreview.locator(".canvas-link-image")).toBeVisible();
+  await expect(inspector.getByRole("button", { name: "Refresh" })).toBeVisible();
+  await page.screenshot({ path: "test-results/rich-link-previews.png", fullPage: true });
 });
 
 test("creates and follows a visual child page with the slash command", async ({ page }) => {
@@ -784,7 +1228,7 @@ test("expands a complete nested note tree into connected map nodes", async ({ pa
   await expect(page.locator(".react-flow__node")).toHaveCount(4);
   const existingEdgeCount = await page.locator(".react-flow__edge").count();
   await page.getByRole("button", { name: "Add node" }).click();
-  await page.getByText("New idea", { exact: true }).click();
+  await page.locator(".react-flow__node").getByText("New idea", { exact: true }).click();
   const inspector = page.locator(".right-panel");
   await inspector.getByLabel("Node type").selectOption("note");
   await inspector.getByLabel("Linked note").selectOption({ label: "Map root" });
@@ -864,12 +1308,54 @@ test("creates a course lecture and reviews an authored flashcard", async ({ page
 test("customizes the dashboard, split layout, appearance, and keymap", async ({ page }) => {
   await completeOnboarding(page);
 
+  await expect(page.locator(".right-panel")).toBeHidden();
+  const habit = page.locator(".mini-habits > button").first();
+  const marker = habit.locator("i");
+  const initiallyDone = await marker.evaluate((element) => element.classList.contains("done"));
+  await habit.click();
+  await expect(marker).toHaveClass(initiallyDone ? "" : "done");
+  await habit.click();
+  await expect(marker).toHaveClass(initiallyDone ? "done" : "");
+
+  const firstWidget = page.locator("[data-widget-id]").nth(0);
+  const secondWidget = page.locator("[data-widget-id]").nth(1);
+  const handle = page.getByRole("button", { name: "Move Today’s completion" });
+  const handleBox = await handle.boundingBox();
+  const targetBox = await secondWidget.boundingBox();
+  if (!handleBox || !targetBox) throw new Error("Dashboard drag handle is not visible");
+  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(targetBox.x + targetBox.width / 2, targetBox.y + targetBox.height / 2, {
+    steps: 8,
+  });
+  await page.mouse.up();
+  await expect(firstWidget).toHaveAttribute("data-widget-id", "agenda");
+
   await page.getByText("Customize", { exact: true }).click();
   const flashcardsToggle = page.getByRole("checkbox", { name: "Flashcards due" });
   await flashcardsToggle.uncheck();
   await expect(page.getByText("Flashcards due today", { exact: true })).toHaveCount(0);
   await flashcardsToggle.check();
   await expect(page.getByText("Flashcards due today", { exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "Notes Ctrl 1" }).click();
+  const contextResizer = page.getByRole("separator", { name: "Resize context panel" });
+  await expect(contextResizer).toBeVisible();
+  const originalPanelWidth = Number(await contextResizer.getAttribute("aria-valuenow"));
+  await contextResizer.press("ArrowLeft");
+  await expect(contextResizer).toHaveAttribute("aria-valuenow", String(originalPanelWidth + 10));
+  const noteContext = page.locator(".note-context-actions");
+  await noteContext.getByRole("textbox", { name: "Add tag" }).fill("acceptance");
+  await noteContext.getByRole("textbox", { name: "Add tag" }).press("Enter");
+  await expect(page.locator(".context-tags")).toContainText("#acceptance");
+  await noteContext.getByRole("textbox", { name: "New folder" }).fill("Acceptance");
+  await noteContext.getByRole("textbox", { name: "New folder" }).press("Enter");
+  await expect(
+    noteContext
+      .locator("label")
+      .filter({ hasText: /^Folder/ })
+      .locator("select"),
+  ).toHaveValue("Acceptance");
 
   await page.getByRole("button", { name: "Split pane right" }).click();
   await expect(page.locator(".workspace-pane")).toHaveCount(2);
@@ -879,6 +1365,20 @@ test("customizes the dashboard, split layout, appearance, and keymap", async ({ 
 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByRole("button", { name: "Appearance" }).click();
+  await page.locator(".settings-content").getByRole("button", { name: "Diorna theme" }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-theme", "diorna");
+  await expect(page.locator("body")).toHaveCSS("background-color", "rgb(243, 239, 224)");
+  const brandedThemeAccessibility = await new AxeBuilder({ page })
+    .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
+    .analyze();
+  expect(
+    brandedThemeAccessibility.violations.map(({ id, impact, nodes }) => ({
+      id,
+      impact,
+      targets: nodes.map((node) => node.target),
+    })),
+    "Diorna theme accessibility violations",
+  ).toEqual([]);
   await page.getByLabel("Interface font").selectOption("Inter");
   await page.getByLabel("Editor font size").fill("18");
   await expect(page.locator("html")).toHaveCSS("--editor-font-size", "18px");
@@ -933,7 +1433,18 @@ test("duplicates, trashes, and restores a note", async ({ page }) => {
 
 test("meets the shell accessibility gate and switches to French", async ({ page }) => {
   await completeOnboarding(page);
-  for (const module of ["Home", "Notes", "Maps", "Calendar", "Daily", "Recap", "Settings"]) {
+  for (const module of [
+    "Home",
+    "Notes",
+    "Maps",
+    "Calendar",
+    "Daily",
+    "Training",
+    "Projects",
+    "Focus",
+    "Recap",
+    "Settings",
+  ]) {
     await page
       .getByRole("button", { name: module === "Home" ? "Home" : new RegExp(`^${module}`) })
       .first()

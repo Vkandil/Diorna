@@ -19,13 +19,19 @@ npm ci
 npm run check
 npx playwright install chromium
 npm run test:e2e
-npm run tauri build -- --bundles msi,nsis
+npx tauri build
 ```
 
-Outputs are under `src-tauri/target/release/bundle`. The Tauri configuration
-builds English/French MSI and per-user NSIS packages and includes the WebView2
-evergreen bootstrapper. ARM64 uses `rustup target add aarch64-pc-windows-msvc`
-and `--target aarch64-pc-windows-msvc`.
+The local command creates the testable installer at
+`src-tauri/target/release/bundle/nsis/Diorna_<version>_x64-setup.exe` and the
+unpacked executable at `src-tauri/target/release/diorna.exe`. The NSIS
+installer includes the WebView2 evergreen bootstrapper and supports English
+and French.
+
+Release CI overrides the local NSIS-only default with `--bundles msi,nsis` to
+produce both signed installer formats. ARM64 uses
+`rustup target add aarch64-pc-windows-msvc` and
+`--target aarch64-pc-windows-msvc`.
 
 ## Signing
 
@@ -40,6 +46,34 @@ development artifact and must not be promoted.
 The Tauri updater also requires a separate update-signing key in protected CI
 secrets and its public key in `tauri.conf.json`. Portable packages disable
 automatic update checks and place the vault beside `Diorna.exe`.
+
+Generate the updater key once on an offline or trusted Windows machine. Keep
+the private file and password outside the repository:
+
+```powershell
+$diornaKeyDir = Join-Path $env:USERPROFILE ".tauri"
+New-Item -ItemType Directory -Force -Path $diornaKeyDir | Out-Null
+$diornaPrivateKey = Join-Path $diornaKeyDir "diorna-updater.key"
+npx tauri signer generate --write-keys $diornaPrivateKey
+```
+
+Create these GitHub Actions repository secrets:
+
+- `TAURI_UPDATER_PRIVATE_KEY`: complete contents of `diorna-updater.key`
+- `TAURI_UPDATER_PRIVATE_KEY_PASSWORD`: the password entered at generation
+- `TAURI_UPDATER_PUBLIC_KEY`: complete contents of `diorna-updater.key.pub`
+- `WINDOWS_CERTIFICATE`: base64 contents of the Authenticode `.pfx`
+- `WINDOWS_CERTIFICATE_PASSWORD`: password of that `.pfx`
+
+Copy the PFX as base64 without printing it into terminal history:
+
+```powershell
+$diornaPfx = (Resolve-Path "C:\secure\Diorna-signing.pfx").Path
+[Convert]::ToBase64String([IO.File]::ReadAllBytes($diornaPfx)) | Set-Clipboard
+```
+
+Paste the clipboard into the `WINDOWS_CERTIFICATE` secret. Never place either
+signing private key in a repository variable, workflow file, issue, or log.
 
 ## Release procedure
 

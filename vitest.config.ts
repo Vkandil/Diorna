@@ -22,7 +22,7 @@ export default defineConfig({
         "src/modules/student/bibliography.ts",
         "src/modules/notes/logic.ts",
       ],
-      thresholds: { lines: 80, functions: 80, statements: 80, branches: 75 },
+      thresholds: { lines: 80, functions: 80, statements: 80, branches: 80 },
     },
   },
 });

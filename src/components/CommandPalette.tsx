@@ -6,7 +6,9 @@ import {
   Columns2,
   Command,
   Download,
+  Dumbbell,
   FileText,
+  FolderKanban,
   Grid3X3,
   Hash,
   Home,
@@ -17,6 +19,7 @@ import {
   Search,
   Settings,
   Sparkles,
+  Timer,
   Upload,
   type LucideIcon,
 } from "lucide-react";
@@ -130,24 +133,63 @@ export function CommandPalette() {
           state.addMetric({ name: "New metric", unit: "value", categoryId: category.id });
         state.setModule("daily");
       }),
-      ...(["home", "notes", "maps", "calendar", "daily", "recap", "settings"] as ModuleId[]).map(
-        (module) =>
-          command(
-            `open-${module}`,
-            module[0]!.toUpperCase() + module.slice(1),
-            "Open module",
-            module === "home"
-              ? Home
-              : module === "maps"
-                ? MapIcon
-                : module === "settings"
-                  ? Settings
-                  : module === "recap"
-                    ? Sparkles
-                    : Command,
-            () => state.setModule(module),
-            module,
-          ),
+      command("startTraining", "Start training", "Open your Training module", Dumbbell, () =>
+        state.setModule("training"),
+      ),
+      command("startFocus", "Start focus", "Open the Focus studio", Timer, () =>
+        state.setModule("focus"),
+      ),
+      command(
+        "newProject",
+        "New project",
+        "Create a project in the current workspace",
+        FolderKanban,
+        () => {
+          const project = state.addProject({
+            name: "Untitled project",
+            outcome: "",
+            kind: "custom",
+            status: "idea",
+          });
+          state.openTab({ module: "projects", title: project.name, entityId: project.id });
+        },
+      ),
+      ...(
+        [
+          "home",
+          "notes",
+          "maps",
+          "calendar",
+          "daily",
+          "training",
+          "recap",
+          "projects",
+          "focus",
+          "settings",
+        ] as ModuleId[]
+      ).map((module) =>
+        command(
+          `open-${module}`,
+          module[0]!.toUpperCase() + module.slice(1),
+          "Open module",
+          module === "home"
+            ? Home
+            : module === "maps"
+              ? MapIcon
+              : module === "settings"
+                ? Settings
+                : module === "recap"
+                  ? Sparkles
+                  : module === "projects"
+                    ? FolderKanban
+                    : module === "focus"
+                      ? Timer
+                      : module === "training"
+                        ? Dumbbell
+                        : Command,
+          () => state.setModule(module),
+          module,
+        ),
       ),
       command(
         "toggleSidebar",

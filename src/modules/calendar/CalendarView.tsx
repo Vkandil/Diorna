@@ -34,7 +34,7 @@ import {
 } from "lucide-react";
 import { selectWorkspace, useDiornaStore } from "@/core/store";
 import { createId } from "@/shared/id";
-import type { CalendarItem, Category, Course, Note, Priority } from "@/shared/models";
+import type { CalendarItem, Category, Course, Note, Priority, Project } from "@/shared/models";
 import { parseQuickItem } from "./parser";
 import { describeRecurrence, occurrencesBetween, type ItemOccurrence } from "./recurrence";
 import { buildRrule, normalizeWholeSeriesEdit, splitRule, type ItemDraft } from "./series";
@@ -62,6 +62,9 @@ export function CalendarView() {
   const notes = selectWorkspace(state.notes, workspaceId).filter((note) => !note.trashedAt);
   const courses = selectWorkspace(state.courses, workspaceId).sort(
     (a, b) => a.sortOrder - b.sortOrder,
+  );
+  const projects = selectWorkspace(state.projects, workspaceId).filter(
+    (project) => !project.archived && project.status !== "cancelled",
   );
   const items = selectWorkspace(state.items, workspaceId).filter((item) => !item.trashedAt);
   const [view, setView] = useState<View>(() =>
@@ -149,6 +152,17 @@ export function CalendarView() {
     () => viewRange(view, date, state.settings.weekStartsOn),
     [date, state.settings.weekStartsOn, view],
   );
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("diorna-calendar-context", {
+        detail: {
+          view,
+          start: range.start.toISOString(),
+          end: range.end.toISOString(),
+        },
+      }),
+    );
+  }, [range.end, range.start, view]);
   const occurrences = useMemo(
     () =>
       items
@@ -560,6 +574,7 @@ export function CalendarView() {
               items={items}
               visibleStart={state.settings.calendarVisibleStart}
               visibleEnd={state.settings.calendarVisibleEnd}
+              hourHeight={state.settings.calendarHourHeight}
               weekStartsOn={state.settings.weekStartsOn}
               onOpen={openOccurrence}
               onMove={moveOccurrence}
@@ -589,6 +604,7 @@ export function CalendarView() {
           categories={categories}
           notes={notes}
           courses={courses}
+          projects={projects}
           defaultReminder={state.settings.defaultReminderMinutes}
           defaultDuration={state.settings.defaultEventDurationMinutes}
           onClose={() => setEditor(null)}
@@ -714,7 +730,7 @@ function MonthView({
     startY: number;
     moved: boolean;
   }>();
-  const suppressOpen = useRef(false);
+  const suppressOpenUntil = useRef(0);
   const start = startOfWeek(startOfMonth(date), { weekStartsOn });
   const end = endOfWeek(endOfMonth(date), { weekStartsOn });
   const days = eachDayOfInterval({ start, end });
@@ -722,65 +738,72 @@ function MonthView({
     weekStartsOn === 1
       ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
       : ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const dateAt = (x: number, y: number) =>
+    document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-date]")?.dataset.date;
+  const clearDrag = () => {
+    pointerDrag.current = undefined;
+    setDraggingId(undefined);
+    setDropDate(undefined);
+  };
+  const movePointerDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = pointerDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= 4) {
+      drag.moved = true;
+      setDraggingId(drag.item.recurrenceId);
+    }
+    if (!drag.moved) return;
+    event.preventDefault();
+    setDropDate(dateAt(event.clientX, event.clientY));
+  };
+  const finishPointerDrag = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const drag = pointerDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const targetDate = drag.moved ? dateAt(event.clientX, event.clientY) : undefined;
+    clearDrag();
+    if (!drag.moved || !targetDate) return;
 
-  useEffect(() => {
-    const dateAt = (x: number, y: number) =>
-      document.elementFromPoint(x, y)?.closest<HTMLElement>("[data-date]")?.dataset.date;
-
-    const clearDrag = () => {
-      pointerDrag.current = undefined;
-      setDraggingId(undefined);
-      setDropDate(undefined);
-    };
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const drag = pointerDrag.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      if (
-        !drag.moved &&
-        Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) >= 4
-      ) {
-        drag.moved = true;
-        setDraggingId(drag.item.recurrenceId);
+    suppressOpenUntil.current = Date.now() + 500;
+    const base = items.find((entry) => entry.id === drag.item.id);
+    if (!base) return;
+    const original = occurrenceDate(drag.item);
+    const moved = localDate(targetDate);
+    moved.setHours(original.getHours(), original.getMinutes(), 0, 0);
+    if (event.ctrlKey) onDuplicate(base, moved);
+    else onMove(drag.item, moved);
+  };
+  const startMouseDrag = (item: ItemOccurrence, event: React.MouseEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let moved = false;
+    const handleMove = (moveEvent: MouseEvent) => {
+      if (!moved && Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) >= 4) {
+        moved = true;
+        setDraggingId(item.recurrenceId);
       }
-      if (!drag.moved) return;
-      event.preventDefault();
-      setDropDate(dateAt(event.clientX, event.clientY));
+      if (!moved) return;
+      moveEvent.preventDefault();
+      setDropDate(dateAt(moveEvent.clientX, moveEvent.clientY));
     };
-
-    const handlePointerUp = (event: PointerEvent) => {
-      const drag = pointerDrag.current;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      const targetDate = drag.moved ? dateAt(event.clientX, event.clientY) : undefined;
+    const handleUp = (upEvent: MouseEvent) => {
+      window.removeEventListener("mousemove", handleMove);
+      window.removeEventListener("mouseup", handleUp);
+      const targetDate = moved ? dateAt(upEvent.clientX, upEvent.clientY) : undefined;
       clearDrag();
-      if (!drag.moved || !targetDate) return;
-
-      suppressOpen.current = true;
-      requestAnimationFrame(() => {
-        suppressOpen.current = false;
-      });
-      const base = items.find((entry) => entry.id === drag.item.id);
+      if (!moved || !targetDate) return;
+      suppressOpenUntil.current = Date.now() + 500;
+      const base = items.find((entry) => entry.id === item.id);
       if (!base) return;
-      const original = occurrenceDate(drag.item);
-      const moved = localDate(targetDate);
-      moved.setHours(original.getHours(), original.getMinutes(), 0, 0);
-      if (event.ctrlKey) onDuplicate(base, moved);
-      else onMove(drag.item, moved);
+      const original = occurrenceDate(item);
+      const next = localDate(targetDate);
+      next.setHours(original.getHours(), original.getMinutes(), 0, 0);
+      if (upEvent.ctrlKey) onDuplicate(base, next);
+      else onMove(item, next);
     };
-
-    const handlePointerCancel = (event: PointerEvent) => {
-      if (pointerDrag.current?.pointerId === event.pointerId) clearDrag();
-    };
-
-    window.addEventListener("pointermove", handlePointerMove, { passive: false });
-    window.addEventListener("pointerup", handlePointerUp);
-    window.addEventListener("pointercancel", handlePointerCancel);
-    return () => {
-      window.removeEventListener("pointermove", handlePointerMove);
-      window.removeEventListener("pointerup", handlePointerUp);
-      window.removeEventListener("pointercancel", handlePointerCancel);
-    };
-  }, [items, onDuplicate, onMove]);
+    window.addEventListener("mousemove", handleMove, { passive: false });
+    window.addEventListener("mouseup", handleUp);
+  };
 
   return (
     <div
@@ -801,13 +824,38 @@ function MonthView({
               key={day.toISOString()}
               data-date={dayKey}
               className={`${day.getMonth() !== date.getMonth() ? "outside" : ""} ${isSameDay(day, new Date()) ? "today" : ""} ${dropDate === dayKey ? "drop-target" : ""}`}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = event.ctrlKey ? "copy" : "move";
+                setDropDate(dayKey);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null))
+                  setDropDate(undefined);
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDropDate(undefined);
+                const recurrenceId = event.dataTransfer.getData("text/diorna-occurrence");
+                const occurrence = occurrences.find((entry) => entry.recurrenceId === recurrenceId);
+                if (!occurrence) return;
+                const base = items.find((entry) => entry.id === occurrence.id);
+                if (!base) return;
+                const original = occurrenceDate(occurrence);
+                const moved = localDate(dayKey);
+                moved.setHours(original.getHours(), original.getMinutes(), 0, 0);
+                if (event.ctrlKey) onDuplicate(base, moved);
+                else onMove(occurrence, moved);
+              }}
             >
               <span>{format(day, "d")}</span>
               {dayItems.slice(0, 4).map((item) => (
                 <button
                   title={`Drag ${item.title} to another day`}
+                  onMouseDown={(event) => startMouseDrag(item, event)}
                   onPointerDown={(event) => {
-                    if (event.button !== 0 || !event.isPrimary) return;
+                    if (event.pointerType === "mouse") return;
+                    if (event.button !== 0) return;
                     pointerDrag.current = {
                       item,
                       pointerId: event.pointerId,
@@ -817,8 +865,11 @@ function MonthView({
                     };
                     event.currentTarget.setPointerCapture(event.pointerId);
                   }}
+                  onPointerMove={movePointerDrag}
+                  onPointerUp={finishPointerDrag}
+                  onPointerCancel={clearDrag}
                   onClick={(event) => {
-                    if (suppressOpen.current) {
+                    if (Date.now() < suppressOpenUntil.current) {
                       event.preventDefault();
                       return;
                     }
@@ -854,6 +905,7 @@ function TimelineView({
   items,
   visibleStart,
   visibleEnd,
+  hourHeight,
   weekStartsOn,
   onOpen,
   onMove,
@@ -866,6 +918,7 @@ function TimelineView({
   items: CalendarItem[];
   visibleStart: number;
   visibleEnd: number;
+  hourHeight: number;
   weekStartsOn: 0 | 1;
   onOpen: (item: ItemOccurrence) => void;
   onMove: (item: ItemOccurrence, date: Date, duration?: number) => void;
@@ -875,14 +928,15 @@ function TimelineView({
   const dates = Array.from({ length: days }, (_, index) => addDays(start, index));
   const safeStart = Math.max(0, Math.min(23, visibleStart));
   const safeEnd = Math.max(safeStart + 1, Math.min(24, visibleEnd));
-  const hours = Array.from({ length: 24 }, (_, index) => index);
-  const pxPerMinute = 0.9;
+  const hours = Array.from({ length: safeEnd - safeStart }, (_, index) => safeStart + index);
+  const safeHourHeight = Math.max(40, Math.min(120, hourHeight));
+  const pxPerMinute = safeHourHeight / 60;
   const allDay = occurrences.filter((item) => item.allDay || !item.startAt);
   const timelineRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const scroll = timelineRef.current?.closest<HTMLElement>(".calendar-body");
-    if (scroll) scroll.scrollTop = Math.max(0, safeStart * 54 - 8);
-  }, [days, safeStart]);
+    if (scroll) scroll.scrollTop = 0;
+  }, [days, safeEnd, safeHourHeight, safeStart]);
   return (
     <div className="timeline" ref={timelineRef}>
       <div className="timeline-header">
@@ -900,7 +954,7 @@ function TimelineView({
         <strong>All day</strong>
         <div style={{ gridTemplateColumns: `repeat(${days}, 1fr)` }}>
           {dates.map((day) => (
-            <div key={day.toISOString()}>
+            <div className={isSameDay(day, new Date()) ? "today" : ""} key={day.toISOString()}>
               {allDay
                 .filter((item) => isSameDay(occurrenceDate(item), day))
                 .map((item) => (
@@ -918,7 +972,10 @@ function TimelineView({
           ))}
         </div>
       </div>
-      <div className="timeline-scroll">
+      <div
+        className="timeline-scroll"
+        style={{ "--calendar-hour-height": `${safeHourHeight}px` } as React.CSSProperties}
+      >
         <div className="hour-labels">
           {hours.map((hour) => (
             <span key={hour}>{String(hour).padStart(2, "0")}:00</span>
@@ -927,7 +984,7 @@ function TimelineView({
         <div className="timeline-days" style={{ gridTemplateColumns: `repeat(${days}, 1fr)` }}>
           {dates.map((day) => (
             <div
-              className="timeline-day"
+              className={`timeline-day ${isSameDay(day, new Date()) ? "today" : ""}`}
               key={day.toISOString()}
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
@@ -937,10 +994,12 @@ function TimelineView({
                 if (!base) return;
                 const rect = event.currentTarget.getBoundingClientRect();
                 const minutes = Math.max(
-                  0,
+                  safeStart * 60,
                   Math.min(
-                    24 * 60 - 15,
-                    Math.round((((event.clientY - rect.top) / 54) * 60) / 15) * 15,
+                    safeEnd * 60 - 15,
+                    Math.round(
+                      (safeStart * 60 + ((event.clientY - rect.top) / safeHourHeight) * 60) / 15,
+                    ) * 15,
                   ),
                 );
                 const moved = new Date(day);
@@ -959,28 +1018,40 @@ function TimelineView({
               }}
             >
               {hours.map((hour) => (
-                <i
-                  className={hour < safeStart || hour >= safeEnd ? "outside-visible-hours" : ""}
-                  key={hour}
-                />
+                <i key={hour} />
               ))}
-              {isSameDay(day, new Date()) && (
-                <span
-                  className="current-time-line"
-                  style={{
-                    top: `${(new Date().getHours() * 60 + new Date().getMinutes()) * pxPerMinute}px`,
-                  }}
-                />
-              )}
+              {isSameDay(day, new Date()) &&
+                new Date().getHours() >= safeStart &&
+                new Date().getHours() < safeEnd && (
+                  <span
+                    className="current-time-line"
+                    style={{
+                      top: `${
+                        (new Date().getHours() * 60 + new Date().getMinutes() - safeStart * 60) *
+                        pxPerMinute
+                      }px`,
+                    }}
+                  />
+                )}
               {occurrences
-                .filter(
-                  (item) => !item.allDay && item.startAt && isSameDay(new Date(item.startAt), day),
-                )
+                .filter((item) => {
+                  if (item.allDay || !item.startAt || !isSameDay(new Date(item.startAt), day))
+                    return false;
+                  const startMinutes =
+                    new Date(item.startAt).getHours() * 60 + new Date(item.startAt).getMinutes();
+                  const endMinutes = item.endAt
+                    ? new Date(item.endAt).getHours() * 60 + new Date(item.endAt).getMinutes()
+                    : startMinutes + 60;
+                  return endMinutes > safeStart * 60 && startMinutes < safeEnd * 60;
+                })
                 .map((item) => {
                   const startAt = new Date(item.startAt!);
                   const duration = item.endAt
                     ? Math.max(15, (new Date(item.endAt).getTime() - startAt.getTime()) / 60_000)
                     : 60;
+                  const startMinutes = startAt.getHours() * 60 + startAt.getMinutes();
+                  const visibleTop = Math.max(startMinutes, safeStart * 60);
+                  const visibleEnd = Math.min(startMinutes + duration, safeEnd * 60);
                   return (
                     <button
                       draggable
@@ -993,8 +1064,8 @@ function TimelineView({
                       className={`time-item ${item.completedAt ? "complete" : ""}`}
                       style={
                         {
-                          top: `${(startAt.getHours() * 60 + startAt.getMinutes()) * pxPerMinute}px`,
-                          height: `${Math.max(28, duration * pxPerMinute)}px`,
+                          top: `${(visibleTop - safeStart * 60) * pxPerMinute}px`,
+                          height: `${Math.max(28, (visibleEnd - visibleTop) * pxPerMinute)}px`,
                           "--item": colorOf(categories, item.categoryId),
                         } as React.CSSProperties
                       }
@@ -1021,8 +1092,9 @@ function TimelineView({
                           const endMinutes = Math.max(
                             15,
                             Math.round(
-                              ((event.clientY - rect.top) / pxPerMinute -
-                                (startAt.getHours() * 60 + startAt.getMinutes())) /
+                              ((event.clientY - rect.top) / pxPerMinute +
+                                safeStart * 60 -
+                                startMinutes) /
                                 15,
                             ) * 15,
                           );
@@ -1184,6 +1256,7 @@ function ItemEditor({
   categories,
   notes,
   courses,
+  projects,
   defaultReminder,
   defaultDuration,
   onClose,
@@ -1198,6 +1271,7 @@ function ItemEditor({
   categories: Category[];
   notes: Note[];
   courses: Course[];
+  projects: Project[];
   defaultReminder: number;
   defaultDuration: number;
   onClose: () => void;
@@ -1584,20 +1658,36 @@ function ItemEditor({
             </select>
           </label>
         </div>
-        <label>
-          <span>Linked note</span>
-          <select
-            value={draft.noteId ?? ""}
-            onChange={(event) => update("noteId", event.target.value || undefined)}
-          >
-            <option value="">No linked note</option>
-            {notes.map((note) => (
-              <option key={note.id} value={note.id}>
-                {note.title}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="editor-grid two">
+          <label>
+            <span>Linked note</span>
+            <select
+              value={draft.noteId ?? ""}
+              onChange={(event) => update("noteId", event.target.value || undefined)}
+            >
+              <option value="">No linked note</option>
+              {notes.map((note) => (
+                <option key={note.id} value={note.id}>
+                  {note.title}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            <span>Project</span>
+            <select
+              value={draft.projectId ?? ""}
+              onChange={(event) => update("projectId", event.target.value || undefined)}
+            >
+              <option value="">No project</option>
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
         {draft.kind === "task" && (
           <fieldset className="subtasks-editor">
             <legend>Subtasks</legend>

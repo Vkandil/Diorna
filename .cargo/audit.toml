@@ -1,0 +1,14 @@
+[advisories]
+# sqlx keeps its optional MySQL dependency in Cargo.lock, but Diorna disables
+# sqlx default features and compiles SQLite only. `rsa` is absent from the
+# compiled dependency graph (`cargo tree --target all -i rsa`).
+ignore = [
+  "RUSTSEC-2023-0071",
+
+  # Tauri 2.11.5 depends on plist 1.8.0, whose current quick-xml constraint is
+  # ^0.38.0. Diorna neither parses user-supplied plist/XML nor ships on macOS.
+  # Remove these exceptions as soon as plist accepts quick-xml >=0.41.0.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+]
+

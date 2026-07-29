@@ -109,11 +109,71 @@ export const aiHabitOperationSchema = z
     path: ["target"],
   });
 
+export const aiProjectOperationSchema = z
+  .object({
+    id: operationId,
+    type: z.literal("upsert_project"),
+    existingProjectId: operationId.nullable().default(null),
+    name: title,
+    outcome: z.string().trim().min(1).max(2_000),
+    description: z.string().max(10_000).default(""),
+    kind: z.enum(["work", "study", "personal", "health", "custom"]),
+    targetDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .default(null),
+    goalTitle: z.string().trim().min(1).max(180).nullable().default(null),
+    health: z.enum(["on-track", "at-risk", "blocked"]).default("on-track"),
+    nextAction: z.string().max(1_000).default(""),
+    stakeholders: z.array(z.string().trim().min(1).max(120)).max(20).default([]),
+    tags: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
+    milestoneTitles: z.array(title).max(20).default([]),
+    linkedOperationIds: z.array(operationId).max(20).default([]),
+  })
+  .strict();
+
+export const aiFocusOperationSchema = z
+  .object({
+    id: operationId,
+    type: z.literal("create_focus_block"),
+    title,
+    intention: z.string().max(2_000).default(""),
+    mode: z.enum(["deep-work", "study", "creative", "admin", "meeting-prep", "personal"]),
+    plannedMinutes: z.number().int().min(5).max(480),
+    scheduledAt: isoDateTime.nullable().default(null),
+    priorityDate: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable()
+      .default(null),
+    sourceType: z.enum([
+      "calendar",
+      "project",
+      "goal",
+      "note",
+      "map",
+      "habit",
+      "training",
+      "custom",
+    ]),
+    sourceId: operationId.nullable().default(null),
+    distractionShield: z.array(z.string().trim().min(1).max(160)).max(8).default([]),
+    tags: z.array(z.string().trim().min(1).max(60)).max(20).default([]),
+  })
+  .strict()
+  .refine((operation) => operation.sourceType === "custom" || operation.sourceId !== null, {
+    message: "Connected focus blocks require an exact source ID",
+    path: ["sourceId"],
+  });
+
 export const aiOperationSchema = z.discriminatedUnion("type", [
   aiNoteOperationSchema,
   aiMapOperationSchema,
   aiCalendarOperationSchema,
   aiHabitOperationSchema,
+  aiProjectOperationSchema,
+  aiFocusOperationSchema,
 ]);
 
 export const aiPlanSchema = z
@@ -139,6 +199,24 @@ export const aiPlanSchema = z
           path: ["operations"],
         });
       operationIds.add(operation.id);
+    }
+    for (const operation of plan.operations) {
+      if (operation.type === "upsert_project") {
+        for (const linkedId of operation.linkedOperationIds)
+          if (
+            linkedId === operation.id ||
+            !operationIds.has(linkedId) ||
+            !["create_note", "create_map", "create_calendar_item", "create_habit"].includes(
+              plan.operations.find((entry) => entry.id === linkedId)?.type ?? "",
+            )
+          )
+            context.addIssue({
+              code: "custom",
+              message: `Unknown or unsupported linked operation: ${linkedId}`,
+              path: ["operations"],
+            });
+        continue;
+      }
       if (operation.type !== "create_map") continue;
       const nodeIds = new Set(operation.nodes.map((node) => node.id));
       const centralNodes = operation.nodes.filter((node) => node.locked);
@@ -327,6 +405,80 @@ export const aiPlanJsonSchema = {
                 minItems: 1,
                 items: { type: "integer", minimum: 0, maximum: 6 },
               },
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: [
+              "id",
+              "type",
+              "existingProjectId",
+              "name",
+              "outcome",
+              "description",
+              "kind",
+              "targetDate",
+              "goalTitle",
+              "health",
+              "nextAction",
+              "stakeholders",
+              "tags",
+              "milestoneTitles",
+              "linkedOperationIds",
+            ],
+            properties: {
+              id: { type: "string" },
+              type: { const: "upsert_project" },
+              existingProjectId: { type: ["string", "null"] },
+              name: { type: "string" },
+              outcome: { type: "string" },
+              description: { type: "string" },
+              kind: { enum: ["work", "study", "personal", "health", "custom"] },
+              targetDate: { type: ["string", "null"] },
+              goalTitle: { type: ["string", "null"] },
+              health: { enum: ["on-track", "at-risk", "blocked"] },
+              nextAction: { type: "string" },
+              stakeholders: { type: "array", items: { type: "string" } },
+              tags: { type: "array", items: { type: "string" } },
+              milestoneTitles: { type: "array", items: { type: "string" } },
+              linkedOperationIds: { type: "array", items: { type: "string" } },
+            },
+          },
+          {
+            type: "object",
+            additionalProperties: false,
+            required: [
+              "id",
+              "type",
+              "title",
+              "intention",
+              "mode",
+              "plannedMinutes",
+              "scheduledAt",
+              "priorityDate",
+              "sourceType",
+              "sourceId",
+              "distractionShield",
+              "tags",
+            ],
+            properties: {
+              id: { type: "string" },
+              type: { const: "create_focus_block" },
+              title: { type: "string" },
+              intention: { type: "string" },
+              mode: {
+                enum: ["deep-work", "study", "creative", "admin", "meeting-prep", "personal"],
+              },
+              plannedMinutes: { type: "integer", minimum: 5, maximum: 480 },
+              scheduledAt: { type: ["string", "null"] },
+              priorityDate: { type: ["string", "null"] },
+              sourceType: {
+                enum: ["calendar", "project", "goal", "note", "map", "habit", "training", "custom"],
+              },
+              sourceId: { type: ["string", "null"] },
+              distractionShield: { type: "array", items: { type: "string" } },
+              tags: { type: "array", items: { type: "string" } },
             },
           },
         ],

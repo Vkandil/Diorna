@@ -1,8 +1,16 @@
+<p align="center">
+  <img src="src/assets/brand/diorna-logo-beige.png" width="112" alt="Diorna logo">
+</p>
+
 # Diorna
 
 Diorna is a local-first knowledge and productivity suite for Windows. It puts
 notes, authored spatial maps, calendar and tasks, a keyboard-first daily grid,
-student study tools, and factual monthly/yearly recaps in one private vault.
+structured sport training and progression, student study tools, and factual
+monthly/yearly recaps in one private vault. Projects & Goals ties those modules
+together around observable outcomes without duplicating their data.
+Focus turns those outcomes, tasks and ideas into protected sessions with
+planned/actual time, distraction capture and end-of-session reviews.
 
 The application has no account, cloud service, analytics, crash reporting, or
 telemetry. Markdown notes and Obsidian-compatible Canvas files remain portable
@@ -26,7 +34,7 @@ npm ci
 npm run dev
 ```
 
-Run the desktop shell with `npm run tauri dev`. Run every local quality gate
+Run the desktop shell with `npm run tauri -- dev`. Run every local quality gate
 with `npm run check`; browser acceptance tests use `npm run test:e2e`.
 
 ## Architecture and documentation
@@ -36,6 +44,7 @@ with `npm run check`; browser acceptance tests use `npm run test:e2e`.
 - [Build and release](docs/build-release.md)
 - [User manual](docs/user-manual.md)
 - [Performance and NFR report](docs/nfr-report.md)
+- [Beta and clean-machine checklist](docs/beta-checklist.md)
 - [Contributing](CONTRIBUTING.md) and [CLA](CLA.md)
 - [Security policy](SECURITY.md)
 

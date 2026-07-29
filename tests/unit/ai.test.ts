@@ -209,10 +209,17 @@ describe("Diorna AI planning and execution", () => {
   });
 
   it("requests strict structured output from OpenRouter", async () => {
+    const usage = vi.fn();
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(
         JSON.stringify({
           choices: [{ message: { content: JSON.stringify(fullPlan) } }],
+          usage: {
+            prompt_tokens: 1200,
+            completion_tokens: 800,
+            total_tokens: 2000,
+            cost: 0.0042,
+          },
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
       ),
@@ -225,6 +232,7 @@ describe("Diorna AI planning and execution", () => {
           endpoint: "https://openrouter.ai/api/v1",
           model: "moonshotai/kimi-k2.6",
           apiKey: "secret-test-key",
+          maxTokens: 4000,
         },
         {
           prompt: "Create my plan",
@@ -234,6 +242,9 @@ describe("Diorna AI planning and execution", () => {
           mentions: [],
           notes: [],
         },
+        undefined,
+        undefined,
+        usage,
       ),
     ).resolves.toEqual(fullPlan);
 
@@ -250,6 +261,15 @@ describe("Diorna AI planning and execution", () => {
       },
       provider: { require_parameters: true, data_collection: "deny" },
       plugins: [{ id: "response-healing" }],
+      max_tokens: 4000,
+      usage: { include: true },
+    });
+    expect(usage).toHaveBeenLastCalledWith({
+      calls: 1,
+      promptTokens: 1200,
+      completionTokens: 800,
+      totalTokens: 2000,
+      costUsd: 0.0042,
     });
   });
 
@@ -576,5 +596,298 @@ describe("Diorna AI planning and execution", () => {
     expect(undone.maps.find((map) => map.id === changes.maps[0])?.trashedAt).toBeTruthy();
     expect(undone.items.find((item) => item.id === changes.items[0])).toBeUndefined();
     expect(undone.habits.find((habit) => habit.id === changes.habits[0])?.archived).toBe(true);
+  });
+
+  it("creates a goal-directed project and connects every generated resource", () => {
+    useDiornaStore.getState().setWorkspace("workspace-personal");
+    const plan = aiPlanSchema.parse({
+      version: 1,
+      summary: "Plan a client campaign with its brief, call and follow-up routine.",
+      assumptions: ["The kickoff lasts one hour."],
+      operations: [
+        {
+          id: "brief",
+          type: "create_note",
+          title: "Northstar campaign brief",
+          bodyMarkdown: "# Campaign brief\n\nAudience, promise and deliverables.",
+          tags: ["client"],
+        },
+        {
+          id: "kickoff",
+          type: "create_calendar_item",
+          kind: "event",
+          title: "Northstar kickoff call",
+          description: "Confirm scope and decision makers.",
+          startAt: "2026-08-03T10:00:00+02:00",
+          endAt: "2026-08-03T11:00:00+02:00",
+          allDay: false,
+          category: "",
+          priority: "high",
+        },
+        {
+          id: "followup",
+          type: "create_habit",
+          name: "Client follow-up",
+          description: "Review pending client decisions.",
+          category: "",
+          tracking: "checkbox",
+          unit: "",
+          target: null,
+          activeWeekdays: [1, 3, 5],
+        },
+        {
+          id: "campaign-project",
+          type: "upsert_project",
+          existingProjectId: null,
+          name: "Northstar brand campaign",
+          outcome: "The final campaign is approved by the client.",
+          description: "Coordinate discovery, production and approval.",
+          kind: "work",
+          targetDate: "2026-09-15",
+          goalTitle: "Grow the client portfolio",
+          health: "on-track",
+          nextAction: "Prepare the kickoff agenda",
+          stakeholders: ["Northstar", "Marketing lead"],
+          tags: ["client", "campaign"],
+          milestoneTitles: ["Scope confirmed", "Concept approved", "Final handoff"],
+          linkedOperationIds: ["brief", "kickoff", "followup"],
+        },
+      ],
+    });
+
+    const changes = applyAiPlan(plan, useDiornaStore.getState());
+    const current = useDiornaStore.getState();
+    const project = current.projects.find((entry) => entry.id === changes.projects[0])!;
+    expect(project).toMatchObject({
+      name: "Northstar brand campaign",
+      kind: "work",
+      nextAction: "Prepare the kickoff agenda",
+      linkedNoteIds: [changes.notes[0]],
+      linkedHabitIds: [changes.habits[0]],
+    });
+    expect(project.milestones).toHaveLength(3);
+    expect(current.items.find((entry) => entry.id === changes.items[0])?.projectId).toBe(
+      project.id,
+    );
+    expect(current.goals.find((entry) => entry.id === project.goalId)?.title).toBe(
+      "Grow the client portfolio",
+    );
+    expect(current.notes.find((entry) => entry.id === changes.notes[0])?.path).toContain(
+      "notes/Projects/northstar-brand-campaign/",
+    );
+
+    undoAiChangeSet(useDiornaStore.getState(), changes);
+    expect(useDiornaStore.getState().projects.some((entry) => entry.id === project.id)).toBe(false);
+    expect(useDiornaStore.getState().goals.some((entry) => changes.goals.includes(entry.id))).toBe(
+      false,
+    );
+  });
+
+  it("updates an existing project by exact ID and restores it on undo", () => {
+    useDiornaStore.getState().setWorkspace("workspace-personal");
+    const original = useDiornaStore.getState().addProject({
+      name: "Client launch",
+      outcome: "The client has approved the launch.",
+      kind: "work",
+      nextAction: "Prepare discovery",
+      milestones: [{ title: "Discovery" }],
+    });
+    const plan = aiPlanSchema.parse({
+      version: 1,
+      summary: "Advance the existing client project.",
+      assumptions: [],
+      operations: [
+        {
+          id: "update-client-launch",
+          type: "upsert_project",
+          existingProjectId: original.id,
+          name: "Client launch",
+          outcome: "The client has approved the launch.",
+          description: "Plan discovery, production and approval.",
+          kind: "work",
+          targetDate: null,
+          goalTitle: null,
+          health: "at-risk",
+          nextAction: "Confirm the decision maker",
+          stakeholders: ["Client"],
+          tags: ["client"],
+          milestoneTitles: ["Discovery", "Creative approval"],
+          linkedOperationIds: [],
+        },
+      ],
+    });
+    const changes = applyAiPlan(plan, useDiornaStore.getState());
+    expect(changes.projects).toEqual([]);
+    expect(changes.updatedProjects).toHaveLength(1);
+    expect(
+      useDiornaStore.getState().projects.find((entry) => entry.id === original.id),
+    ).toMatchObject({
+      health: "at-risk",
+      nextAction: "Confirm the decision maker",
+    });
+    expect(
+      useDiornaStore.getState().projects.find((entry) => entry.id === original.id)?.milestones,
+    ).toHaveLength(2);
+
+    undoAiChangeSet(useDiornaStore.getState(), changes);
+    expect(
+      useDiornaStore.getState().projects.find((entry) => entry.id === original.id),
+    ).toMatchObject({
+      health: "on-track",
+      nextAction: "Prepare discovery",
+    });
+    expect(
+      useDiornaStore.getState().projects.find((entry) => entry.id === original.id)?.milestones,
+    ).toHaveLength(1);
+  });
+
+  it("plans a connected Focus block with a priority and Calendar reservation", () => {
+    useDiornaStore.getState().setWorkspace("workspace-personal");
+    const project = useDiornaStore.getState().addProject({
+      name: "Northstar proposal",
+      outcome: "The client receives an approved proposal.",
+      kind: "work",
+      nextAction: "Write the commercial argument",
+    });
+    const plan = aiPlanSchema.parse({
+      version: 1,
+      summary: "Protect time for the proposal.",
+      assumptions: ["A 50-minute block fits before the client call."],
+      operations: [
+        {
+          id: "proposal-focus",
+          type: "create_focus_block",
+          title: "Draft Northstar commercial argument",
+          intention: "Complete a reviewable first draft.",
+          mode: "deep-work",
+          plannedMinutes: 50,
+          scheduledAt: "2026-08-03T09:00:00+02:00",
+          priorityDate: "2026-08-03",
+          sourceType: "project",
+          sourceId: project.id,
+          distractionShield: ["Silence chat", "Close email"],
+          tags: ["client"],
+        },
+      ],
+    });
+
+    const changes = applyAiPlan(plan, useDiornaStore.getState());
+    const current = useDiornaStore.getState();
+    const focus = current.focusSessions.find((entry) => entry.id === changes.focusSessions[0]);
+    expect(focus).toMatchObject({
+      title: "Draft Northstar commercial argument",
+      sourceType: "project",
+      sourceId: project.id,
+      plannedMinutes: 50,
+      scheduledAt: "2026-08-03T09:00:00+02:00",
+      distractionShield: ["Silence chat", "Close email"],
+    });
+    expect(current.focusPriorities.find((entry) => entry.id === focus?.priorityId)).toMatchObject({
+      date: "2026-08-03",
+      sourceId: project.id,
+    });
+    expect(current.items.find((entry) => entry.id === focus?.calendarItemId)).toMatchObject({
+      title: "Focus · Draft Northstar commercial argument",
+      projectId: project.id,
+    });
+
+    undoAiChangeSet(useDiornaStore.getState(), changes);
+    expect(useDiornaStore.getState().focusSessions).toHaveLength(0);
+    expect(useDiornaStore.getState().focusPriorities).toHaveLength(0);
+    expect(useDiornaStore.getState().items.some((entry) => changes.items.includes(entry.id))).toBe(
+      false,
+    );
+  });
+
+  it("can organize generated Map notes in a dedicated folder without adding group tags", () => {
+    useDiornaStore.getState().setWorkspace("workspace-personal");
+    const changes = applyAiPlan(fullPlan, useDiornaStore.getState(), {
+      mapNoteOrganization: "folder",
+      mapFolderRoot: "Generated Maps",
+    });
+    const created = useDiornaStore.getState();
+    const kernel = created.notes.find((note) => note.id === changes.notes[0]);
+    const customer = created.notes.find((note) => note.title === "Customer archetype");
+
+    expect(kernel?.path).toMatch(
+      /^notes\/generated-maps\/adaptogenic-coffee-business\/Kernel process\.md$/,
+    );
+    expect(kernel?.tags).toEqual(["systems"]);
+    expect(customer?.path).toContain(
+      "notes/generated-maps/adaptogenic-coffee-business/Customer archetype.md",
+    );
+    expect(customer?.tags).not.toContain("map/adaptogenic-coffee-business");
+  });
+
+  it("restructures the selected Map, preserves attachments, and restores it on undo", () => {
+    useDiornaStore.getState().setWorkspace("workspace-personal");
+    const state = useDiornaStore.getState();
+    const target = state.addMap("Original Map");
+    const attachment = {
+      id: "attachment-node",
+      type: "file" as const,
+      x: 900,
+      y: 500,
+      width: 320,
+      height: 220,
+      file: "attachments/reference.pdf",
+      diorna: { nodeType: "pdf" as const },
+    };
+    state.updateMap(target.id, {
+      nodes: [
+        {
+          id: "old-text",
+          type: "text",
+          x: 100,
+          y: 100,
+          width: 280,
+          height: 140,
+          text: "Old layout",
+          diorna: { nodeType: "text" },
+        },
+        attachment,
+      ],
+      edges: [
+        {
+          id: "old-attachment-edge",
+          fromNode: "old-text",
+          toNode: "attachment-node",
+          label: "documents",
+        },
+      ],
+    });
+    const plan = aiPlanSchema.parse({
+      version: 1,
+      summary: "Restructure the current Map.",
+      assumptions: [],
+      operations: [
+        {
+          id: "map",
+          type: "create_map",
+          name: "Restructured Map",
+          nodes: [
+            { id: "root", kind: "text", title: "Main idea", locked: true },
+            { id: "branch", kind: "text", title: "First branch", locked: false },
+          ],
+          edges: [{ from: "root", to: "branch", label: "develops into" }],
+        },
+      ],
+    });
+
+    const changes = applyAiPlan(plan, useDiornaStore.getState(), { targetMapId: target.id });
+    const updated = useDiornaStore.getState().maps.find((map) => map.id === target.id);
+    expect(changes.maps).toEqual([]);
+    expect(changes.updatedMaps).toHaveLength(1);
+    expect(updated).toMatchObject({ name: "Original Map" });
+    expect(updated?.nodes).toEqual(expect.arrayContaining([expect.objectContaining(attachment)]));
+    expect(updated?.nodes.some((node) => node.text === "Old layout")).toBe(false);
+    expect(
+      updated?.edges.some((edge) => edge.toNode === attachment.id && edge.label === "documents"),
+    ).toBe(true);
+
+    undoAiChangeSet(useDiornaStore.getState(), changes);
+    const restored = useDiornaStore.getState().maps.find((map) => map.id === target.id);
+    expect(restored).toMatchObject({ name: "Original Map" });
+    expect(restored?.nodes.some((node) => node.text === "Old layout")).toBe(true);
   });
 });

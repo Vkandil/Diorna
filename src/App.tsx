@@ -85,10 +85,17 @@ export default function App() {
     query.addEventListener("change", listener);
     return () => query.removeEventListener("change", listener);
   }, []);
-  const dark = settings.theme === "dark" || (settings.theme === "system" && systemDark);
+  const resolvedTheme =
+    settings.theme === "system" ? (systemDark ? "dark" : "light") : settings.theme;
   useEffect(() => {
-    document.documentElement.dataset.theme = dark ? "dark" : "light";
+    document.documentElement.dataset.theme = resolvedTheme;
     document.documentElement.dataset.density = settings.density;
+    document
+      .querySelector<HTMLMetaElement>('meta[name="theme-color"]')
+      ?.setAttribute(
+        "content",
+        resolvedTheme === "dark" ? "#17181B" : resolvedTheme === "light" ? "#F5F5F3" : "#F3EFE0",
+      );
     document.documentElement.style.setProperty(
       "--accent",
       settings.accentColor === "system" ? "AccentColor" : settings.accentColor,
@@ -104,7 +111,7 @@ export default function App() {
       `${settings.editorLineWidth}px`,
     );
   }, [
-    dark,
+    resolvedTheme,
     settings.accentColor,
     settings.density,
     settings.editorFont,
@@ -214,6 +221,14 @@ export default function App() {
         state.habitEntries === previous.habitEntries &&
         state.metrics === previous.metrics &&
         state.metricEntries === previous.metricEntries &&
+        state.projects === previous.projects &&
+        state.goals === previous.goals &&
+        state.focusPriorities === previous.focusPriorities &&
+        state.focusSessions === previous.focusSessions &&
+        state.trainingActivities === previous.trainingActivities &&
+        state.trainingExercises === previous.trainingExercises &&
+        state.trainingTemplates === previous.trainingTemplates &&
+        state.trainingSessions === previous.trainingSessions &&
         state.recaps === previous.recaps
       )
         return;
@@ -290,6 +305,14 @@ function structuredSnapshot(state: ReturnType<typeof useDiornaStore.getState>) {
     habitEntries: state.habitEntries,
     metrics: state.metrics,
     metricEntries: state.metricEntries,
+    projects: state.projects,
+    goals: state.goals,
+    focusPriorities: state.focusPriorities,
+    focusSessions: state.focusSessions,
+    trainingActivities: state.trainingActivities,
+    trainingExercises: state.trainingExercises,
+    trainingTemplates: state.trainingTemplates,
+    trainingSessions: state.trainingSessions,
     recaps: state.recaps,
   };
 }

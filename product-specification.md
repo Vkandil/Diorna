@@ -21,14 +21,17 @@ Nothing is left blank. The product is named **Diorna**, and that name is final f
 
 ## 1. Overview
 
-Diorna is a **local-first Windows desktop application** that unifies five modules a student-and-builder needs daily, in one place, with one shared data layer:
+Diorna is a **local-first Windows desktop application** that unifies eight modules a student-and-builder needs daily, in one place, with one shared data layer:
 
 | # | Module | Purpose |
 |---|---|---|
 | A | **Notes** | Rich, block-based note-taking — Notion-grade editing, Obsidian-grade linking, tuned for coursework |
 | B | **Maps** | Free-form spatial canvases where the user positions and connects ideas on an X/Y plane |
+| B.5 | **Projects & Goals** | Outcome-driven coordination across knowledge, plans, routines, training and reviews |
 | C | **Calendar & Tasks** | Day / week / month planning with category filters |
 | D | **Daily Grid** | Spreadsheet-style recurring-habit tracker with daily completion scoring |
+| D.5 | **Training** | Sport-agnostic sessions, reusable templates, quick measurements, history and progression |
+| D.75 | **Focus** | Daily priorities, protected execution time, distraction capture and evidence-based reviews |
 | E | **Recap** | Automatically generated narrative reports of what the user accomplished each month and year |
 
 Everything lives inside **Workspaces**, which enforce a hard separation between the user's **Student** life and **Personal / Projects** life.
@@ -84,6 +87,12 @@ Explicitly **not** to be built. Listed to prevent scope drift; proposals to add 
 | **Habit** | A recurring daily item; one row of the Daily Grid. |
 | **Entry** | One habit × one day cell (checked, unchecked, or a numeric value). |
 | **Metric** | A named numeric series with a unit (bench press kg, weight kg, sleep h) used for progress tracking and charts. |
+| **Training activity** | A sport or discipline containing custom exercises, templates and sessions. |
+| **Training session** | A dated set of measured exercise results, optionally linked to Calendar and Daily. |
+| **Project** | A finite commitment with an observable outcome, status, health, milestones and connected work that remains owned by its source module. |
+| **Goal** | A durable direction or result advanced by one or more projects, optionally measured by a metric. |
+| **Focus priority** | A dated, ordered outcome selected for deliberate attention, optionally pointing to an existing Diorna resource. |
+| **Focus session** | A planned or completed block of protected time with an intention, source, actual duration, distractions and review. |
 | **Recap** | A generated monthly or yearly narrative report, stored as a note. |
 
 ---
@@ -96,7 +105,7 @@ Explicitly **not** to be built. Listed to prevent scope drift; proposals to add 
 
 **REQ-SHELL-2** — Persistent left sidebar, collapsible (`Ctrl+B`) and resizable by drag, containing top to bottom:
 1. Workspace switcher — current workspace name, its color dot, dropdown listing all workspaces plus "New workspace…"
-2. Module rail — **Notes · Maps · Calendar · Daily · Recap**, each with an icon and a keyboard shortcut badge
+2. Module rail — **Notes · Maps · Calendar · Daily · Training · Recap · Projects · Focus**, each with an icon and a keyboard shortcut badge
 3. Context panel for the active module (note tree, list of maps, category legend, habit list…)
 4. Settings and vault indicator, pinned at the bottom
 
@@ -159,6 +168,8 @@ Widgets are reorderable by drag and individually hideable.
 **REQ-NOTE-8** — Wiki-links: typing `[[` opens autocomplete over note titles, showing folder and course for disambiguation. `[[Note|alias]]` supported. Renaming a note rewrites every reference to it across the workspace.
 
 **REQ-NOTE-9** — Creating a link to a non-existent note creates it on click, in the same folder, pre-titled.
+
+**REQ-NOTE-9A** — Public HTTP(S) links can be inserted as text links or rich bookmark cards. Pasting or dropping a standalone URL on an empty line creates a card by default when enabled. A card shows site, title, description, favicon, and thumbnail; supports open, copy, manual refresh, conversion to a text link, pointer/keyboard block movement, and PDF/print export. Metadata and media are fetched once, stored under the workspace `attachments/` folder, and reused offline. Failed previews remain usable as URL cards. Local/private-network targets are rejected and the feature is toggleable in Editor settings.
 
 **REQ-NOTE-10** — Backlinks panel: every note linking to the current one, with the surrounding sentence as context, grouped by source note.
 
@@ -241,7 +252,7 @@ Acceptance for milestone M2 is the ability to reproduce this scenario end to end
 | **Note node** | References an existing note. Shows the title and a live content preview. Double-click opens the full note in the right panel; `Ctrl`+double-click opens it in a new tab. Edits propagate both ways in real time. |
 | **Text card** | Free Markdown text living only on the canvas. |
 | **Image node** | Image file, resizable, preserving aspect ratio by default. |
-| **Link node** | External URL with favicon, title, and description fetched once and cached. |
+| **Link node** | External URL with site, favicon, title, description, and thumbnail fetched once and cached locally; open, copy, and refresh actions live in the Inspector. |
 | **Group / Frame** | Labeled, colored rectangle. Moving it moves its contents. Collapsible to a title bar. |
 | **Sub-map node** | Opens another map, enabling hierarchy. Breadcrumb navigation shows the full path; maps can nest at least five levels deep. |
 | **Task node** | *Optional, if effort allows:* references a task from the Calendar module and reflects its completion state. |
@@ -265,6 +276,62 @@ Acceptance for milestone M2 is the ability to reproduce this scenario end to end
 **REQ-MAP-15** — Unlimited maps per workspace, organised in sidebar folders, searchable by name and by node content.
 
 **REQ-MAP-16** — Export a map to PNG (configurable scale, transparent or solid background) and to SVG.
+
+---
+
+## 6.5 Module B.5 — Projects & Goals
+
+Projects & Goals is Diorna's coordination layer. It must never replace or copy
+the source modules: a call remains a Calendar event, research remains a Note or
+Map, a recurring action remains in Daily, and a session remains in Training.
+The project records the outcome and links those records into one reviewable
+commitment.
+
+**REQ-PRJ-1** — The module provides Portfolio, status Board, Goals and Reviews
+views. A project has name, observable outcome, description, kind (work, study,
+personal, health, custom), status, health, color, start/target dates, one next
+action, stakeholders, tags, progress mode, milestones and an append-only update
+log. Board cards are draggable between statuses.
+
+**REQ-PRJ-2** — Creation offers templates for a client engagement, business
+launch, assignment/thesis, exam preparation, personal project, health objective
+and blank project. Templates seed meaningful milestones but every field remains
+editable.
+
+**REQ-PRJ-3** — A goal stores purpose, success definition, horizon, status,
+target date and progress mode. Projects can support one goal; a goal may contain
+many projects. Goal progress is derived from its projects, manually entered, or
+driven by a Daily metric.
+
+**REQ-PRJ-4** — Automatic project progress is the mean of linked task completion
+and milestone completion when those signals exist. Manual and metric-driven
+modes are also available. Health (on track, at risk, blocked) is independent of
+progress, because a high-progress project can still be blocked.
+
+**REQ-PRJ-5** — The project detail can create or link Notes, Maps, Calendar
+tasks/events, Daily habits and Training activities. Calendar items carry a
+`project_id`; other resources remain owned by their module and are referenced
+by ID. Removing a project detaches those links without deleting the resources.
+Notes created from a project are grouped under a project folder and tagged.
+
+**REQ-PRJ-6** — The Home dashboard uses actual active projects. The Calendar
+editor and context panel expose the linked project. The Notes context panel can
+link/unlink the current note. Recap deterministically reports active/completed
+projects, at-risk count, finished milestones and linked task completion.
+
+**REQ-PRJ-7** — The Reviews view calculates a local factual status and lets the
+user update health and choose the next concrete action. Project updates record
+summary, wins, blockers and next steps with a timestamp.
+
+**REQ-PRJ-8** — Diorna AI can create or update a project and optionally create
+supporting notes, maps, calendar items and habits in the same reviewed action
+plan. Generated operation IDs are linked only after all resources exist.
+Existing projects must be referenced by an exact ID supplied in context. The
+batch is atomic from the user's perspective and completely undoable.
+
+**REQ-PRJ-9** — Projects and goals are scoped by `workspace_id`, persisted in
+SQLite and included in structured export. They must pass the same workspace
+isolation guarantees as every other entity.
 
 ---
 
@@ -386,6 +453,121 @@ Displayed as `40% done` with a progress bar. `applicable_habits` excludes habits
 
 ---
 
+## 8.5 Module D.5 — Training
+
+**REQ-TRAIN-1** — The module supports custom activities and exercises. An
+exercise selects load/repetitions, duration, distance, or mixed measurements
+and keeps its own load and distance units.
+
+Exercise selection MUST be search-first. Diorna provides a broad catalogue of
+common movements and multilingual aliases, filters it while the user types,
+and allows any unmatched name to be created immediately. Strength exercises
+MUST distinguish external load, repetitions-only bodyweight, optional added
+load, and assistance so an irrelevant weight field is never mandatory.
+
+**REQ-TRAIN-2** — Reusable templates define an ordered exercise list and a
+planned set count. Starting a template creates an editable in-progress session.
+
+**REQ-TRAIN-3** — Session entry is optimized for repeated measurements. The
+previous completed result is visible beside each exercise; sets can be added,
+removed, checked, and entered without leaving the session. **Repeat last
+session** copies structure and values while clearing completion.
+
+**REQ-TRAIN-4** — History displays every completed session, its exercise
+results, duration, volume, distance, and notes. Progress charts support maximum
+load, repetitions, strength volume, duration, and distance.
+
+**REQ-TRAIN-5** — A template can create a linked Calendar event. Starting that
+event links it to the resulting Training session. An activity may create a
+Daily quantity habit whose completed minutes are recalculated from sessions.
+
+**REQ-TRAIN-6** — Recap aggregation includes completed session count, previous
+period comparison, duration, strength volume, distance by unit, distribution by
+activity, and personal records.
+
+**REQ-TRAIN-7** — Existing notes can be imported optionally. Diorna previews
+recognized dated strength, duration, and distance entries before importing and
+never modifies the source note.
+
+**REQ-TRAIN-8** — Activities, exercises, templates, and sessions are isolated
+by workspace and persisted in SQLite in the desktop build.
+
+---
+
+## 8.75 Module D.75 — Focus
+
+> Mental model: **an execution cockpit.** Focus does not become a second task
+> manager. It helps the user decide what matters now, protect a realistic block
+> of time, capture interruptions without following them, and close the loop with
+> evidence.
+
+**REQ-FOCUS-1** — The Today view combines user-selected priorities with computed
+attention signals: overdue/high-priority Calendar tasks, events in the next 48
+hours and concrete next actions from active or at-risk Projects. A priority can
+point to a Calendar item, Project, Goal, Note, Map, Daily habit, Training
+activity, or a free personal outcome. The source remains owned and editable in
+its native module.
+
+**REQ-FOCUS-2** — Starting a session requires a title, planned duration,
+execution mode and optional definition of done. Modes are Deep work, Study,
+Creative, Admin, Meeting preparation and Personal. Presets of 25, 45, 60 and
+90 minutes remain editable so the same model supports a student revision block,
+client proposal, company call preparation, household administration or a
+personal creative project.
+
+**REQ-FOCUS-3** — The timer supports start, pause, resume, cancel and Finish &
+review. It stores accumulated seconds plus the last start timestamp, not a
+fragile in-memory counter. Navigation, sleep, refresh and application restart
+must not lose or undercount a running session. Starting another session pauses
+the previous one in the same workspace.
+
+**REQ-FOCUS-4** — During a session the user can park a distraction in one
+interaction and immediately return to work. Categories are thought, message,
+new task, environment and other. Captures contain a timestamp, note and handled
+state. They never transmit, create tasks or interrupt the timer automatically.
+A per-session distraction shield records practical precautions such as closing
+chat or silencing the phone.
+
+**REQ-FOCUS-5** — Finish opens a review surface containing focus quality, energy
+before/after, factual outcome, what worked, blockers and next action. The user
+explicitly chooses whether the linked priority, Calendar task or Daily habit is
+complete. A linked quantity habit receives the actual session duration for that
+date.
+
+**REQ-FOCUS-6** — A session may be scheduled. Scheduling creates a normal
+Calendar event with a five-minute reminder and preserves Project linkage.
+Calendar item context and Project detail can start a Focus block directly.
+Home displays current priorities, completed minutes and Resume. A compact
+sidebar player exposes the running timer from every module.
+
+**REQ-FOCUS-7** — History keeps completed and cancelled sessions, planned and
+actual duration, mode, outcome, rating, distractions and next action. Continue
+turns a review's next action into today's priority without rewriting the source.
+Insights calculate seven- and thirty-day protected minutes, planned/actual
+accuracy, average focus quality, distractions per session, daily minutes and
+time by mode. Diorna never passively observes applications, windows, browsing
+or keystrokes.
+
+**REQ-FOCUS-8** — Recap aggregation includes completed session count, previous
+period comparison, planned and actual minutes, sessions reaching at least 80%
+of plan, average focus quality, distraction count and time by mode. Every
+figure is computed locally from explicit session data.
+
+**REQ-FOCUS-9** — Diorna AI receives summaries of exact workspace resources,
+active priorities and recent Focus evidence. A reviewed
+`create_focus_block` operation may choose an exact existing source, realistic
+duration and mode, add a dated priority, reserve Calendar time and propose a
+distraction shield. Applying and undoing the plan use the ordinary Focus and
+Calendar store APIs. AI plans never start a timer without an explicit user
+action.
+
+**REQ-FOCUS-10** — Focus priorities and sessions are isolated by
+`workspace_id`, persisted as versioned SQLite JSON aggregates, included in
+structured export and removed only with their workspace. Removing a priority
+detaches its sessions; removing a session never deletes its source.
+
+---
+
 ## 9. Module E — Recap
 
 ### 9.1 Purpose
@@ -411,6 +593,8 @@ At the close of each month, the application produces a **narrative report of wha
 | Daily Grid | Completion rate per habit, streaks, best and worst performers, month-over-month deltas, weekday patterns |
 | Metrics | First and last value, absolute and percentage change, trend direction, new personal records |
 | Calendar & Tasks | Tasks completed per category, events attended, distribution of effort across categories, on-time versus overdue ratio |
+| Training | Sessions, duration, volume, distance, activity distribution, period comparison and personal records |
+| Focus | Completed blocks, planned/actual minutes, focus quality, distractions and time by mode |
 | Notes | Notes created and edited, their titles, tags, courses and linked projects, total words written |
 | Maps | Maps and nodes created |
 | Flashcards | Cards reviewed, retention rate, courses revised (Student workspace) |
@@ -448,7 +632,8 @@ to the active workspace.
 
 **REQ-AI-2** — A request never mutates data directly. The configured model returns a
 versioned, JSON-Schema-constrained plan containing only `create_note`, `create_map`,
-`create_calendar_item`, and `create_habit` operations. Diorna validates the complete plan
+`create_calendar_item`, `create_habit`, `upsert_project`, and
+`create_focus_block` operations. Diorna validates the complete plan
 locally, displays every operation and assumption, and requires explicit confirmation
 before applying it.
 
@@ -508,7 +693,7 @@ inside the chat.
 | Section | Contents |
 |---|---|
 | **General** | Language (English, French), start-with-Windows, minimise-to-tray, default workspace on launch, update channel |
-| **Appearance** | Theme (light / dark / follow Windows), accent color, interface font, editor font, font size, line width, density (compact / comfortable) |
+| **Appearance** | Theme (Diorna default / neutral light / dark / follow Windows), accent color, interface font, editor font, font size, line width, density (compact / comfortable) |
 | **Vault** | Vault location, move vault, open in Explorer, re-index, storage usage by workspace |
 | **Workspaces** | Create, rename, recolor, reorder, delete (with a typed confirmation), set the dashboard layout |
 | **Editor** | Spell-check and its language, auto-pair brackets, tab behaviour, default new-note folder, default template |
@@ -543,7 +728,7 @@ inside the chat.
 
 **REQ-DATA-LC-2** — **Backups**: an automatic local backup of the entire vault, daily and before every schema migration, to a user-chosen folder, retaining the last ten. Restore from the settings UI.
 
-**REQ-DATA-LC-3** — **Full export**: a single command produces a portable folder — Markdown notes, `.canvas` maps, attachments, and a JSON dump of tasks, habits, entries, metrics, and recaps. The user must always be able to leave with everything.
+**REQ-DATA-LC-3** — **Full export**: a single command produces a portable folder — Markdown notes, `.canvas` maps, attachments, and a JSON dump of tasks, habits, entries, metrics, projects, Focus sessions, and recaps. The user must always be able to leave with everything.
 
 ---
 
@@ -597,7 +782,7 @@ item(id, workspace_id, kind,                      -- 'task' | 'event'
      start_at, end_at, all_day,
      due_at NULL, completed_at NULL,
      priority, rrule NULL, rrule_exceptions,
-     parent_item_id NULL, note_id NULL, course_id NULL,
+     parent_item_id NULL, note_id NULL, course_id NULL, project_id NULL,
      source_note_line NULL, created_at, updated_at)
 item_reminder(id, item_id, minutes_before)
 
@@ -618,6 +803,11 @@ flashcard(id, note_id, block_id, front, back, card_type,
 review_log(id, flashcard_id, reviewed_at, grade, interval_before, interval_after)
 
 reference(id, workspace_id, citation_key, csl_json)
+
+project(id, workspace_id, payload_json)
+goal(id, workspace_id, payload_json)
+focus_priority(id, workspace_id, payload_json)
+focus_session(id, workspace_id, payload_json)
 
 recap(id, workspace_id, period_type, period_start, period_end,
       note_id, stats_json, narrative, model_used, generated_at, revision)
@@ -699,7 +889,7 @@ Measured on a reference machine — Intel i5 11th generation, 16 GB RAM, SSD —
 | **NFR-8** | Fully functional offline. The only outbound calls are user-triggered recap or confirmed Diorna AI generation, update checks (toggleable), and link-preview fetching (toggleable). |
 | **NFR-9** | **Zero telemetry.** No analytics, no crash reporting, no phone-home, not even anonymised, not even opt-out. Verifiable by inspecting the source. |
 | **NFR-10** | Data safety: atomic writes, no data loss on crash or forced termination, automatic backup before every migration, and a recovery path from a corrupted database that never loses note or map content. |
-| **NFR-11** | Accessibility: complete keyboard operation, visible focus indicators, ARIA labels on all controls, contrast ratio ≥ 4.5:1 in both themes, respects the Windows reduced-motion setting, and works at 200 % display scaling. |
+| **NFR-11** | Accessibility: complete keyboard operation, visible focus indicators, ARIA labels on all controls, contrast ratio ≥ 4.5:1 in every selectable theme, respects the Windows reduced-motion setting, and works at 200 % display scaling. |
 | **NFR-12** | Localisation: all user-facing strings externalised; **English and French** ship at v1, with dates, numbers, and week start following the chosen language. |
 | **NFR-13** | Error handling: no unhandled exception ever produces a blank window. Errors surface as a readable message with a "copy diagnostics" action. Local rotating logs, capped at 50 MB. |
 | **NFR-14** | The application remains fully usable with no summariser configured, no internet connection, and no imported data. |
@@ -712,7 +902,7 @@ Measured on a reference machine — Intel i5 11th generation, 16 GB RAM, SSD —
 
 **REQ-DES-2** — Typography: one interface sans-serif (Inter or the system UI font), one editor serif or sans (user-selectable), one monospace (JetBrains Mono). A defined type scale; no ad-hoc sizes.
 
-**REQ-DES-3** — Color: a neutral grey base carrying nearly the whole interface; color is reserved for **meaning** — category identity, state, and emphasis. A single user-selectable accent. Category palettes must remain distinguishable in both themes and under common color-vision deficiencies.
+**REQ-DES-3** — Color: the default branded base is warm cream `#F3EFE0` with navy `#3F6495` text and cobalt `#1D518A` actions. Terracotta `#C66542`, olive `#7C8E58`, and mustard `#DAA343` are reserved for category identity, state, and emphasis. Neutral light, dark, follow-Windows, and a user-selectable accent remain available. Category palettes must remain distinguishable in every theme and under common color-vision deficiencies.
 
 **REQ-DES-4** — Motion: 120–200 ms, ease-out, on state changes only. No animation on the critical typing, cell-toggle, or canvas-drag paths.
 
@@ -755,6 +945,7 @@ Each milestone ends with a demonstrable build, its tests green, and its acceptan
 | **M2** | **Maps** | Canvas, all node types, edges, sub-maps, `.canvas` persistence, export | **The §6.1 gym scenario is reproducible end to end**, survives a restart with exact coordinates, and the file opens correctly in Obsidian |
 | **M3** | **Calendar & Tasks** | Four views, items, recurrence, categories, filters, drag-and-drop, natural-language quick add, note integration, toast reminders | A full week is planned and then rescheduled entirely by drag-and-drop; the parser passes a 50-case test suite |
 | **M4** | **Daily Grid** | Habits, entries, sliding window, scoring, statistics, metrics, exports | **A fifteen-habit day is entered in under fifteen seconds, keyboard only**; scoring is correct across every edge case in the test suite |
+| **M4.5** | **Training** | Activities, exercises, templates, rapid session entry, history, progression, Calendar/Daily/Recap links, note import | A previous strength session is repeated with one changed load, appears in Daily and Recap, and produces a progression chart |
 | **M5** | **Student features** | Courses, templates, mathematics, flashcards and spaced repetition, bibliography, deadlines, dashboard, PDF export | A complete course of lecture notes is taken, revised, and exported in-app |
 | **M6** | **Recap** | Statistics aggregation, `Summarizer` interface, both backends, numeric validation, presentation, charts, template fallback, PDF export | **A recap matching §9.2 in structure and factual accuracy** is generated from real data; every figure is traceable; the template fallback produces a usable report with no model configured |
 | **M7** | **Import & lifecycle** | Obsidian import, Notion import, trash, backups, full export, onboarding | A real Obsidian vault imports with links intact; a deleted note is restored; a vault is backed up and restored |

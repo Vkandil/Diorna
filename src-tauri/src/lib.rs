@@ -1,5 +1,6 @@
 mod error;
 mod lifecycle;
+mod link_preview;
 mod secrets;
 mod spreadsheet;
 mod storage;
@@ -17,6 +18,7 @@ use std::{
 use base64::Engine;
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use sha2::Digest;
 use storage::{DiskContent, SaveNoteInput, SavedFile, SearchHit, Vault, WorkspaceRecord};
 use tauri::{
     AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder,
@@ -248,6 +250,23 @@ struct SavedAttachment {
     size: u64,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LinkPreviewResult {
+    url: String,
+    final_url: String,
+    title: String,
+    description: String,
+    site_name: String,
+    image_url: String,
+    image_relative_path: String,
+    image_absolute_path: String,
+    favicon_url: String,
+    favicon_relative_path: String,
+    favicon_absolute_path: String,
+    fetched_at: String,
+}
+
 fn safe_attachment_name(name: &str) -> String {
     let candidate = std::path::Path::new(name)
         .file_name()
@@ -340,6 +359,68 @@ async fn import_attachment(
         ),
         absolute_path: destination.to_string_lossy().into_owned(),
         size: bytes.len() as u64,
+    })
+}
+
+#[tauri::command]
+async fn fetch_link_preview(
+    url: String,
+    workspace_id: String,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<LinkPreviewResult> {
+    let vault = state.get_vault()?;
+    let workspace = vault
+        .workspaces()
+        .await?
+        .into_iter()
+        .find(|workspace| workspace.id == workspace_id)
+        .ok_or_else(|| DiornaError::InvalidData("Unknown workspace".into()))?;
+    let directory = vault.root.join(workspace.folder_name).join("attachments");
+    std::fs::create_dir_all(&directory)?;
+    let preview = link_preview::fetch(&url).await?;
+    let save_asset =
+        |asset: Option<link_preview::PreviewAsset>, kind: &str| -> Result<(String, String)> {
+            let Some(asset) = asset else {
+                return Ok((String::new(), String::new()));
+            };
+            let digest = sha2::Sha256::digest(format!("{kind}:{url}").as_bytes());
+            let short_hash = digest[..8]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            let name = format!("link-preview-{kind}-{short_hash}.{}", asset.extension);
+            let destination = directory.join(name);
+            storage::atomic_write(&destination, &asset.bytes)?;
+            app.asset_protocol_scope()
+                .allow_file(&destination)
+                .map_err(|error| DiornaError::InvalidData(error.to_string()))?;
+            Ok((
+                format!(
+                    "attachments/{}",
+                    destination
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                ),
+                destination.to_string_lossy().into_owned(),
+            ))
+        };
+    let (image_relative_path, image_absolute_path) = save_asset(preview.image, "image")?;
+    let (favicon_relative_path, favicon_absolute_path) = save_asset(preview.favicon, "favicon")?;
+    Ok(LinkPreviewResult {
+        url,
+        final_url: preview.final_url,
+        title: preview.title,
+        description: preview.description,
+        site_name: preview.site_name,
+        image_url: preview.image_url,
+        image_relative_path,
+        image_absolute_path,
+        favicon_url: preview.favicon_url,
+        favicon_relative_path,
+        favicon_absolute_path,
+        fetched_at: chrono::Utc::now().to_rfc3339(),
     })
 }
 
@@ -1047,7 +1128,8 @@ pub fn run() {
             set_global_shortcut,
             runtime_info,
             take_open_requests,
-            import_attachment
+            import_attachment,
+            fetch_link_preview
         ])
         .setup(|app| {
             queue_open_requests(&app.state::<AppState>(), std::env::args().skip(1));
